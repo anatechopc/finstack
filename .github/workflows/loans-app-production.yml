@@ -1,0 +1,139 @@
+name: "Loans App: Production"
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'apps/loans/**'
+      - 'packages/**'
+      - '.github/workflows/loans-app-*.yml'
+  create:
+    branches:
+      - master
+
+defaults:
+  run:
+    working-directory: apps/loans
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  get_flutter_version:
+    runs-on: ubuntu-latest
+    outputs:
+      flutter_version: ${{ steps.extract_version.outputs.flutter_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Extract Flutter version from .fvmrc
+        id: extract_version
+        run: |
+          version=$(grep '"flutter"' apps/loans/.fvmrc | sed 's/.*: *"\([^"]*\)".*/\1/' | cut -d'@' -f1)
+          echo "flutter_version=$version" >> $GITHUB_OUTPUT
+        working-directory: .
+
+  update-version-on-master:
+    needs: get_flutter_version
+    permissions:
+      contents: write
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+      (github.event_name == 'create' && github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ needs.get_flutter_version.outputs.flutter_version }}
+
+      - name: Get current version
+        id: get_version
+        run: |
+          current_version=$(grep 'version:' pubspec.yaml | sed 's/version: //')
+          echo "current_version=$current_version" >> $GITHUB_OUTPUT
+
+      - name: Bump version for release or hotfix
+        id: bump_version
+        if: "!contains(github.event.head_commit.message, 'chore(version): bump to')"
+        run: |
+          chmod +x scripts/bump_version.sh
+
+          # Get the commit message from the merge commit
+          commit_msg="${{ github.event.head_commit.message }}"
+          echo "Commit message: $commit_msg"
+
+          # Parse source branch from merge commit message
+          # Merge commit format: "Merge pull request #123 from user/branch-name"
+          full_source_branch=""
+          if [[ "$commit_msg" == *"Merge pull request"*"from "* ]]; then
+            # Extract full branch name after "from "
+            full_source_branch=$(echo "$commit_msg" | sed -n 's/.*from \([^ ]*\).*/\1/p')
+            echo "Detected full source branch: $full_source_branch"
+          else
+            echo "Not a merge commit or unable to detect source branch"
+            exit 0
+          fi
+
+          # Check if branch matches release or hotfix patterns (checking the full branch path)
+          if [[ "$full_source_branch" == */release/v* ]]; then
+            echo "Release branch detected, bumping to production version"
+            ./scripts/bump_version.sh production
+          elif [[ "$full_source_branch" == */hotfix/* ]]; then
+            echo "Hotfix branch detected, bumping to production version"
+            ./scripts/bump_version.sh production
+          else
+            echo "No version bump needed for branch: $full_source_branch"
+            exit 0
+          fi
+
+          # Extract and output the new version
+          new_version=$(grep 'version:' pubspec.yaml | sed 's/version: //')
+          echo "new_version=$new_version" >> $GITHUB_OUTPUT
+
+      - name: Commit and push version bump
+        if: steps.bump_version.conclusion == 'success'
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add pubspec.yaml
+          git commit -m "chore(version): bump to ${{ steps.bump_version.outputs.new_version }}"
+          git push
+
+  deploy_to_production:
+    permissions:
+      contents: read
+      deployments: write
+    needs: [update-version-on-master, get_flutter_version]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ needs.get_flutter_version.outputs.flutter_version }}
+
+      - name: Build Web
+        run: flutter build web -t lib/main_production.dart --release --dart-define=ENVIRONMENT=production --output build/web/production
+
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LOOOANS_PROD }}
+          channelId: live
+          projectId: loooans-prod
+          target: production
+          entryPoint: apps/loans

@@ -1,0 +1,137 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "loooans-prod",
+          "appId": "1:444559784514:android:0c37a7d478cdc0ac77cbdb",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "loooans-prod",
+          "configurations": {
+            "android": "1:444559784514:android:0c37a7d478cdc0ac77cbdb",
+            "ios": "1:444559784514:ios:a2cfaff173b2b7a477cbdb",
+            "web": "1:444559784514:web:be09bfc7525b4d7677cbdb"
+          }
+        },
+        "lib/firebase_options_dev.dart": {
+          "projectId": "loooans-dev-stg",
+          "configurations": {
+            "android": "1:565409367468:android:0fcc6ad66c7dd1b38fe609",
+            "ios": "1:565409367468:ios:6a8bf06a783fa9c08fe609",
+            "web": "1:565409367468:web:56eb0d413e9adfe58fe609"
+          }
+        },
+        "lib/firebase_options_stg.dart": {
+          "projectId": "loooans-dev-stg",
+          "configurations": {
+            "android": "1:565409367468:android:6e556d01728e8eb68fe609",
+            "ios": "1:565409367468:ios:3934c8cd51c7afbb8fe609",
+            "web": "1:565409367468:web:56eb0d413e9adfe58fe609"
+          }
+        }
+      }
+    }
+  },
+  "hosting": [
+    {
+      "target": "develop",
+      "public": "build/web/development",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "/api/utils/sendEmail",
+          "run": {
+            "serviceId": "sendemail-development",
+            "region": "asia-east1"
+          }
+        },
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ]
+    },
+    {
+      "target": "staging",
+      "public": "build/web/staging",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "/api/utils/sendEmail",
+          "run": {
+            "serviceId": "sendemail-staging",
+            "region": "asia-east1"
+          }
+        },
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ]
+    },
+    {
+      "target": "production",
+      "public": "build/web/production",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "/api/utils/sendEmail",
+          "run": {
+            "serviceId": "sendemail-production",
+            "region": "asia-east1"
+          }
+        },
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ]
+    }
+  ],
+  "emulators": {
+    "firestore": {
+      "port": 8081
+    },
+    "database": {
+      "port": 9000
+    },
+    "hosting": {
+      "port": 5000
+    },
+    "pubsub": {
+      "port": 8086
+    },
+    "storage": {
+      "port": 9199
+    },
+    "eventarc": {
+      "port": 9299
+    },
+    "ui": {
+      "enabled": true
+    },
+    "singleProjectMode": true
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "firestore": {
+    "indexes": "firestore.indexes.json"
+  }
+}

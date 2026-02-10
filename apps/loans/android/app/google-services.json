@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "444559784514",
+    "firebase_url": "https://loooans-prod-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "loooans-prod",
+    "storage_bucket": "loooans-prod.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:444559784514:android:0c37a7d478cdc0ac77cbdb",
+        "android_client_info": {
+          "package_name": "com.loooans.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAjg8SybrWeDTMNpG_DjffZLL6SAq8VvFU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

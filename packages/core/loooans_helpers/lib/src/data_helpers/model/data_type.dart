@@ -1,0 +1,4 @@
+enum DataType {
+  user,
+  provider;
+}

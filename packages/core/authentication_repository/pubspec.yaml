@@ -1,0 +1,21 @@
+name: authentication_repository
+description: Loooans! Authentication repository
+version: 1.0.0+1
+publish_to: none
+
+environment:
+  sdk: '>=3.0.1 <4.0.0'
+
+dependencies:
+  firebase_auth: ^5.2.1
+  firebase_core: ^3.4.1
+  firebase_database: ^11.1.2
+  flutter:
+    sdk: flutter
+  loooans_helpers:
+    path: "../loooans_helpers"
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  very_good_analysis: ^6.0.0

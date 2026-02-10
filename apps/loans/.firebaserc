@@ -1,0 +1,26 @@
+{
+  "projects": {
+    "default": "loooans-dev-stg",
+    "production": "loooans-prod"
+  },
+  "targets": {
+    "loooans-dev-stg": {
+      "hosting": {
+        "develop": [
+          "loooans-dev-stg"
+        ],
+        "staging": [
+          "loooans-stg"
+        ]
+      }
+    },
+    "loooans-prod": {
+      "hosting": {
+        "production": [
+          "loooans-prod"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

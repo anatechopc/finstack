@@ -1,0 +1,13 @@
+{
+  "dependencies": {
+    "firebase": "10"
+  },
+  "devDependencies": {
+    "esbuild": "^0.15.10"
+  },
+  "scripts": {
+    "build": "esbuild firebase-messaging-sw.ts --outdir=../web --bundle --sourcemap --minify --format=esm",
+    "build:dev": "esbuild firebase-messaging-sw.dev.ts --outfile=../web/firebase-messaging-sw.js --bundle --sourcemap --minify --format=esm",
+    "build:stg": "esbuild firebase-messaging-sw.stg.ts --outfile=../web/firebase-messaging-sw.js --bundle --sourcemap --minify --format=esm"
+  }
+}

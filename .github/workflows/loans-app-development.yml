@@ -1,0 +1,144 @@
+name: "Loans App: Development"
+
+on:
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - 'apps/loans/**'
+      - 'packages/**'
+      - '.github/workflows/loans-app-*.yml'
+  push:
+    branches:
+      - develop
+    paths:
+      - 'apps/loans/**'
+      - 'packages/**'
+      - '.github/workflows/loans-app-*.yml'
+
+defaults:
+  run:
+    working-directory: apps/loans
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Step to extract flutter version from .fvmrc
+  get_flutter_version:
+    runs-on: ubuntu-latest
+    outputs:
+      flutter_version: ${{ steps.extract_version.outputs.flutter_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Extract Flutter version from .fvmrc
+        id: extract_version
+        run: |
+          version=$(grep '"flutter"' apps/loans/.fvmrc | sed 's/.*: *"\([^"]*\)".*/\1/' | cut -d'@' -f1)
+          echo "flutter_version=$version" >> $GITHUB_OUTPUT
+        working-directory: .
+
+  # Job that runs on PR. To test. Check result of the job
+  build_and_preview:
+    needs: get_flutter_version
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ needs.get_flutter_version.outputs.flutter_version }}
+
+      - name: Build web
+        run: flutter build web -t lib/main_development.dart --release
+          --dart-define=ENVIRONMENT=development --output build/web/development
+
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LOOOANS_DEV_STG }}
+          projectId: loooans-dev-stg
+          target: develop
+          entryPoint: apps/loans
+
+  # Job that runs on merge to 'develop'
+  update-version-on-merge:
+    needs: get_flutter_version
+    permissions:
+      contents: write
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ needs.get_flutter_version.outputs.flutter_version }}
+
+      - name: Get current version
+        id: get_version
+        run: |
+          current_version=$(grep 'version:' pubspec.yaml | sed 's/version: //')
+          echo "current_version=$current_version" >> $GITHUB_OUTPUT
+
+      - name: Bump version (patch) and set pre-release if needed
+        id: bump_version
+        if: "!contains(github.event.head_commit.message, 'chore(version): bump to')"
+        run: |
+          chmod +x scripts/bump_version.sh
+          ./scripts/bump_version.sh
+          new_version=$(grep 'version:' pubspec.yaml | sed 's/version: //')
+          echo "new_version=$new_version" >> $GITHUB_OUTPUT
+
+      - name: Commit and push version bump
+        if: steps.bump_version.conclusion == 'success'
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add pubspec.yaml
+          git commit -m "chore(version): bump to ${{ steps.bump_version.outputs.new_version }}"
+          git push
+
+  deploy_to_development:
+    permissions:
+      contents: read
+      deployments: write
+    needs: [ update-version-on-merge, get_flutter_version ]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ needs.get_flutter_version.outputs.flutter_version }}
+
+      - name: Build Web
+        run: flutter build web -t lib/main_development.dart --release --dart-define=ENVIRONMENT=development --output build/web/development
+
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LOOOANS_DEV_STG }}
+          channelId: live
+          projectId: loooans-dev-stg
+          target: develop
+          entryPoint: apps/loans

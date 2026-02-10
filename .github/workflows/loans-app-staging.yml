@@ -1,0 +1,120 @@
+name: "Loans App: Staging"
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - 'release/v*'
+    paths:
+      - 'apps/loans/**'
+      - 'packages/**'
+      - '.github/workflows/loans-app-*.yml'
+  pull_request:
+    branches:
+      - 'release/v*'
+    paths:
+      - 'apps/loans/**'
+      - 'packages/**'
+      - '.github/workflows/loans-app-*.yml'
+  create:
+    branches:
+      - 'release/v*'
+
+defaults:
+  run:
+    working-directory: apps/loans
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  get_flutter_version:
+    runs-on: ubuntu-latest
+    outputs:
+      flutter_version: ${{ steps.extract_version.outputs.flutter_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Extract Flutter version from .fvmrc
+        id: extract_version
+        run: |
+          version=$(grep '"flutter"' apps/loans/.fvmrc | sed 's/.*: *"\([^"]*\)".*/\1/' | cut -d'@' -f1)
+          echo "flutter_version=$version" >> $GITHUB_OUTPUT
+        working-directory: .
+
+  update-version-on-release:
+    needs: get_flutter_version
+    permissions:
+      contents: write
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v')) ||
+      (github.event_name == 'create' && startsWith(github.ref, 'refs/heads/release/v'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ needs.get_flutter_version.outputs.flutter_version }}
+
+      - name: Get current version
+        id: get_version
+        run: |
+          current_version=$(grep 'version:' pubspec.yaml | sed 's/version: //')
+          echo "current_version=$current_version" >> $GITHUB_OUTPUT
+
+      - name: Bump version (pre) and set pre-release if needed
+        id: bump_version
+        if: "!contains(github.event.head_commit.message, 'chore(version): bump to')"
+        run: |
+          chmod +x scripts/bump_version.sh
+          ./scripts/bump_version.sh staging
+          new_version=$(grep 'version:' pubspec.yaml | sed 's/version: //')
+          echo "new_version=$new_version" >> $GITHUB_OUTPUT
+
+      - name: Commit and push version bump
+        if: steps.bump_version.conclusion == 'success'
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add pubspec.yaml
+          git commit -m "chore(version): bump to ${{ steps.bump_version.outputs.new_version }}"
+          git push
+
+  deploy_to_staging:
+    permissions:
+      contents: read
+      deployments: write
+    needs: [update-version-on-release, get_flutter_version]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ needs.get_flutter_version.outputs.flutter_version }}
+
+      - name: Build Web
+        run: flutter build web -t lib/main_staging.dart --release --dart-define=ENVIRONMENT=staging --output build/web/staging
+
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LOOOANS_DEV_STG }}
+          channelId: live
+          projectId: loooans-dev-stg
+          target: staging
+          entryPoint: apps/loans

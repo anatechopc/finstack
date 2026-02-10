@@ -1,0 +1,21 @@
+include: package:very_good_analysis/analysis_options.5.1.0.yaml
+analyzer:
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.gr.dart"
+    - "**/*.freezed.dart"
+  errors:
+    must_be_immutable: ignore
+    inference_failure_on_function_invocation: ignore
+    invalid_use_of_visible_for_testing_member: ignore
+    override_on_non_overriding_member: ignore
+    eol_at_end_of_file: ignore
+    lines_longer_than_80_chars: ignore
+    avoid_positional_boolean_parameters: ignore
+linter:
+  rules:
+    public_member_api_docs: false
+    lines_longer_than_80_chars: false
+    prefer_single_quotes: true
+    avoid_print: true
+    constant_identifier_names: false
