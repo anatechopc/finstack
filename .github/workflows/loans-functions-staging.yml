@@ -1,6 +1,7 @@
 name: "Loans Functions: Staging"
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - 'release/**'

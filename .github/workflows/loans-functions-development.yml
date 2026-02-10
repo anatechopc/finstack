@@ -1,6 +1,7 @@
 name: "Loans Functions: Development"
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - develop
