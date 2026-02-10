@@ -117,16 +117,13 @@ jobs:
 
       - name: Generate code
         run: |
-          pids=()
           for group in core loans; do
             for pkg in ../../packages/$group/*/; do
               if grep -q build_runner "$pkg/pubspec.yaml"; then
-                (cd "$pkg" && flutter pub run build_runner build --delete-conflicting-outputs) &
-                pids+=($!)
+                echo "$pkg"
               fi
             done
-          done
-          for pid in "${pids[@]}"; do wait "$pid" || exit 1; done
+          done | xargs -P 4 -I {} bash -c 'cd "{}" && flutter pub run build_runner build --delete-conflicting-outputs'
 
       - name: Build Web
         run: flutter build web -t lib/main_staging.dart --release --dart-define=ENVIRONMENT=staging --output build/web/staging
