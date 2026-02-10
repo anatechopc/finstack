@@ -107,6 +107,24 @@ jobs:
           channel: stable
           flutter-version: ${{ needs.get_flutter_version.outputs.flutter_version }}
 
+      - name: Get package dependencies
+        run: |
+          for group in core loans; do
+            for pkg in ../../packages/$group/*/; do
+              (cd "$pkg" && flutter pub get)
+            done
+          done
+
+      - name: Generate code
+        run: |
+          for group in core loans; do
+            for pkg in ../../packages/$group/*/; do
+              if grep -q build_runner "$pkg/pubspec.yaml"; then
+                (cd "$pkg" && flutter pub run build_runner build --delete-conflicting-outputs)
+              fi
+            done
+          done
+
       - name: Build Web
         run: flutter build web -t lib/main_staging.dart --release --dart-define=ENVIRONMENT=staging --output build/web/staging
 
