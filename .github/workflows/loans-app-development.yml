@@ -76,7 +76,7 @@ jobs:
                 echo "$pkg"
               fi
             done
-          done | xargs -P 4 -I {} bash -c 'cd "{}" && flutter pub run build_runner build --delete-conflicting-outputs'
+          done | xargs -P 8 -I {} bash -c 'cd "{}" && dart run build_runner build --delete-conflicting-outputs'
 
       - name: Build web
         run: flutter build web -t lib/main_development.dart --release
@@ -165,7 +165,7 @@ jobs:
                 echo "$pkg"
               fi
             done
-          done | xargs -P 4 -I {} bash -c 'cd "{}" && flutter pub run build_runner build --delete-conflicting-outputs'
+          done | xargs -P 8 -I {} bash -c 'cd "{}" && dart run build_runner build --delete-conflicting-outputs'
 
       - name: Build Web
         run: flutter build web -t lib/main_development.dart --release --dart-define=ENVIRONMENT=development --output build/web/development
