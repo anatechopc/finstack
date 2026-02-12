@@ -136,31 +136,56 @@ jobs:
 
       - name: Restore generated code cache
         uses: actions/cache@v4
-        id: codegen-cache
         with:
-          path: codegen-cache.tar.gz
-          key: codegen-${{ hashFiles('packages/**/pubspec.yaml', 'packages/**/lib/**/*.dart') }}
-
-      - name: Extract cached generated code
-        if: steps.codegen-cache.outputs.cache-hit == 'true'
-        working-directory: .
-        run: tar xzf codegen-cache.tar.gz
+          path: /tmp/codegen-cache
+          key: codegen-${{ github.run_id }}
+          restore-keys: codegen-
 
       - name: Generate code
-        if: steps.codegen-cache.outputs.cache-hit != 'true'
         run: |
+          mkdir -p /tmp/codegen-cache
+          rm -f /tmp/rebuild-list.txt
+
           for group in core loans; do
             for pkg in ../../packages/$group/*/; do
-              if grep -q build_runner "$pkg/pubspec.yaml"; then
-                echo "$pkg"
+              if ! grep -q build_runner "$pkg/pubspec.yaml"; then
+                continue
+              fi
+
+              pkg_name=$(basename "$pkg")
+              pkg_group=$(basename "$(dirname "$pkg")")
+              cache_key="${pkg_group}_${pkg_name}"
+
+              current_hash=$( (cat "$pkg/pubspec.yaml"; find "$pkg/lib" -name '*.dart' ! -name '*.g.dart' -type f | sort | xargs cat) | sha256sum | cut -d' ' -f1)
+
+              cached_hash=""
+              if [ -f "/tmp/codegen-cache/${cache_key}.hash" ]; then
+                cached_hash=$(cat "/tmp/codegen-cache/${cache_key}.hash")
+              fi
+
+              if [ "$current_hash" = "$cached_hash" ] && [ -f "/tmp/codegen-cache/${cache_key}.tar.gz" ]; then
+                echo "[cached] $pkg_group/$pkg_name"
+                tar xzf "/tmp/codegen-cache/${cache_key}.tar.gz" -C "$pkg"
+              else
+                echo "[build]  $pkg_group/$pkg_name"
+                echo "$pkg|$cache_key|$current_hash" >> /tmp/rebuild-list.txt
               fi
             done
-          done | xargs -P 4 -I {} bash -c 'cd "{}" && dart run build_runner build --delete-conflicting-outputs'
+          done
 
-      - name: Archive generated code for cache
-        if: steps.codegen-cache.outputs.cache-hit != 'true'
-        working-directory: .
-        run: find packages -name '*.g.dart' -print0 | tar czf codegen-cache.tar.gz --null -T -
+          if [ -f /tmp/rebuild-list.txt ] && [ -s /tmp/rebuild-list.txt ]; then
+            echo ""
+            echo "Rebuilding $(wc -l < /tmp/rebuild-list.txt | tr -d ' ') package(s)..."
+            cut -d'|' -f1 /tmp/rebuild-list.txt | xargs -P 4 -I {} bash -c 'cd "{}" && dart run build_runner build --delete-conflicting-outputs'
+
+            while IFS='|' read -r pkg cache_key current_hash; do
+              (cd "$pkg" && find lib -name '*.g.dart' -print0 | tar czf "/tmp/codegen-cache/${cache_key}.tar.gz" --null -T -)
+              echo "$current_hash" > "/tmp/codegen-cache/${cache_key}.hash"
+            done < /tmp/rebuild-list.txt
+          else
+            echo ""
+            echo "All packages restored from cache"
+          fi
 
       - name: Build Web
         run: flutter build web -t lib/main_production.dart --release --dart-define=ENVIRONMENT=production --output build/web/production
