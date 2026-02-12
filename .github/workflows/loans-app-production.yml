@@ -114,7 +114,10 @@ jobs:
       contents: read
       deployments: write
     needs: [update-version-on-master, get_flutter_version]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: |
+      always() &&
+      (needs.get_flutter_version.result == 'success') &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/master'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

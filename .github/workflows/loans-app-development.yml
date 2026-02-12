@@ -180,7 +180,10 @@ jobs:
       contents: read
       deployments: write
     needs: [ update-version-on-merge, get_flutter_version ]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    if: |
+      always() &&
+      (needs.get_flutter_version.result == 'success') &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/develop'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

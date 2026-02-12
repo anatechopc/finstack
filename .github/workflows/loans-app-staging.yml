@@ -95,7 +95,10 @@ jobs:
       contents: read
       deployments: write
     needs: [update-version-on-release, get_flutter_version]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v')
+    if: |
+      always() &&
+      (needs.get_flutter_version.result == 'success') &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v')))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
