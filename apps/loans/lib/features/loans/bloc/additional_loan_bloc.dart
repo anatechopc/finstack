@@ -5,7 +5,6 @@ import 'package:equatable/equatable.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:loan_repository/loan_repository.dart';
-import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/features/products/requirement_temp_container.dart';
 import 'package:loooans/services/charge_calculator.dart';
 import 'package:loooans/utils/extensions.dart';
@@ -22,7 +21,6 @@ class AdditionalLoanBloc
     extends Bloc<AdditionalLoanEvent, AdditionalLoanState> {
   AdditionalLoanBloc(BuildContext context)
       : loanRepository = context.read<LoanRepository>(),
-        loanScheduleRepository = context.read<LoanScheduleRepository>(),
         storageRepository = context.read<StorageRepository>(),
         super(const AdditionalLoanState()) {
     on<AddLoanAmountEvent>(_handleAddLoanAmountEvent);
@@ -32,7 +30,6 @@ class AdditionalLoanBloc
   }
 
   final LoanRepository loanRepository;
-  final LoanScheduleRepository loanScheduleRepository;
   final StorageRepository storageRepository;
 
   void addLoanAmount(
@@ -77,17 +74,9 @@ class AdditionalLoanBloc
   ) async {
     try {
       emit(const AdditionalLoanState.loading(isLoading: true));
-      final result = await Future.wait([
-        loanRepository.get(id: event.loanId),
-        loanScheduleRepository.allByLoanId(
-          loanId: event.loanId,
-          onlyPaid: false,
-        ),
-      ]);
-
-      final loan = result[0] as Loan;
+      final loan = await loanRepository.get(id: event.loanId);
       final (
-        :totalAmount,
+        totalAmount: _,
         :totalUpfrontCollection,
         :totalAdditionalCharges,
         :totalDeductions,
@@ -97,56 +86,46 @@ class AdditionalLoanBloc
         deductions: event.deductions,
       );
 
-      await Future.wait([
-        // Upload selfie photo and signature
-        Future.wait([
-          storageRepository.upload(
-            data: event.selfiePhoto.data,
-            folder: 'users/${loan.userId}/loans/${loan.id}',
-            fileName: 'additional_loan_amount_${event.selfiePhoto.name}',
-          ),
-          storageRepository.upload(
-            data: event.signatureBytes,
-            folder: 'users/${loan.userId}/loans/${loan.id}',
-            fileName:
-                'additional_loan_amount_signature_${DateTime.timestamp().toDefaultDateFormat()}.png',
-          ),
-        ]).then((values) async {
-          final selfiePhotoUrl = values[0];
-          final signatureUrl = values[1];
-
-          final updatedLoan = loan
-            ..additionalLoanAmounts = [
-              ...loan.additionalLoanAmounts,
-              AdditionalLoanAmount.create(
-                loanId: loan.id,
-                amount: event.amount,
-                additionalCharges: totalAdditionalCharges,
-                advanceCharges: totalUpfrontCollection,
-                deductions: totalDeductions,
-                selfiePhotoUrl: selfiePhotoUrl,
-                signatureUrl: signatureUrl,
-                description: event.description,
-              ),
-            ];
-
-          final updated2 = await loanRepository.update(
-            data: updatedLoan,
-            updateView: true,
-          );
-
-          return updated2;
-        }),
-        Future.microtask(() async {
-          final schedules = result[1] as List<LoanSchedule>;
-          final lastSchedule = schedules.last;
-          _log.info('i am updated');
-
-          return loanScheduleRepository.update(
-            data: lastSchedule..outstandingBalance += totalAmount,
-          );
-        }),
+      // Upload selfie photo and signature, then update loan document.
+      // Note: Do NOT mutate the last schedule's outstandingBalance here —
+      // calculateOpenTerm already handles additional loan amounts in its
+      // dedicated loop. Mutating the schedule causes double-counting.
+      final values = await Future.wait([
+        storageRepository.upload(
+          data: event.selfiePhoto.data,
+          folder: 'users/${loan.userId}/loans/${loan.id}',
+          fileName: 'additional_loan_amount_${event.selfiePhoto.name}',
+        ),
+        storageRepository.upload(
+          data: event.signatureBytes,
+          folder: 'users/${loan.userId}/loans/${loan.id}',
+          fileName:
+              'additional_loan_amount_signature_${DateTime.timestamp().toDefaultDateFormat()}.png',
+        ),
       ]);
+
+      final selfiePhotoUrl = values[0];
+      final signatureUrl = values[1];
+
+      final updatedLoan = loan
+        ..additionalLoanAmounts = [
+          ...loan.additionalLoanAmounts,
+          AdditionalLoanAmount.create(
+            loanId: loan.id,
+            amount: event.amount,
+            additionalCharges: totalAdditionalCharges,
+            advanceCharges: totalUpfrontCollection,
+            deductions: totalDeductions,
+            selfiePhotoUrl: selfiePhotoUrl,
+            signatureUrl: signatureUrl,
+            description: event.description,
+          ),
+        ];
+
+      await loanRepository.update(
+        data: updatedLoan,
+        updateView: true,
+      );
 
       emit(const AdditionalLoanState.loading());
       emit(const AdditionalLoanState.success(null));

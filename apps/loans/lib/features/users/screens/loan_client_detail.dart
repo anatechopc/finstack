@@ -150,6 +150,15 @@ class _LoanClientDetailState extends State<LoanClientDetail> {
                     .showSnackBar(SnackBar(content: Text(state.message!)));
               }
 
+              // Refresh loan data so schedules recalculate with the
+              // new additional loan amount.
+              final loansBloc = context.read<LoansBloc>();
+              final selectedLoan = loansBloc.selectedLoan;
+              loansBloc.selectLoan(
+                selectedLoan.id,
+                userLoanView: widget.userLoanView,
+              );
+
               if (!isCompactOrMedium) {
                 Navigator.of(context, rootNavigator: true).pop();
               } else {

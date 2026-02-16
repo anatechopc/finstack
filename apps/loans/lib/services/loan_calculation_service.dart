@@ -351,7 +351,13 @@ class LoanCalculationService {
 
       tempClientLoanSchedules.insert(0, firstSchedule);
 
-      for (final additionalLoanAmount in loan.additionalLoanAmounts) {
+      // Sort by createdAt ascending so older additional loans are processed
+      // first. Processing out of order causes incorrect outstanding balances
+      // because later iterations overwrite earlier schedules' OB values.
+      final sortedAdditionalLoans = loan.additionalLoanAmounts
+          .sortedBy((a) => a.createdAt);
+
+      for (final additionalLoanAmount in sortedAdditionalLoans) {
         var index = -1;
         var lastLoanSchedule =
             tempClientLoanSchedules.sublist(1).firstWhereOrNull((schedule) {
