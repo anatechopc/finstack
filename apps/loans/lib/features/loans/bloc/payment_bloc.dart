@@ -16,6 +16,7 @@ import 'package:loooans_helpers/data_helpers.dart';
 import 'package:loooans_helpers/logging_helpers.dart';
 import 'package:payment_repository/payment_repository.dart';
 import 'package:storage_repository/storage_repository.dart';
+import 'package:user_repository/user_repository.dart';
 
 part 'payment_event.dart';
 part 'payment_state.dart';
@@ -31,8 +32,11 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
         storageRepository = context.read<StorageRepository>(),
         paymentRepository = context.read<PaymentRepository>(),
         cashPoolRepository = context.read<CashPoolRepository>(),
+        userRepository = context.read<UserRepository>(),
         super(const PaymentState()) {
     on<PayLoanScheduleEvent>(_handlePayLoanScheduleEvent);
+    on<RequestPaymentOtpEvent>(_handleRequestPaymentOtpEvent);
+    on<VerifyPaymentOtpEvent>(_handleVerifyPaymentOtpEvent);
   }
 
   final AuthenticationService authService;
@@ -42,6 +46,7 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
   final StorageRepository storageRepository;
   final PaymentRepository paymentRepository;
   final CashPoolRepository cashPoolRepository;
+  final UserRepository userRepository;
 
   void makePayment({
     required Loan loan,
@@ -52,6 +57,7 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
     Uint8List? fileBytes,
     Uint8List? signatureBytes,
     bool force = false,
+    bool otpVerified = false,
   }) {
     add(
       PayLoanScheduleEvent(
@@ -63,6 +69,7 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
         fileBytes: fileBytes,
         signatureBytes: signatureBytes,
         force: force,
+        otpVerified: otpVerified,
       ),
     );
   }
@@ -95,7 +102,26 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
         ImageUrl? signatureUrl;
         String? comment;
 
-        if (!event.force) {
+        if (event.otpVerified) {
+          comment = '''
+          Payment confirmed via SMS OTP by:
+          user:id: ${authService.user.id}
+          user:name: ${authService.user.completeNameEasternOrder}
+          user:email: ${authService.user.emailAddress}
+          confirmed_at: ${DateTime.timestamp().toDefaultDateFormatExtended()}
+          verification_method: SMS OTP''';
+        } else if (event.force) {
+          if (!settingsService.forcePaymentConfirmation) {
+            throw Exception('Enable force payment confirmation in settings');
+          }
+
+          comment = '''
+          Force payment confirmed by:
+          user:id: ${authService.user.id}
+          user:name: ${authService.user.completeNameEasternOrder}
+          user:email: ${authService.user.emailAddress}
+          confirmed_at: ${DateTime.timestamp().toDefaultDateFormatExtended()}''';
+        } else {
           if (event.fileName == null ||
               event.fileBytes == null ||
               event.signatureBytes == null) {
@@ -119,17 +145,6 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
           );
           comment = '''
           Manual payment confirmed by:
-          user:id: ${authService.user.id}
-          user:name: ${authService.user.completeNameEasternOrder}
-          user:email: ${authService.user.emailAddress}
-          confirmed_at: ${DateTime.timestamp().toDefaultDateFormatExtended()}''';
-        } else {
-          if (!settingsService.forcePaymentConfirmation) {
-            throw Exception('Enable force payment confirmation in settings');
-          }
-
-          comment = '''
-          Force payment confirmed by:
           user:id: ${authService.user.id}
           user:name: ${authService.user.completeNameEasternOrder}
           user:email: ${authService.user.emailAddress}
@@ -266,6 +281,55 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
           'Something went wrong while paying schedule',
         ),
       );
+    }
+  }
+
+  Future<void> _handleRequestPaymentOtpEvent(
+    RequestPaymentOtpEvent event,
+    Emitter<PaymentState> emit,
+  ) async {
+    try {
+      emit(const PaymentState.loading(isLoading: true));
+      final response = await userRepository.requestOtpForUser(
+        idToken: authService.idToken,
+        targetUserId: event.borrowerUserId,
+      );
+      emit(const PaymentState.loading());
+      emit(
+        PaymentState.otpRequested(
+          token: response.token,
+          expireAt: response.expireAt,
+        ),
+      );
+    } catch (err) {
+      _log.severe('Request payment OTP error: $err', err);
+      emit(const PaymentState.loading());
+      emit(const PaymentState.error('Failed to send OTP'));
+    }
+  }
+
+  Future<void> _handleVerifyPaymentOtpEvent(
+    VerifyPaymentOtpEvent event,
+    Emitter<PaymentState> emit,
+  ) async {
+    try {
+      emit(const PaymentState.loading(isLoading: true));
+      final verified = await userRepository.verifyPaymentOtp(
+        idToken: authService.idToken,
+        token: event.token,
+        otp: event.otp,
+      );
+
+      emit(const PaymentState.loading());
+      if (verified) {
+        emit(const PaymentState.otpVerified());
+      } else {
+        emit(const PaymentState.error('Invalid OTP'));
+      }
+    } catch (err) {
+      _log.severe('Verify payment OTP error: $err', err);
+      emit(const PaymentState.loading());
+      emit(PaymentState.error('OTP verification failed: $err'));
     }
   }
 }

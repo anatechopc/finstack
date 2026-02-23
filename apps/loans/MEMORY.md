@@ -1,0 +1,206 @@
+# MEMORY.md
+
+Log of refactoring and bug fix work done across multiple sessions.
+
+---
+
+## Refactoring Plan
+
+Full plan documented at: `~/.claude-personal/plans/tender-tickling-kahn.md`
+
+### Phase 0: Quick Wins — COMPLETED
+
+- Fixed `LoansState` Equatable `props` in `lib/features/loans/bloc/loans_state.dart`
+- Fixed `ProductState` Equatable `props` in `lib/features/products/bloc/product_state.dart`
+- Fixed `ReportsState` Equatable `props` in `lib/features/reports/bloc/reports_state.dart`
+- Guarded service re-initialization in `lib/app/view/app.dart` redirect callback with `_initialized` flag
+- Removed dead/commented-out code in `loans_functions.dart`, `product_state.dart`, `loans_state.dart`
+
+### Phase 1: Extract Shared Utility Functions — COMPLETED
+
+- **1A** — Created `lib/services/charge_calculator.dart` (charge/deduction calculation helper, percentage parsing)
+  - Replaced 2 identical charge loops in `loans_bloc.dart`
+  - Replaced 6 inline percentage parsers in `product_bloc.dart`
+  - Replaced charge loop in `loans_bloc_extension_add_loan_amount.dart`
+- **1B** — Created `lib/services/address_builder.dart`
+  - Replaced inline address construction in `CompanyBloc`, `RegistrationBloc`, `UserBloc`, `AuthenticationBloc`
+- **1C** — Created `lib/services/session_loader.dart`
+  - Extracted ~75 duplicate lines from `initializeAuth()` and `_handleLoginEvent()` in `authentication_bloc.dart`
+
+### Phase 2: Extract Loan Calculation Service — COMPLETED
+
+- Created `lib/services/loan_calculation_service.dart` with `LoanCalculationResult`, `calculateFixedTerm()`, `calculateOpenTerm()`, `calculateLoanAmount()`
+- Wired into `LoansBloc`, replaced mutable globals
+- Deleted `lib/features/loans/bloc/loans_functions.dart`
+- Deleted `lib/features/loans/bloc/loans_bloc_extension_calculate_loan_open.dart`
+- Updated `reports_bloc_extension_soa.dart`
+
+### Phase 3: Split `app_widgets.dart` — COMPLETED
+
+- Split `lib/widgets/app_widgets.dart` (1,661 lines) into:
+  - `lib/widgets/form_widgets.dart`
+  - `lib/widgets/button_widgets.dart`
+  - `lib/widgets/dialog_widgets.dart`
+  - `lib/widgets/profile_widgets.dart`
+  - `lib/widgets/notification_widgets.dart`
+  - `lib/widgets/layout_widgets.dart`
+- `app_widgets.dart` became a barrel file re-exporting all new files
+
+### Phase 4: Split `app.dart` Routing & Providers — COMPLETED
+
+- Created `lib/app/routing/router.dart`
+- Created `lib/app/di/repository_providers.dart`
+- Created `lib/app/di/bloc_providers.dart`
+- Created `lib/app/view/alpha_banner.dart`
+- Created `lib/app/theme.dart`
+- Simplified `app.dart` to compose these pieces
+
+### Phase 5: Break Up LoansBloc God Object — COMPLETED
+
+- **5A** — Extracted `PaymentBloc` (`lib/features/loans/bloc/payment_bloc.dart`)
+- **5B** — Extracted `LoanSettlementBloc` (`lib/features/loans/bloc/loan_settlement_bloc.dart`)
+- **5C** — Extracted `AdditionalLoanBloc` (`lib/features/loans/bloc/additional_loan_bloc.dart`)
+- **5D** — Slimmed down remaining `LoansBloc`, removed unused dependencies
+
+### Phase 6: Split Giant UI Screens — COMPLETED
+
+- **6A** — `loan_client_detail.dart` (1,947 lines) split into `lib/features/users/widget/client_detail/`
+- **6B** — `add_product_screen.dart` (1,642 lines) split into `lib/features/products/widget/add_product/`
+- **6C** — `add_user_widget.dart` (1,134 lines) split into `lib/features/users/widget/add_user/`
+- **6E** — Remaining 700+ line screens split (`loan_application.dart`, `update_profile_screen.dart`, `loan_offer_detail.dart`)
+
+### Phase 7: Move Notification Creation to Go Backend — COMPLETED
+
+- **7A** — Created `triggers/notification_helpers.go` in Go backend with shared helpers
+- **7B** — Modified `triggers/loan_changes.go` to create notification documents on loan status changes
+- **7C** — Created `triggers/review_created.go` (Firestore trigger on reviews collection)
+- **7D** — Created `triggers/payment_created.go` (Firestore trigger on payments collection)
+- **7E** — Removed all notification creation calls from Flutter `loans_bloc.dart`
+- **7F** — Slimmed `notification_service.dart` from 583 to ~140 lines (kept FCM token management + notification stream only)
+
+### Phase 8: Reduce Singleton Coupling — COMPLETED
+
+- All 9 BLoCs now accept `AuthenticationService` as a constructor parameter instead of using `.instance`
+- `PaymentBloc` also accepts `SettingsService`
+- `SessionLoader` updated to accept optional `AuthenticationService` and `DeviceService` parameters
+- `NotificationService.instance` kept in `AuthenticationBloc` (justified by lifecycle ordering)
+
+### Phase 9: Theme Consolidation — COMPLETED
+
+- **9A** — Expanded `lib/app/theme.dart` with comprehensive Material 3 theme tokens:
+  - `ColorScheme` with all brand colors mapped to semantic roles
+  - `TextTheme` with Urbanist font at all standard sizes (displayLarge through labelSmall)
+  - `InputDecorationTheme` matching form widget patterns
+  - `FilledButtonThemeData` and `OutlinedButtonThemeData`
+  - `DialogThemeData` with green background
+  - `CardThemeData`, `ChipThemeData`, `ProgressIndicatorThemeData`
+- **9B** — Added design token constants to `lib/utils/screen_helpers.dart`:
+  - `AppSpacing` (xs, sm, md, lg, xl, xxl)
+  - `AppTypography` (displayLarge through labelSmall font sizes)
+- **9C** — Created `DESIGN.md` with full design system documentation
+
+### Phase 10: Widget Theme Compliance — COMPLETED
+
+Updated widget files to use theme values instead of hardcoded styling:
+
+- **button_widgets.dart** — Removed `GoogleFonts.urbanist()` textStyle; buttons now inherit from theme
+- **form_widgets.dart** — Replaced `GoogleFonts` with `TextStyle`, removed explicit dialog `backgroundColor`
+- **dialog_widgets.dart** — Removed explicit `backgroundColor: AppColors.green1` from 4 dialogs; removed explicit `CircularProgressIndicator` color
+- **display_widgets.dart** — Removed `GoogleFonts.urbanist()` from RichText
+- **notification_widgets.dart** — Replaced `AppColors.white` with `colorScheme.surface`, replaced hardcoded `TextStyle` with theme text styles
+
+---
+
+## Bug Fixes (Post-Refactoring)
+
+### google_fonts AssetManifest.json error
+
+- **Symptom:** `google_fonts was unable to load font Urbanist-Regular` / `Unable to load asset: 'AssetManifest.json'`
+- **Cause:** Build cache corruption
+- **Fix:** `fvm flutter clean && fvm flutter pub get`
+
+### Loan offer selection UI bugs (3 related issues)
+
+- **Symptom 1:** Draggable sheet bounces down and back up when selecting a different loan offer
+- **Symptom 2:** Background color of loan detail doesn't match the selected item's color
+- **Symptom 3:** Selected indicator (white border) not showing on the loan offer item
+- **Root cause:** Non-admin `BlocListener` in `loan_offers_widget.dart` always navigated via GoRouter on product selection, causing `MainScreen` to rebuild (resetting sheet position, `_selectedColor`, and `_selectedIndex`)
+- **Fix in `loan_offers_widget.dart` (line 80-84):** Wrapped GoRouter navigation in `if (isCompactOrMedium)` so desktop doesn't navigate on product selection
+- **Fix in `loan_offer_item.dart`:** Added `didUpdateWidget` override to sync internal `_selectedState` with parent's `widget.selected` prop
+
+### Selection delay when switching loan offer items
+
+- **Symptom:** ~1 second delay before the newly selected item appears selected
+- **Root cause:** Grid's `BlocBuilder.buildWhen` didn't include `ProductStatus.loading`, so the old item didn't visually deselect until the BLoC finished network calls
+- **Fix in `loan_offers_widget.dart` (line 310-317):** Added `ProductStatus.loading` to the grid's `buildWhen` list
+
+### Progressive loading for loan offer detail
+
+- **Symptom:** Entire detail panel waited for reviews to load before showing anything
+- **Root cause:** `_handleSelectProductEvent` in `product_bloc.dart` loaded product + reviews sequentially before emitting `selected`
+- **Fix in `product_bloc.dart` (lines 738-772):** Restructured to emit `selected` immediately after product/charges/deductions are ready, then load reviews in background and emit `ProductState.refresh()` when done
+- **Fix in `loan_offer_detail.dart`:** Wrapped `_reviews()` and `_compactBody()` methods in `BlocBuilder<ProductBloc, ProductState>` with `buildWhen` for `ProductStatus.selected` and `ProductStatus.refresh`, so reviews populate asynchronously
+
+### Wrong principal balance for consecutive additional loans (Issue #4)
+
+- **Symptom:** Adding 2+ additional loans to an open-term loan showed the same (wrong) principal balance for all
+- **Root cause 1 (stale UI):** `BlocListener<AdditionalLoanBloc>` success handler in `loan_client_detail.dart` didn't call `selectLoan()` to refresh loan data after a successful additional loan
+- **Fix:** Added `loansBloc.selectLoan()` call before popping the dialog
+- **Root cause 2 (double-counted OB):** `_handleAddLoanAmountEvent` in `additional_loan_bloc.dart` mutated the last Firestore schedule's `outstandingBalance += totalAmount`, but `calculateOpenTerm` already adds additional loan amounts in its dedicated loop
+- **Fix:** Removed the `Future.microtask` block that updated the schedule's OB; also removed unused `LoanScheduleRepository` dependency
+- **Root cause 3 (wrong processing order):** `loan.additionalLoanAmounts` was iterated in reverse chronological order (newest first), causing older loans to pick up inflated OB values and overwrite newer schedules
+- **Fix in `loan_calculation_service.dart`:** Added `sortedBy((a) => a.createdAt)` before the `for` loop
+- **PR:** #33
+
+---
+
+## Completed Work (continued)
+
+### SMS OTP Payment Verification (Issue #66) — 2026-02-18
+
+**Status:** Implemented. Pending deployment and testing.
+
+**Approach:** Uses a dedicated Android device as SMS gateway, Firebase RTDB as message queue. Avoids telco registration.
+
+**Flutter changes:**
+- `authentication_bloc.dart` — Added `_otpToken` field, `_handleVerifyOtpEvent` now uses stored token (hash) instead of userId to read OTP from RTDB
+- `user_network_service.dart` — Added `requestOtpForUser()` and `verifyPaymentOtp()` methods
+- `user_repository.dart` — Added proxy methods for the above
+- `payment_event.dart` — Added `RequestPaymentOtpEvent`, `VerifyPaymentOtpEvent`, and `otpVerified` flag on `PayLoanScheduleEvent`
+- `payment_state.dart` — Added `otpRequested`, `otpVerified` statuses + `token`, `expireAt` fields
+- `payment_bloc.dart` — Added `UserRepository` dependency, OTP request/verify handlers, `otpVerified` branch in payment handler with SMS OTP audit comment
+- `payment_otp_dialog.dart` — **New** widget: loading spinner, 6-digit input, countdown timer, verify/resend/cancel buttons
+- `client_detail_dialogs.dart` — Uncommented "thru Mobile OTP" button, implemented mobile-otp branch with OTP dialog + cash pool reminder
+
+**Key architecture:**
+- Teller requests OTP → Go backend writes to RTDB `otp/{hash}` with `sms_status: "pending"`
+- Android gateway listens for pending entries, sends SMS, updates status to "sent"
+- Borrower enters code on teller's device → Flutter verifies via `verifyPaymentOtp` endpoint
+- Payment recorded with SMS OTP audit trail
+
+**Note:** `verifyPaymentOtp` Flutter URL is `$LOOOANS_BASE_API_URL/users/verify/payment-otp` — ensure API routing matches Go function entry point.
+
+---
+
+## Pending Work
+
+**Subtask #67 (take photo + signature before payment):** Verified FULLY IMPLEMENTED — signature pad, selfie capture, Cloud Storage upload, integrated into payment and additional loan flows.
+
+### SMS OTP — Remaining items
+- Deploy Go functions and test end-to-end
+- Create Firebase Auth gateway user (`sms-gateway@loooans.com`) in both projects
+- Place `google-services.json` in `apps/sms-gateway/app/` and configure gateway password
+- Install and test gateway app on Android device
+- Extend SMS OTP to additional loan flow (future)
+
+---
+
+## Key Notes
+
+- Always use `fvm flutter` (not plain `flutter`) — project uses FVM with Flutter 3.38.4
+- Run `fvm flutter analyze` after changes to verify no errors
+- Pre-existing info/warning issues exist (deprecated `withOpacity`, TODO style, `reassemble` usage) — not introduced by this work
+- The Go backend is at `loooans/go/loooans_cloud_functions/`
+- Three Firebase flavors: development, staging (`loooans-dev-stg`), production (`loooans-prod`)
+- Design system documented in `DESIGN.md`; theme tokens defined in `lib/app/theme.dart`
+- Prefer using theme values (`Theme.of(context).colorScheme`, `Theme.of(context).textTheme`) over hardcoded `AppColors` and `GoogleFonts` in widgets

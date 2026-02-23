@@ -54,6 +54,20 @@
           }
         },
         {
+          "source": "/api/users/request/otp",
+          "run": {
+            "serviceId": "requestotp-development",
+            "region": "asia-east1"
+          }
+        },
+        {
+          "source": "/api/users/verify/payment-otp",
+          "run": {
+            "serviceId": "verifypaymentotp-development",
+            "region": "asia-east1"
+          }
+        },
+        {
           "source": "**",
           "destination": "/index.html"
         }
@@ -76,6 +90,20 @@
           }
         },
         {
+          "source": "/api/users/request/otp",
+          "run": {
+            "serviceId": "requestotp-staging",
+            "region": "asia-east1"
+          }
+        },
+        {
+          "source": "/api/users/verify/payment-otp",
+          "run": {
+            "serviceId": "verifypaymentotp-staging",
+            "region": "asia-east1"
+          }
+        },
+        {
           "source": "**",
           "destination": "/index.html"
         }
@@ -94,6 +122,20 @@
           "source": "/api/utils/sendEmail",
           "run": {
             "serviceId": "sendemail-production",
+            "region": "asia-east1"
+          }
+        },
+        {
+          "source": "/api/users/request/otp",
+          "run": {
+            "serviceId": "requestotp-production",
+            "region": "asia-east1"
+          }
+        },
+        {
+          "source": "/api/users/verify/payment-otp",
+          "run": {
+            "serviceId": "verifypaymentotp-production",
             "region": "asia-east1"
           }
         },
