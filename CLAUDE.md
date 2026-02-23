@@ -106,3 +106,17 @@ go test -v ./...
 - Both projects reference the same Firestore document schemas; changes to document structure must be coordinated
 - Go triggers reference the same collection/document paths that Flutter repositories read/write
 - Never push directly to `master` — it deploys the Go backend to production
+
+## Session Memory
+
+Each sub-project maintains a `MEMORY.md` file that logs completed work, bug fixes, and key decisions:
+
+- **Root**: `MEMORY.md` — cross-project work, CI/CD changes, high-level decisions
+- **Flutter App**: `apps/loans/MEMORY.md` — app refactoring, bug fixes, UI changes
+- **Go Functions**: `functions/loans/MEMORY.md` — triggers, API endpoints, backend changes
+
+**Before ending a session or conversation, always update the relevant `MEMORY.md` file(s) with a summary of what was done.** Include:
+- What was added, changed, or fixed
+- Key decisions made
+- Any bugs encountered and how they were resolved
+- Notes for the next session if work is incomplete

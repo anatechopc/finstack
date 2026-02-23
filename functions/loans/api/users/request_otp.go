@@ -1,7 +1,6 @@
 package users
 
 import (
-	"bytes"
 	"com.loooans.app/api/service"
 	utils2 "com.loooans.app/utils"
 	"context"
@@ -10,7 +9,6 @@ import (
 	"go.uber.org/zap"
 	"io"
 	"net/http"
-	"os"
 	"time"
 )
 
@@ -82,23 +80,31 @@ func RequestOtp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Determine target user
+	targetUserId := userId
+	if tuid, ok := parsedBody["target_user_id"]; ok && tuid != "" {
+		targetUserId = tuid
+	}
+
+	// Determine reason (defaults based on objective)
+	reason := "mobile_verification"
+	if otpObjective == "email" {
+		reason = "email_verification"
+	}
+	if r, ok := parsedBody["reason"]; ok && r != "" {
+		reason = r
+	}
+
 	subdomain := utils2.GetSubdomain()
 	collectionPrefix := utils2.GetCollectionPrefix()
 
-	//token := parsedBody["token"]
 	hash, otp, errOtp := service.GenerateOtp()
 
 	if errOtp != nil {
-		// do something
 		log.Error("error otp: " + errOtp.Error())
 		http.Error(w, "Otp generation error: "+errOtp.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	//log.Debug(fmt.Sprintf("otp: %s", otp))
-	// create entry in firebase database here
-	// userId(should be taken from idToken from authorization)
-	// {otp: {userId: {expireIn, userId, otpValue, created_at, updated_at, deleted_at, id}}}
 
 	ctx := context.Background()
 	app, errFirebaseAdmin := utils2.InitializeFirebase(ctx)
@@ -117,27 +123,6 @@ func RequestOtp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbClient := db.NewRef("otp/" + userId)
-	timeNow := time.Now().UTC()
-	expireAt := timeNow.Add(time.Minute * 5).UnixMilli()
-
-	dbSetErr := dbClient.Set(ctx, map[string]any{
-		"id":         hash,
-		"userId":     userId,
-		"otp":        otp,
-		"expire_at":  expireAt,
-		"created_at": timeNow.UnixMilli(),
-		"updated_at": timeNow.UnixMilli(),
-		"deleted_at": nil,
-		"objective":  otpObjective,
-	})
-
-	if dbSetErr != nil {
-		log.Error("error realtime db SET: " + dbSetErr.Error())
-		http.Error(w, "Realtime DB error SET: "+dbSetErr.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	firestoreClient, errFirestoreClient := app.Firestore(ctx)
 
 	if errFirestoreClient != nil {
@@ -146,7 +131,7 @@ func RequestOtp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userRef := firestoreClient.Doc(collectionPrefix + "users/" + userId)
+	userRef := firestoreClient.Doc(collectionPrefix + "users/" + targetUserId)
 	snapshot, errSnapshot := userRef.Get(ctx)
 
 	if errSnapshot != nil {
@@ -160,6 +145,41 @@ func RequestOtp(w http.ResponseWriter, r *http.Request) {
 	if userDetails == nil {
 		log.Error("User not found")
 		http.Error(w, "User not found.", http.StatusInternalServerError)
+		return
+	}
+
+	dbClient := db.NewRef("otp/" + hash)
+	timeNow := time.Now().UTC()
+	expireAt := timeNow.Add(time.Minute * 5).UnixMilli()
+
+	otpData := map[string]any{
+		"id":           hash,
+		"userId":       targetUserId,
+		"otp":          otp,
+		"expire_at":    expireAt,
+		"created_at":   timeNow.UnixMilli(),
+		"updated_at":   timeNow.UnixMilli(),
+		"deleted_at":   nil,
+		"objective":    otpObjective,
+		"reason":       reason,
+		"requested_by": userId,
+	}
+
+	if otpObjective == "mobile_number" {
+		phone := userDetails["mobile_number"].(string)
+		otpData["phone"] = phone
+		otpData["message"] = fmt.Sprintf(
+			"NEVER SHARE YOUR ONE-TIME PIN. Your Loooans OTP is %s. If you did not request for OTP, please contact support at support@loooans.com immediately.", otp)
+		otpData["sms_status"] = "pending"
+		otpData["sent_at"] = nil
+		otpData["error"] = nil
+	}
+
+	dbSetErr := dbClient.Set(ctx, otpData)
+
+	if dbSetErr != nil {
+		log.Error("error realtime db SET: " + dbSetErr.Error())
+		http.Error(w, "Realtime DB error SET: "+dbSetErr.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -183,66 +203,17 @@ func RequestOtp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if otpObjective == "mobile_number" {
-		log.Debug("apiKey", zap.String("key", os.Getenv("SEMAPHORE_API_KEY")))
-		body := map[string]any{
-			//"apikey": os.Getenv("SEMAPHORE_API_KEY"),
-			"to": userDetails["mobile_number"].(string),
-			//"sendername": "Loooans!",
-			"message": fmt.Sprintf("NEVER SHARE YOUR ONE-TIME PIN. Your OTP is %s. If you did not request for OTP, please contact support at support@loooans.com immediately.", otp),
-			//"code":    otp,
+		dataSend := map[string]any{
+			"redirect_url": fmt.Sprintf("%sloooans.com/verify?vid=%s", subdomain, hash),
+			"token":        hash,
+			"expire_at":    expireAt,
 		}
 
-		bodyBytes, _ := json.Marshal(body)
-
-		req, errReq := http.NewRequest(http.MethodPost, "https://api.transmitsms.com/send-sms.json", bytes.NewReader(bodyBytes))
-
-		if errReq != nil {
-			log.Error("Cannot send OTP to mobile number", zap.String("error", errReq.Error()))
-			http.Error(w, "Cannot send OTP to mobile number", http.StatusBadRequest)
+		if encodeErr := json.NewEncoder(w).Encode(dataSend); encodeErr != nil {
+			log.Error("Send encode error", zap.String("error", encodeErr.Error()))
+			http.Error(w, "Send encode error", http.StatusInternalServerError)
 			return
 		}
-
-		req.SetBasicAuth(os.Getenv("KUDOSITY_API_KEY"), os.Getenv("KUDOSITY_API_SECRET"))
-
-		client := &http.Client{}
-		res, errRes := client.Do(req)
-
-		if errRes != nil {
-			log.Error("client.Do error", zap.String("error", errRes.Error()))
-			http.Error(w, "Client error", http.StatusInternalServerError)
-			return
-		}
-
-		defer res.Body.Close()
-
-		log.Debug("response status", zap.Int("code", res.StatusCode))
-
-		var data map[string]any
-		errResParse := json.NewDecoder(res.Body).Decode(&data)
-
-		log.Debug(fmt.Sprintf("data: %v", data))
-
-		if errResParse != nil {
-			log.Error("Response parse error", zap.String("error", errResParse.Error()))
-			http.Error(w, "Response parse error", http.StatusInternalServerError)
-			return
-		}
-
-		if res.StatusCode >= http.StatusOK && res.StatusCode <= http.StatusAccepted {
-			dataSend := map[string]any{
-				"redirect_url": fmt.Sprintf("%sloooans.com/verify?vid=%s", subdomain, hash),
-				"token":        hash,
-				"expire_at":    expireAt,
-			}
-
-			if encodeErr := json.NewEncoder(w).Encode(dataSend); encodeErr != nil {
-				log.Error("Send encode error", zap.String("error", encodeErr.Error()))
-				http.Error(w, "Send encode error", http.StatusInternalServerError)
-			}
-		}
-
-		http.Error(w, "Unknown error while sending request to send SMS.", http.StatusInternalServerError)
-		return
 	} else {
 		log.Error("Invalid OTP objective", zap.String("objective", otpObjective))
 		http.Error(w, "Invalid OTP objective", http.StatusBadRequest)

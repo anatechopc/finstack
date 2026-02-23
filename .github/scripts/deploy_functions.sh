@@ -56,6 +56,14 @@ echo ""
 declare -A pids
 
 # Deploy each function in the background
+echo "Deploying requestOtp"
+gcloud functions deploy requestOtp_$environment --set-env-vars ENVIRONMENT=$environment --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --entry-point requestOtp &
+pids[$!]="requestOtp"
+
+echo "Deploying verifyPaymentOtp"
+gcloud functions deploy verifyPaymentOtp_$environment --set-env-vars ENVIRONMENT=$environment --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --entry-point verifyPaymentOtp &
+pids[$!]="verifyPaymentOtp"
+
 echo "Deploying sendEmail"
 gcloud functions deploy sendEmail_$environment --set-env-vars ENVIRONMENT=$environment --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --entry-point sendEmail &
 pids[$!]="sendEmail"
@@ -89,7 +97,7 @@ gcloud functions deploy paymentCreated_$environment --gen2 --runtime=go122 --reg
 pids[$!]="paymentCreated"
 
 echo ""
-echo "All 8 functions deploying in parallel. Waiting for completion..."
+echo "All 10 functions deploying in parallel. Waiting for completion..."
 echo ""
 
 # Wait for all background processes and track failures
@@ -102,7 +110,7 @@ done
 
 echo ""
 if [ ${#failed[@]} -eq 0 ]; then
-  echo "Deployment done. All 8 functions deployed successfully."
+  echo "Deployment done. All 10 functions deployed successfully."
 else
   echo "Deployment finished with errors. Failed functions: ${failed[*]}"
   exit 1
