@@ -104,17 +104,16 @@ class SmsGatewayService : Service() {
     }
 
     private fun handleOtpEntry(snapshot: DataSnapshot) {
-        val objective = snapshot.child("objective").getValue(String::class.java)
-        val smsStatus = snapshot.child("sms_status").getValue(String::class.java)
+        val data = mutableMapOf<String, Any?>()
+        for (child in snapshot.children) {
+            data[child.key!!] = child.value
+        }
 
-        if (objective != "mobile_number" || smsStatus != "pending") return
-
-        val phone = snapshot.child("phone").getValue(String::class.java) ?: return
-        val message = snapshot.child("message").getValue(String::class.java) ?: return
-        val hash = snapshot.key ?: return
+        val entry = OtpEntry.fromMap(snapshot.key, data) ?: return
+        if (!entry.shouldProcess()) return
 
         serviceScope.launch {
-            sendSms(hash, phone, message)
+            sendSms(entry.hash, entry.phone, entry.message)
         }
     }
 
