@@ -88,3 +88,7 @@ The `ENVIRONMENT` env var (`development`, `staging`, `production`) is required a
 - [Project Overview](docs/project-overview.md) — tech stack, integrations
 - [Architecture](docs/architecture.md) — module details, patterns, function registration
 - [Deployment](docs/deployment.md) — CI/CD pipeline, branch mapping, manual deploy
+
+## Session Memory
+
+Keep `MEMORY.md` updated when completing significant work. Before ending a session, summarize what was done.
