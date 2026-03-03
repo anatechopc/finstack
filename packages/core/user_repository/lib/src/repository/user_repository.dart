@@ -116,6 +116,30 @@ class UserRepository implements BaseRepository<User> {
     );
   }
 
+  Future<RequestOtpResponse> requestOtpForUser({
+    required String idToken,
+    required String targetUserId,
+    String reason = 'payment',
+  }) {
+    return _networkService.requestOtpForUser(
+      idToken: idToken,
+      targetUserId: targetUserId,
+      reason: reason,
+    );
+  }
+
+  Future<bool> verifyPaymentOtp({
+    required String idToken,
+    required String token,
+    required String otp,
+  }) {
+    return _networkService.verifyPaymentOtp(
+      idToken: idToken,
+      token: token,
+      otp: otp,
+    );
+  }
+
   Future<UserOtp> getTokenDetails({
     required String userId,
   }) {

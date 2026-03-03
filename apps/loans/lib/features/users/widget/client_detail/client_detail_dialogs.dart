@@ -12,6 +12,7 @@ import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/features/cash_pool/bloc/cash_pool_bloc.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
 import 'package:loooans/features/loans/bloc/payment_bloc.dart';
+import 'package:loooans/features/users/widget/client_detail/payment_otp_dialog.dart';
 import 'package:loooans/features/loans/screens/statement_of_account_screen.dart';
 import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/extensions.dart';
@@ -258,8 +259,7 @@ Future<void> showMakePaymentDialog(
             child: AppWidgets.defaultFilledButton(
               options: [
                 ButtonOption(label: 'with Signature', value: 'signature'),
-                // TODO(deibeeed): uncomment when mobile otp is enabled. https://github.com/anatechopc/loooans/issues/68
-                // ButtonOptions(label: 'thru Mobile OTP', value: 'mobile-otp'),
+                ButtonOption(label: 'thru Mobile OTP', value: 'mobile-otp'),
                 if (SettingsService.instance.forcePaymentConfirmation)
                   ButtonOption(label: 'forcefully', value: 'force'),
               ],
@@ -436,7 +436,86 @@ By clicking 'Proceed,' you acknowledge that the payment will be covered by the c
                       }
                     }
                   } else if (selectedPaymentOption == 'mobile-otp') {
-                    // something for mobile otp here
+                    context.read<PaymentBloc>().add(
+                          RequestPaymentOtpEvent(
+                            borrowerUserId: userId,
+                          ),
+                        );
+                    final result = await showPaymentOtpDialog(
+                      context,
+                      borrowerUserId: userId,
+                    );
+                    if (result != null && result['verified'] == true) {
+                      final cashPoolDisplay =
+                          context.read<CashPoolBloc>().cashPoolDisplay;
+                      var reminderMessage = '';
+
+                      if (totalPayment > cashPoolDisplay.balance) {
+                        reminderMessage = '''
+This payment exceeds the remaining balance in the cash pool. Please ensure that the excess amount is collected from the client.
+
+By clicking 'Proceed,' you acknowledge that the excess payment will be received.''';
+                      } else if (totalPayment ==
+                          cashPoolDisplay.balance) {
+                        reminderMessage = '''
+The payment amount is equal to the remaining balance in the cash pool. The full payment will be deducted from the balance.
+
+By clicking 'Proceed,' you acknowledge that the payment will be covered by the cash pool.''';
+                      } else if (totalPayment <
+                          cashPoolDisplay.balance) {
+                        reminderMessage = '''
+The payment amount is less than the remaining balance in the cash pool. The full payment will be deducted from the balance.
+
+By clicking 'Proceed,' you acknowledge that the payment will be covered by the cash pool.''';
+                      }
+
+                      final answer = await showDialog<bool>(
+                        context: context,
+                        builder: (context) {
+                          return AlertDialog(
+                            title: const Text(
+                              'Cash pool reminder',
+                            ),
+                            content: Text(reminderMessage),
+                            actions: [
+                              AppWidgets.defaultFilledButton(
+                                child: const Text('Proceed'),
+                                onPressed: () {
+                                  Navigator.of(
+                                    context,
+                                    rootNavigator: true,
+                                  ).pop(true);
+                                },
+                              ),
+                              AppWidgets.defaultOutlinedButton(
+                                child: const Text('Cancel'),
+                                onPressed: () {
+                                  Navigator.of(
+                                    context,
+                                    rootNavigator: true,
+                                  ).pop(false);
+                                },
+                              ),
+                            ],
+                          );
+                        },
+                      );
+
+                      if (answer ?? false) {
+                        context.read<PaymentBloc>().makePayment(
+                              loan: context
+                                  .read<LoansBloc>()
+                                  .selectedLoan,
+                              schedule: schedule,
+                              interestPayment: key.currentState!
+                                      .value['interest_payment']
+                                  as String,
+                              payment: key.currentState!
+                                  .value['principal_payment'] as String,
+                              otpVerified: true,
+                            );
+                      }
+                    }
                   } else if (selectedPaymentOption == 'force') {
                     final answer = await showDialog<bool>(
                       context: context,

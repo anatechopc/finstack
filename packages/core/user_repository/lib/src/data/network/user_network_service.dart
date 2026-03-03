@@ -71,6 +71,61 @@ class UserNetworkService {
     return RequestOtpResponse.fromJson(body);
   }
 
+  Future<RequestOtpResponse> requestOtpForUser({
+    required String idToken,
+    required String targetUserId,
+    String reason = 'payment',
+  }) async {
+    final response = await http.post(
+      Uri.parse('$LOOOANS_BASE_API_URL/users/request/otp'),
+      headers: {
+        'Authorization': 'Bearer $idToken',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'purpose': 'mobile_number',
+        'target_user_id': targetUserId,
+        'reason': reason,
+      }),
+    );
+
+    if (response.statusCode > HttpStatus.noContent) {
+      throw HttpException(
+        'Request OTP for user error: ${response.statusCode} ${response.body}',
+      );
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return RequestOtpResponse.fromJson(body);
+  }
+
+  Future<bool> verifyPaymentOtp({
+    required String idToken,
+    required String token,
+    required String otp,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$LOOOANS_BASE_API_URL/users/verify/payment-otp'),
+      headers: {
+        'Authorization': 'Bearer $idToken',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'token': token,
+        'otp': otp,
+      }),
+    );
+
+    if (response.statusCode > HttpStatus.noContent) {
+      throw HttpException(
+        'Verify payment OTP error: ${response.statusCode} ${response.body}',
+      );
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return body['verified'] as bool;
+  }
+
   Future<void> verifyUserEmail({
     required String idToken,
   }) async {

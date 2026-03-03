@@ -40,6 +40,7 @@ class AuthenticationBloc
   final AddressRepository _addressRepository;
   final SettingsRepository _settingsRepository;
   StreamSubscription<Future<String>>? _idTokenChange;
+  String? _otpToken;
 
   @override
   Future<void> close() {
@@ -169,6 +170,7 @@ class AuthenticationBloc
       final response = await _userRepository.requestOtp(
         idToken: authService.idToken,
       );
+      _otpToken = response.token;
       emit(const AuthenticationState.loading());
       emit(AuthenticationState.requestOtp(
         token: response.token,
@@ -188,7 +190,7 @@ class AuthenticationBloc
     try {
       emit(const AuthenticationState.loading(isLoading: true));
       final otpDetails = await _userRepository.getTokenDetails(
-        userId: authService.user.id,
+        userId: _otpToken!,
       );
 
       if (otpDetails.expireAt.isBefore(DateTime.timestamp())) {
