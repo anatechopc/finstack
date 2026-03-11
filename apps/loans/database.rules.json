@@ -26,25 +26,6 @@
       }
     },
 
-    "companies": {
-      "$companyId": {
-        "report_summary": {
-          ".read": "auth != null"
-        },
-        "loans": {
-          "$loanId": {
-            ".read": "auth != null",
-            ".write": "auth != null"
-          }
-        },
-        "authentication": {
-          "force_logout": {
-            ".read": "auth != null"
-          }
-        }
-      }
-    },
-
     "dev": {
       "companies": {
         "$companyId": {
