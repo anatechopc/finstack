@@ -41,6 +41,16 @@ class _PaymentOtpDialogState extends State<_PaymentOtpDialog> {
   bool _isExpired = false;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<PaymentBloc>().add(
+            RequestPaymentOtpEvent(borrowerUserId: widget.borrowerUserId),
+          );
+    });
+  }
+
+  @override
   void dispose() {
     _otpController.dispose();
     super.dispose();

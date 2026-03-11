@@ -436,11 +436,6 @@ By clicking 'Proceed,' you acknowledge that the payment will be covered by the c
                       }
                     }
                   } else if (selectedPaymentOption == 'mobile-otp') {
-                    context.read<PaymentBloc>().add(
-                          RequestPaymentOtpEvent(
-                            borrowerUserId: userId,
-                          ),
-                        );
                     final result = await showPaymentOtpDialog(
                       context,
                       borrowerUserId: userId,
