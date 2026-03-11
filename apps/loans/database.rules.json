@@ -2,16 +2,88 @@
   "rules": {
     ".read": false,
     ".write": false,
+
     "otp": {
+      ".read": "auth != null",
       "$hash": {
-        ".read": "auth != null",
         ".write": "auth != null && auth.token.email == 'sms-gateway@loooans.com'"
       }
     },
+
     "gateway_status": {
       "$deviceId": {
         ".read": "auth != null",
         ".write": "auth != null && auth.token.email == 'sms-gateway@loooans.com'"
+      }
+    },
+
+    "app": {
+      "sessions": {
+        "$uid": {
+          ".read": "auth != null && auth.uid == $uid",
+          ".write": "auth != null && auth.uid == $uid"
+        }
+      }
+    },
+
+    "companies": {
+      "$companyId": {
+        "report_summary": {
+          ".read": "auth != null"
+        },
+        "loans": {
+          "$loanId": {
+            ".read": "auth != null",
+            ".write": "auth != null"
+          }
+        },
+        "authentication": {
+          "force_logout": {
+            ".read": "auth != null"
+          }
+        }
+      }
+    },
+
+    "dev": {
+      "companies": {
+        "$companyId": {
+          "report_summary": {
+            ".read": "auth != null"
+          },
+          "loans": {
+            "$loanId": {
+              ".read": "auth != null",
+              ".write": "auth != null"
+            }
+          },
+          "authentication": {
+            "force_logout": {
+              ".read": "auth != null"
+            }
+          }
+        }
+      }
+    },
+
+    "stg": {
+      "companies": {
+        "$companyId": {
+          "report_summary": {
+            ".read": "auth != null"
+          },
+          "loans": {
+            "$loanId": {
+              ".read": "auth != null",
+              ".write": "auth != null"
+            }
+          },
+          "authentication": {
+            "force_logout": {
+              ".read": "auth != null"
+            }
+          }
+        }
       }
     }
   }
