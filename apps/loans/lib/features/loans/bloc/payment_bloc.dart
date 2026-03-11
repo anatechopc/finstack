@@ -103,13 +103,15 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
         String? comment;
 
         if (event.otpVerified) {
+          final borrower = await userRepository.get(id: loan.userId);
           comment = '''
           Payment confirmed via SMS OTP by:
-          user:id: ${authService.user.id}
-          user:name: ${authService.user.completeNameEasternOrder}
-          user:email: ${authService.user.emailAddress}
+          user:id: ${borrower.id}
+          user:name: ${borrower.completeNameEasternOrder}
+          user:email: ${borrower.emailAddress}
           confirmed_at: ${DateTime.timestamp().toDefaultDateFormatExtended()}
-          verification_method: SMS OTP''';
+          verification_method: SMS OTP
+          processed_by: ${authService.user.completeNameEasternOrder} (${authService.user.id})''';
         } else if (event.force) {
           if (!settingsService.forcePaymentConfirmation) {
             throw Exception('Enable force payment confirmation in settings');
@@ -156,7 +158,7 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
           loanScheduleId: schedule.id,
           transactionPhotoUrl: transactionPhotoUrl,
           signatureUrl: signatureUrl,
-          bypassPaymentProof: event.force,
+          bypassPaymentProof: event.force || event.otpVerified,
           comment: comment,
           confirmedBy: authService.user.id,
           confirmedAt: DateTime.timestamp(),

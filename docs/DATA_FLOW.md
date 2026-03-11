@@ -279,6 +279,19 @@ flowchart TD
     style GoTriggers fill:#fff3e0,stroke:#e65100,color:#000
 ```
 
+### Payment Verification Methods
+
+A payment requires proof of the borrower's consent. The `Payment.create()` factory enforces this: at least one of `transactionPhotoUrl` or `autoCollectRef` must be non-null, unless proof is bypassed.
+
+| Method | UI Option | Proof Required | `bypassPaymentProof` | How It Works |
+|--------|-----------|---------------|---------------------|--------------|
+| **Signature** | "with Signature" | `transactionPhotoUrl` + `signatureUrl` | `false` | Teller takes photo of transaction receipt, borrower signs on device. Both uploaded to Cloud Storage. |
+| **SMS OTP** | "thru Mobile OTP" | None (OTP is the proof) | `true` | OTP sent to borrower's phone via SMS gateway. Borrower reads code to teller. Verified server-side. Audit trail in `comment` field. |
+| **Force** | "forcefully" | None | `true` | Admin-only override (requires `Settings.forcePaymentConfirmation` enabled). No photo/signature needed. Audit trail in `comment` field. |
+| **AutoCollect** | Not yet active | `autoCollectRef` | `false` | Planned feature: automatic bank-to-bank deduction (UnionBank). `autoCollectRef` stores the bank transaction reference number. |
+
+**`comment` field audit trail format** — Each method records who confirmed, when, and which verification method was used.
+
 ---
 
 ## 5. Notification Flow (End-to-End)

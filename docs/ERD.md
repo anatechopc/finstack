@@ -164,11 +164,11 @@ erDiagram
         DateTime deletedAt
         String userId FK
         String loanScheduleId FK
-        ImageUrl transactionPhotoUrl
-        ImageUrl signatureUrl
-        String autoCollectRef
-        String confirmedBy FK
-        String comment
+        ImageUrl transactionPhotoUrl "Photo of transaction receipt (signature path)"
+        ImageUrl signatureUrl "Borrower signature capture (signature path)"
+        String autoCollectRef "Bank transaction ref (AutoCollect path - not yet active)"
+        String confirmedBy FK "User ID of the teller who confirmed payment"
+        String comment "Audit trail: who confirmed, method used, timestamp"
         DateTime confirmedAt
     }
 

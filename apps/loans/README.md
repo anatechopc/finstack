@@ -195,6 +195,33 @@ $ ./scripts/deploy-indexes.sh stg
 $ ./scripts/deploy-indexes.sh prod
 ```
 
+## Deploying Realtime Database Rules
+
+Two separate rule files exist — one per Firebase project:
+
+| File | Project | Environments |
+|------|---------|-------------|
+| `database.rules.json` | `loooans-dev-stg` | development, staging |
+| `database.rules.prod.json` | `loooans-prod` | production |
+
+### Deploy to dev/staging
+
+```sh
+$ firebase deploy --only database --project loooans-dev-stg
+```
+
+This uses `database.rules.json` as configured in `firebase.json`.
+
+### Deploy to production
+
+```sh
+$ firebase database:rules:set database.rules.prod.json --project loooans-prod
+```
+
+Production uses a separate file deployed manually since `firebase.json` only supports one `database.rules` reference.
+
+---
+
 [coverage_badge]: coverage_badge.svg
 [flutter_localizations_link]: https://api.flutter.dev/flutter/flutter_localizations/flutter_localizations-library.html
 [internationalization_link]: https://flutter.dev/docs/development/accessibility-and-localization/internationalization

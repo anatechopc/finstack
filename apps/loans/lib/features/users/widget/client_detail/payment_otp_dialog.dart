@@ -181,6 +181,7 @@ class _PaymentOtpDialogState extends State<_PaymentOtpDialog> {
                         : const Text('Verify OTP'),
                   ),
                 ),
+              const SizedBox(height: 8),
               SizedBox(
                 width: double.infinity,
                 child: AppWidgets.defaultOutlinedButton(
