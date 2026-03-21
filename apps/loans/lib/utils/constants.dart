@@ -71,6 +71,13 @@ class Constants {
         redirectPath: '${Paths.index}?sec=clients',
       ),
       MenuModel(
+        title: 'Payment Center',
+        logoPath: 'svg/cash.svg',
+        redirectPath: Paths.paymentCenter,
+        show: AuthenticationService.instance.user.userRole == UserRole.admin ||
+            AuthenticationService.instance.user.userRole == UserRole.teller,
+      ),
+      MenuModel(
         title: 'Reports',
         logoPath: 'svg/size.svg',
         redirectPath: '${Paths.index}?sec=reports',

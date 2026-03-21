@@ -8,6 +8,7 @@ import 'package:loooans/features/loans/bloc/additional_loan_bloc.dart';
 import 'package:loooans/features/loans/bloc/loan_settlement_bloc.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
 import 'package:loooans/features/loans/bloc/payment_bloc.dart';
+import 'package:loooans/features/payment_center/bloc/payment_center_bloc.dart';
 import 'package:loooans/features/products/bloc/product_bloc.dart';
 import 'package:loooans/features/registration/bloc/registration_bloc.dart';
 import 'package:loooans/features/reports/bloc/reports_bloc.dart';
@@ -40,6 +41,7 @@ class AppBlocProviders extends StatelessWidget {
         BlocProvider(create: CompanyBloc.new),
         BlocProvider(create: CapitalBloc.new),
         BlocProvider(create: CashPoolBloc.new),
+        BlocProvider(create: PaymentCenterBloc.new),
       ],
       child: child,
     );

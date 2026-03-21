@@ -182,15 +182,69 @@ Updated widget files to use theme values instead of hardcoded styling:
 
 ---
 
+## SMS OTP Payment Fix (PR #38) — 2026-03-11
+
+**Issue:** OTP-verified payments did not create a payment document. Schedule was not marked as paid.
+
+**Root cause:** `Payment.create()` factory requires proof (`transactionPhotoUrl` or `autoCollectRef`) unless `bypassPaymentProof` is `true`. The OTP path passed `bypassPaymentProof: event.force` (false), so it threw. Exception was caught silently.
+
+**Fixes applied:**
+- `payment_bloc.dart` — `bypassPaymentProof: event.force || event.otpVerified`
+- `payment_bloc.dart` — OTP audit comment now fetches borrower via `userRepository.get(id: loan.userId)` and logs their details; teller recorded as `processed_by`
+- `payment_otp_dialog.dart` — Added `SizedBox(height: 8)` between action buttons
+- `database.rules.json` — Comprehensive RTDB rules for all paths (otp, sessions, reports, loans, gateway_status, force_logout). Split into dev-stg and prod files.
+- `firebase.json` — Wired `database.rules.json` for `firebase deploy --only database`
+- `database.rules.prod.json` — Separate prod rules (no `dev/`/`stg/` prefixes). Deploy manually with `firebase database:rules:set`.
+- `docs/DATA_FLOW.md` — Added payment verification methods table
+- `docs/ERD.md` — Added Payment entity field descriptions
+- `apps/loans/README.md` — Added RTDB rules deployment instructions
+
+**RTDB rules deployed to `loooans-dev-stg`**. Production pending.
+
+**Issue #66 (Borrower acknowledgement) closed.**
+
+---
+
+## Payment Center Feature (Issue #11) — 2026-03-19
+
+**Status:** Implemented. Pending manual testing.
+
+**What:** Unified Payment Center — a standalone screen where tellers can search for a borrower, view all their loans (including add-on loans), and make payments directly without navigating to individual loan detail screens.
+
+**Files created (11):**
+- `features/payment_center/bloc/payment_center_bloc.dart` — Standalone BLoC handling search, loan loading, payment processing, OTP
+- `features/payment_center/bloc/payment_center_event.dart` — Events (search, select, expand, pay, OTP)
+- `features/payment_center/bloc/payment_center_state.dart` — State with status enum + copyWith
+- `features/payment_center/model/borrower_loan_group.dart` — Groups parent Loan with children and actionable schedules
+- `features/payment_center/screen/payment_center_screen.dart` — Main screen with search + two-section loan list
+- `features/payment_center/widget/borrower_search_widget.dart` — TypeAhead search for borrowers
+- `features/payment_center/widget/borrower_loan_section.dart` — Section A: borrower's loans with actions
+- `features/payment_center/widget/co_maker_loan_section.dart` — Section B: read-only co-maker loans
+- `features/payment_center/widget/loan_card_widget.dart` — Expandable loan card with inline payables
+- `features/payment_center/widget/payable_tile_widget.dart` — Single payable row with Pay button
+- `features/payment_center/widget/payment_center_dialogs.dart` — Payment dialog + OTP dialog (adapted from client_detail_dialogs)
+
+**Files modified (4):**
+- `app/routing/paths.dart` — Added `paymentCenter` path
+- `app/routing/router.dart` — Added GoRoute inside ShellRoute
+- `app/di/bloc_providers.dart` — Registered PaymentCenterBloc
+- `utils/constants.dart` — Added menu item (teller + admin only)
+
+**Key architecture decisions:**
+- Standalone BLoC — does not depend on LoansBloc, PaymentBloc, or existing payment dialog
+- Payment logic replicated from PaymentBloc (signature/OTP/force paths, cash pool deduction)
+- Reuses existing dialogs: `showSettleAccountDialog`, `showSignatureDialog` from client_detail_dialogs
+- Loans grouped by parent/child relationship with actionable schedules (overdue + next upcoming)
+- Auto-refreshes after payment via `RefreshBorrowerDataEvent`
+
+---
+
 ## Pending Work
 
 **Subtask #67 (take photo + signature before payment):** Verified FULLY IMPLEMENTED — signature pad, selfie capture, Cloud Storage upload, integrated into payment and additional loan flows.
 
 ### SMS OTP — Remaining items
-- Deploy Go functions and test end-to-end
-- Create Firebase Auth gateway user (`sms-gateway@loooans.com`) in both projects
-- Place `google-services.json` in `apps/sms-gateway/app/` and configure gateway password
-- Install and test gateway app on Android device
+- Deploy RTDB rules to `loooans-prod` when ready
 - Extend SMS OTP to additional loan flow (future)
 
 ---
