@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cash_pool_repository/cash_pool_repository.dart';
@@ -28,9 +29,12 @@ final _log = Logger('payment_center_bloc');
 
 class PaymentCenterBloc
     extends Bloc<PaymentCenterEvent, PaymentCenterState> {
-  PaymentCenterBloc(BuildContext context)
-      : authService = AuthenticationService.instance,
-        settingsService = SettingsService.instance,
+  PaymentCenterBloc(
+    BuildContext context, {
+    AuthenticationService? authService,
+    SettingsService? settingsService,
+  })  : authService = authService ?? AuthenticationService.instance,
+        settingsService = settingsService ?? SettingsService.instance,
         loanRepository = context.read<LoanRepository>(),
         loanScheduleRepository = context.read<LoanScheduleRepository>(),
         paymentRepository = context.read<PaymentRepository>(),
@@ -623,9 +627,11 @@ class PaymentCenterBloc
         isLoading: false,
       ));
 
-      // Auto-refresh after payment
+      // Defer refresh to allow BlocListener to process paymentSuccess first.
+      // See PR #37: dispatching events immediately after emit causes race
+      // conditions on web where the listener misses the intermediate state.
       if (state.selectedBorrower != null) {
-        add(RefreshBorrowerDataEvent());
+        unawaited(Future.microtask(() => add(RefreshBorrowerDataEvent())));
       }
     } catch (err) {
       _log.severe('Make payment error: $err', err);
@@ -717,6 +723,7 @@ class PaymentCenterBloc
       }
 
       // Process each overdue schedule
+      Payment? lastPayment;
       for (final schedule in event.schedules) {
         schedule
           ..paidAt = DateTime.timestamp()
@@ -762,6 +769,7 @@ class PaymentCenterBloc
 
         if (schedule.id == NO_ID) {
           await paymentRepository.add(data: tempPayment).then((payment) {
+            lastPayment = payment;
             return loanScheduleRepository
                 .add(data: schedule..paymentId = payment.id)
                 .then((addedSchedule) {
@@ -771,6 +779,7 @@ class PaymentCenterBloc
           });
         } else {
           await paymentRepository.add(data: tempPayment).then((payment) {
+            lastPayment = payment;
             return loanScheduleRepository.update(
               data: schedule..paymentId = payment.id,
             );
@@ -790,7 +799,7 @@ class PaymentCenterBloc
           event.totalInterestPayment + event.totalPrincipalPayment;
       await _processCashPool(
         loan: loan,
-        loanPayment: null,
+        loanPayment: lastPayment,
         totalPayment: totalPayment,
       );
 
@@ -801,8 +810,9 @@ class PaymentCenterBloc
         isLoading: false,
       ));
 
+      // Defer refresh to allow BlocListener to process paymentSuccess first.
       if (state.selectedBorrower != null) {
-        add(RefreshBorrowerDataEvent());
+        unawaited(Future.microtask(() => add(RefreshBorrowerDataEvent())));
       }
     } catch (err) {
       _log.severe('Make overdue payment error: $err', err);
