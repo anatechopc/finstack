@@ -905,7 +905,7 @@ class _PaymentCenterOtpDialogState
       child: BlocBuilder<PaymentCenterBloc, PaymentCenterState>(
         builder: (context, state) {
           final isLoading = state.status ==
-                  PaymentCenterStatus.paymentLoading &&
+                  PaymentCenterStatus.otpLoading &&
               state.isLoading;
 
           return AlertDialog(

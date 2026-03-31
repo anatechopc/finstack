@@ -8,6 +8,7 @@ enum PaymentCenterStatus {
   loanExpanded,
   paymentLoading,
   paymentSuccess,
+  otpLoading,
   otpRequested,
   otpVerified,
   error,

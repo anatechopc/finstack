@@ -951,7 +951,7 @@ class PaymentCenterBloc
   ) async {
     try {
       emit(state.copyWith(
-        status: PaymentCenterStatus.paymentLoading,
+        status: PaymentCenterStatus.otpLoading,
         isLoading: true,
       ));
       final response = await userRepository.requestOtpForUser(
