@@ -32,7 +32,7 @@ class HomeScreen extends StatelessWidget {
               const SizedBox(
                 width: 300,
                 height: double.infinity,
-                child: MenuDrawerWidget(),
+                child: const MenuDrawerWidget(),
               ),
             Expanded(
               child: Scaffold(

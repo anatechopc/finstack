@@ -13,6 +13,7 @@ class MenuDrawerWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final currentLocation = GoRouterState.of(context).uri.toString();
     return Material(
       color: AppColors.lightBlack,
       textStyle: const TextStyle(color: AppColors.white),
@@ -21,7 +22,7 @@ class MenuDrawerWidget extends StatelessWidget {
           _profileWidget(context),
           ...Constants.allMenu(context: context).where((menu) => menu.show).map((menu) {
             return ListTile(
-              selected: GoRouter.of(context).location == menu.redirectPath,
+              selected: currentLocation == menu.redirectPath,
               selectedTileColor: AppColors.green1.withOpacity(0.4),
               contentPadding: const EdgeInsets.all(16),
               onTap: () {

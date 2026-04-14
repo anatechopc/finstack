@@ -11,6 +11,7 @@ import 'package:loooans/features/index/screens/home_screen.dart';
 import 'package:loooans/features/index/screens/index_screen.dart';
 import 'package:loooans/features/loans/screens/loan_details.dart';
 import 'package:loooans/features/main/screen/main_screen.dart';
+import 'package:loooans/features/payment_center/screen/payment_center_screen.dart';
 import 'package:loooans/features/products/bloc/product_bloc.dart';
 import 'package:loooans/features/products/screen/add_product_screen.dart';
 import 'package:loooans/features/products/screen/loan_application.dart';
@@ -179,6 +180,12 @@ RouterConfig<Object> buildAppRoutes() {
             path: Paths.users,
             builder: (context, state) {
               return const UsersScreen();
+            },
+          ),
+          GoRoute(
+            path: Paths.paymentCenter,
+            builder: (context, state) {
+              return const PaymentCenterScreen();
             },
           ),
         ],

@@ -30,6 +30,7 @@ class Paths {
   static const PathTemplate loansAction = '/loans/:action';
   static const PathTemplate clientsAction = '/clients/:action';
   static const PathTemplate borrowersAction = '/borrowers/:action';
+  static const PathTemplate paymentCenter = '/payment-center';
 
   static const PathAction actionCreate = 'create';
   static const PathAction actionUpdate = 'update';
