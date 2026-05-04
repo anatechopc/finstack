@@ -61,25 +61,40 @@ Surface on `User` model (+ `toEntity`/`fromEntity`/`update`), regen via `../../p
 
 ### Backend (Go) — `functions/loans/`
 
+**Adapter + core pattern** — to make the new code unit-testable without Firebase emulators, every handler/trigger we add or rename in this feature splits into two layers:
+
+- **Adapter**: thin wrapper that owns HTTP/CloudEvent wiring, parses inputs, instantiates real Firebase clients, and calls the core. Untested by automation.
+- **Core**: pure function that takes a `deps` struct of collaborator function fields (e.g., `readOtp`, `deleteOtp`, `updateUser`). Holds all branching logic. Tested with in-memory fakes.
+
+This pattern is established here for the touched files only — no backfill of existing untested code. Future PRs adopt the same pattern as they go.
+
 **`api/users/verify_otp.go`** (rename from `verify_payment_otp.go`):
-- `VerifyOtp(w, r)` reads the OTP entry from RTDB by token, pulls `reason` from the stored entry (never from the request body), runs `service.VerifyOtp`, deletes the RTDB entry on success, and dispatches a post-action via `switch reason`:
-  - `case "mobile_verification"`: update the Firestore user doc — `verificationStatus |= 2` (`mobileNumberVerified`), `mobile_verified_at = now`.
-  - `case "payment"`: no-op (current behavior, preserves the existing payment-acknowledgement flow).
-  - Unknown reason: log + return verified=true without side effects (verification still succeeded; side-effect absence is safe).
+- Adapter `VerifyOtp(w, r)` parses `token` + `otp`, wires real RTDB + Firestore clients into `verifyOtpDeps`, calls `verifyOtpCore`, encodes response.
+- Core `verifyOtpCore(ctx, token, receivedOtp, deps) (verified bool, err error)`:
+  - Reads OTP entry via `deps.readOtp(token)`, pulls `reason` from the stored entry (never from the request body).
+  - Checks expiry, runs `service.VerifyOtp`, on success calls `deps.deleteOtp(token)` and dispatches via `switch reason`:
+    - `case "mobile_verification"`: `deps.updateUser(uid, {verificationStatus: |= 2, mobile_verified_at: now})`.
+    - `case "payment"`: no-op (current behavior, preserves the existing payment-acknowledgement flow).
+    - Unknown reason: log + return verified=true without side effects.
 
 **`loooans_cloud_functions.go`**:
 - Remove `functions.HTTP("verifyPaymentOtp", users.VerifyPaymentOtp)`.
 - Add `functions.HTTP("verifyOtp", users.VerifyOtp)`.
 
-**`triggers/` — new user-update trigger** (e.g., `triggers/user_mobile_number_changed.go`):
-- Fires on Firestore `users/{uid}` document updates.
-- If `mobile_number` changed between old and new snapshots, clear `verificationStatus & ~2` and set `mobile_verified_at = null` via Admin SDK (bypasses security rules).
-- Keeps the server authoritative: a client that edits the number can't retain their verified state.
-- Register in `loooans_cloud_functions.go` as a CloudEvent handler.
+**`triggers/user_mobile_number_changed.go`** (new):
+- Adapter unmarshals the Firestore CloudEvent, wires real Firestore client, calls core.
+- Core `handleUserMobileChanged(ctx, before, after, deps) error`:
+  - If `before.mobile_number == after.mobile_number`: no-op.
+  - Else: `deps.updateUser(uid, {verificationStatus: &= ~2, mobile_verified_at: nil})`.
+- Register in `loooans_cloud_functions.go` as a CloudEvent handler on the users collection.
 
 **`service/otp_service.go`**: no changes.
 
 **`api/users/request_otp.go`**: no changes. Already writes `reason` into the RTDB entry.
+
+**`test/fakes/`** (new): in-memory fakes implementing the collaborator function signatures used by `verifyOtpDeps` and the trigger's deps. Reusable by future tests.
+
+**Stub cleanup**: delete `test/api/users/add_user_test.go` (logs only, unrelated to this feature, dead).
 
 ### Hosting routing — `apps/loans/firebase.json`
 
@@ -193,15 +208,19 @@ Both rules compose with existing user-update rules.
 
 ## Testing
 
-| Layer | Tests |
-|---|---|
-| `VerifyOtp` handler (Go) | Unit: `mobile_verification` reason updates user doc; `payment` reason no-ops; invalid OTP returns 400; expired returns 400; `reason` read from RTDB (not body); mocked Firestore for the user-update path. |
-| `otp_service` (Go) | Unchanged; existing tests cover. |
-| User-update trigger (Go) | Unit: clears bit + nulls timestamp when `mobile_number` changes; no-op when unchanged; graceful on missing fields. |
-| Firestore rules | Emulator-based: (a) reject `mobile_number` change within 90d; (b) permit after 90d; (c) reject client writes to `verificationStatus` / `mobile_verified_at`; (d) Admin SDK writes bypass. |
-| `AuthenticationBloc` | `bloc_test`: `_checkUserVerificationStatus` routes to verify when bit unset; `_handleVerifyOtpEvent` calls backend + emits success on verified; error on wrong OTP / expired; cooldown state tracked in `RequestOtpEvent` flow. |
-| `MobileVerificationScreen` | Widget: resend disabled for 4 min after a send; "Log out" works; editing mobile triggers resend; error states render. |
-| Profile & update-profile | Widget: badge when bit set, button when unset; mobile field disabled + helper text inside 90d window; enabled past window. |
+**Backend testing baseline**: the Go codebase currently has no real test coverage — only a single stub file (`test/api/users/add_user_test.go`) that logs. CI (`.github/workflows/loans-functions-*.yml`) already runs `go test ./...`, so newly-added tests run automatically. This feature establishes the unit-test pattern for the codebase via the adapter+core split (see Architecture). Future Go PRs adopt the same pattern incrementally; no backfill of existing handlers is in scope.
+
+| Layer | Tests | Style |
+|---|---|---|
+| `verifyOtpCore` (Go) | Table-driven unit tests in `test/api/users/verify_otp_test.go` covering: `mobile_verification` reason → `updateUser` called with `(verificationStatus \|= 2, mobile_verified_at = now)`; `payment` reason → `updateUser` NOT called; unknown reason → no-op + verified true; wrong OTP → no `deleteOtp` / `updateUser`, returns error; expired OTP → returns error; missing OTP entry → error; **`reason` sourced from RTDB entry, request body `reason` ignored** (security invariant). | Pure unit, in-memory fakes from `test/fakes/`. No Firebase. |
+| `VerifyOtp` adapter (Go) | Not directly tested; thin HTTP wiring exercised manually via dev-stg deploy. | Manual / smoke. |
+| `handleUserMobileChanged` core (Go) | Table-driven unit tests in `test/triggers/user_mobile_changed_test.go`: mobile changed → `updateUser` called clearing bit + nulling timestamp; mobile unchanged → no `updateUser`; missing fields → error returned without crash. | Pure unit, in-memory fakes. |
+| User-update trigger adapter (Go) | Not directly tested; CloudEvent unmarshal + Firebase wiring exercised manually. | Manual / smoke. |
+| `service/otp_service.go` (Go) | Unchanged. No new tests added (out of feature scope; would be a sensible follow-up). | — |
+| Firestore rules | Emulator-based tests: (a) reject `mobile_number` change within 90d, (b) permit after 90d, (c) reject client writes to `verificationStatus` / `mobile_verified_at`, (d) Admin SDK writes bypass. | Firebase rules-unit-testing emulator. |
+| `AuthenticationBloc` (Dart) | `bloc_test`: `_checkUserVerificationStatus` routes to verify state when bit unset; `_handleVerifyOtpEvent` calls backend + emits success on verified; error on wrong OTP / expired; cooldown state tracked. | `bloc_test` + `mocktail`. |
+| `MobileVerificationScreen` (Dart) | Widget: resend disabled for 4 min after a send; "Log out" works; editing mobile triggers resend; error states render. | `flutter_test`. |
+| Profile & update-profile (Dart) | Widget: badge when bit set, button when unset; mobile field disabled + helper text inside 90d window; enabled past window. | `flutter_test`. |
 
 SMS gateway Android app: **no changes required**. It reads `phone` + `message` from the RTDB entry; the new `reason` value is transparent to it.
 
