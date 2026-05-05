@@ -15,6 +15,7 @@ import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 import 'package:loooans/widgets/settings_widget.dart';
+import 'package:user_repository/user_repository.dart';
 
 class ProfileWidget extends StatelessWidget {
   const ProfileWidget({
@@ -109,7 +110,7 @@ class ProfileWidget extends StatelessWidget {
                   ],
                 ),
                 const Gap(16),
-                ..._buildUserWidgets(),
+                ..._buildUserWidgets(context),
                 const Gap(24),
                 if (showUpdateButtonBelow) ...[
                   Expanded(child: Container()),
@@ -321,7 +322,7 @@ An option to enforce AutoCollect will be added when you add or update a product.
     );
   }
 
-  List<Widget> _buildUserWidgets() {
+  List<Widget> _buildUserWidgets(BuildContext context) {
     final user = AuthenticationService.instance.user;
 
     return [
@@ -342,13 +343,41 @@ An option to enforce AutoCollect will be added when you add or update a product.
           height: 1.5,
         ),
       ),
-      Text(
-        user.mobileNumber,
-        style: TextStyle(
-          color: foregroundColor,
-          fontSize: 12,
-          height: 1.5,
-        ),
+      Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            user.mobileNumber,
+            style: TextStyle(
+              color: foregroundColor,
+              fontSize: 12,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(width: 8),
+          if ((user.verificationStatus &
+                  UserVerificationStatus.mobileNumberVerified.value) !=
+              0)
+            Icon(
+              Icons.check_circle,
+              size: 14,
+              color: foregroundColor,
+            )
+          else
+            TextButton(
+              onPressed: () =>
+                  GoRouter.of(context).go(Paths.mobileVerification),
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text(
+                'Verify',
+                style: TextStyle(fontSize: 12),
+              ),
+            ),
+        ],
       ),
       if (!buildForCompany)
         Text(
