@@ -5,14 +5,19 @@ import (
 	"errors"
 )
 
-// OtpReader fake — returns a preconfigured OTP entry by token, or ErrOtpNotFound.
+// OtpReader fake — returns a preconfigured OTP entry by token, ErrOtpNotFound,
+// or a configured Err if set (for testing transport errors).
 type OtpReader struct {
 	Entries map[string]map[string]any
+	Err     error
 }
 
 var ErrOtpNotFound = errors.New("otp not found")
 
 func (r *OtpReader) Read(_ context.Context, token string) (map[string]any, error) {
+	if r.Err != nil {
+		return nil, r.Err
+	}
 	if r.Entries == nil {
 		return nil, ErrOtpNotFound
 	}
