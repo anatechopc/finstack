@@ -51,6 +51,7 @@ class User extends UserEntity implements BaseModel<UserEntity> {
       ..karma = 0
       ..aiVerifyRef = null
       ..verificationStatus = UserVerificationStatus.unverified.value
+      ..mobileVerifiedAt = null
       ..companyId = companyId
       ..sex = sex
       ..employmentDetails = employmentDetails
@@ -97,6 +98,7 @@ class User extends UserEntity implements BaseModel<UserEntity> {
       ..karma = 0
       ..aiVerifyRef = null
       ..verificationStatus = UserVerificationStatus.unverified.value
+      ..mobileVerifiedAt = null
       ..companyId = companyId
       ..sex = sex
       ..employmentDetails = employmentDetails
@@ -130,6 +132,7 @@ class User extends UserEntity implements BaseModel<UserEntity> {
       ..karma = 0
       ..aiVerifyRef = null
       ..verificationStatus = UserVerificationStatus.unverified.value
+      ..mobileVerifiedAt = null
       ..sex = sex
       ..employmentDetails = employmentDetails
       ..businessName = businessName
@@ -159,6 +162,7 @@ class User extends UserEntity implements BaseModel<UserEntity> {
       ..karma = 0
       ..aiVerifyRef = null
       ..verificationStatus = UserVerificationStatus.unverified.value
+      ..mobileVerifiedAt = null
       ..sex = Sex.male
       ..employmentDetails = EmploymentDetails.createBlank()
       ..businessName = null;
