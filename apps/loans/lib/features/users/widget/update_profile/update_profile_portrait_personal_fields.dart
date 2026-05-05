@@ -13,6 +13,14 @@ class UpdateProfilePortraitPersonalFields extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final user = AuthenticationService.instance.user;
+    final verifiedAt = user.mobileVerifiedAt;
+    final daysSince = verifiedAt == null
+        ? null
+        : DateTime.now().difference(verifiedAt).inDays;
+    final mobileLocked = daysSince != null && daysSince < 90;
+    final daysLeft = mobileLocked ? 90 - daysSince : 0;
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -85,6 +93,8 @@ class UpdateProfilePortraitPersonalFields extends StatelessWidget {
         AppWidgets.defaultFormBuilderTextField(
           name: 'mobile_number',
           label: 'Mobile number',
+          enabled: !mobileLocked,
+          helperText: mobileLocked ? 'Editable in $daysLeft days' : null,
           inputFormatters: [
             FilteringTextInputFormatter.digitsOnly,
           ],
