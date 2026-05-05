@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -53,13 +54,6 @@ type VerifyOtpDeps struct {
 	Now func() time.Time
 }
 
-// TestGenerateOtp re-exports service.GenerateOtp so external tests in
-// com.loooans.app/test/api/users (which cannot reach an internal helper) can
-// produce a (hash, otp) pair that survives the real service.VerifyOtp check.
-func TestGenerateOtp() (string, string, error) {
-	return service.GenerateOtp()
-}
-
 // VerifyOtpCore validates a one-time PIN against the entry stored in RTDB and
 // performs the post-verification side-effect dictated by the entry's reason.
 //
@@ -72,16 +66,26 @@ func VerifyOtpCore(ctx context.Context, token, receivedOtp string, deps VerifyOt
 		return false, ErrOtpNotFound
 	}
 
-	expireAt, ok := otpData["expire_at"].(float64)
-	if !ok {
+	var expireAtMs int64
+	switch v := otpData["expire_at"].(type) {
+	case float64:
+		expireAtMs = int64(v)
+	case int64:
+		expireAtMs = v
+	case int:
+		expireAtMs = int64(v)
+	default:
 		return false, ErrOtpNotFound
 	}
-	if deps.Now().UTC().UnixMilli() > int64(expireAt) {
+	if deps.Now().UTC().UnixMilli() > expireAtMs {
 		return false, ErrOtpExpired
 	}
 
 	verified, errVerify := service.VerifyOtp(token, receivedOtp)
-	if errVerify != nil || !verified {
+	if errVerify != nil {
+		return false, fmt.Errorf("otp service error: %w", errVerify)
+	}
+	if !verified {
 		return false, ErrOtpInvalid
 	}
 
@@ -97,7 +101,7 @@ func VerifyOtpCore(ctx context.Context, token, receivedOtp string, deps VerifyOt
 	case reasonMobileVerification:
 		uid, _ := otpData["userId"].(string)
 		if uid == "" {
-			return true, nil
+			return false, fmt.Errorf("mobile_verification otp entry missing userId")
 		}
 		if upErr := deps.UpdateUser(ctx, uid, map[string]any{
 			"verificationStatus_or": verificationBitMobileNumber,

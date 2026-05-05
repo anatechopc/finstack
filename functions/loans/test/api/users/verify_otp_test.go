@@ -28,13 +28,13 @@ func entry(hash, reason string, expireAtMs int64, extra map[string]any) map[stri
 }
 
 // genOtpForTest produces a (hash, otp) pair using the real OTP service via the
-// re-exported users.TestGenerateOtp helper. Tests that need a valid OTP for
+// re-exported users.GenerateOtpForTest helper. Tests that need a valid OTP for
 // verification use this so that service.VerifyOtp returns true.
 func genOtpForTest(t *testing.T) (string, string) {
 	t.Helper()
-	hash, otp, err := users.TestGenerateOtp()
+	hash, otp, err := users.GenerateOtpForTest()
 	if err != nil {
-		t.Fatalf("TestGenerateOtp failed: %v", err)
+		t.Fatalf("GenerateOtpForTest failed: %v", err)
 	}
 	return hash, otp
 }
@@ -262,4 +262,30 @@ func TestVerifyOtpCore_ReasonReadFromRTDB_NotRequest(t *testing.T) {
 	// ReadOtp returns, NOT from any request-level argument. If the signature
 	// changes to accept a reason explicitly, this fails to compile.
 	var _ func(ctx context.Context, token, otp string, deps users.VerifyOtpDeps) (bool, error) = users.VerifyOtpCore
+}
+
+func TestVerifyOtpCore_UpdateUserError_PropagatesAfterDelete(t *testing.T) {
+	hash, otp := genOtpForTest(t)
+	otpReader := &fakes.OtpReader{Entries: map[string]map[string]any{
+		hash: entry(hash, "mobile_verification", time.Now().Add(time.Minute).UnixMilli(), nil),
+	}}
+	deleter := &fakes.OtpDeleter{}
+	updater := &fakes.UserUpdater{Err: errors.New("firestore: write failed")}
+
+	verified, err := users.VerifyOtpCore(context.Background(), hash, otp, users.VerifyOtpDeps{
+		ReadOtp: otpReader.Read, DeleteOtp: deleter.Delete, UpdateUser: updater.Update,
+		Now: time.Now,
+	})
+	if !verified {
+		t.Fatal("expected verified=true even when UpdateUser fails (OTP was consumed)")
+	}
+	if err == nil || err.Error() != "firestore: write failed" {
+		t.Fatalf("expected propagated error 'firestore: write failed', got %v", err)
+	}
+	if len(deleter.DeletedTokens) != 1 {
+		t.Fatalf("expected delete to have happened before user update")
+	}
+	if len(updater.Updates) != 1 {
+		t.Fatalf("expected one user-update attempt")
+	}
 }
