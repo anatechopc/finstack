@@ -119,6 +119,15 @@ class AuthenticationBloc
   }
 
   AuthenticationState _checkUserVerificationStatus() {
+    final user = authService.user;
+    final hasMobileVerified = (user.verificationStatus &
+            UserVerificationStatus.mobileNumberVerified.value) !=
+        0;
+    if (!hasMobileVerified) {
+      return const AuthenticationState.verify(
+        verifyStatus: UserVerificationStatus.mobileNumberVerified,
+      );
+    }
     return const AuthenticationState.success(message: 'Successfully logged in');
   }
 
@@ -164,17 +173,21 @@ class AuthenticationBloc
   }
 
   Future<void> _handleRequestOtpEvent(
-      RequestOtpEvent event, Emitter<AuthenticationState> emit,) async {
+    RequestOtpEvent event,
+    Emitter<AuthenticationState> emit,
+  ) async {
     try {
       emit(const AuthenticationState.loading(isLoading: true));
       final response = await _userRepository.requestOtp(
         idToken: authService.idToken,
       );
       _otpToken = response.token;
+      final canResendAt = DateTime.now().add(const Duration(minutes: 4));
       emit(const AuthenticationState.loading());
       emit(AuthenticationState.requestOtp(
         token: response.token,
         expireAt: response.expireAt,
+        canResendAt: canResendAt,
       ),);
     } catch (err) {
       log.severe('Something went wrong: $err', err);
@@ -189,32 +202,26 @@ class AuthenticationBloc
   ) async {
     try {
       emit(const AuthenticationState.loading(isLoading: true));
-      final otpDetails = await _userRepository.getTokenDetails(
-        userId: _otpToken!,
+      if (_otpToken == null) {
+        throw Exception('No active OTP token');
+      }
+      final verified = await _userRepository.verifyOtp(
+        idToken: authService.idToken,
+        token: _otpToken!,
+        otp: event.otp,
       );
-
-      if (otpDetails.expireAt.isBefore(DateTime.timestamp())) {
-        throw Exception('OTP Expired');
+      if (!verified) {
+        throw Exception('Invalid OTP');
       }
-
-      if (otpDetails.otp != event.otp) {
-        throw Exception('OTP incorrect');
-      }
-
-      final user = authService.user
-        ..verificationStatus |=
-            UserVerificationStatus.mobileNumberVerified.value;
-
-      final updatedUser = await _userRepository.update(data: user);
+      // Backend already updated the user doc; refresh into the auth service.
+      final updatedUser = await _userRepository.get(id: authService.user.id);
       authService.user = updatedUser;
-
       emit(const AuthenticationState.loading());
       emit(const AuthenticationState.success(message: 'Verify success'));
     } catch (err) {
       log.severe('Verify otp error: $err', err);
       emit(const AuthenticationState.loading());
-      emit(AuthenticationState.error(
-          message: 'Cannot verify OTP: $err',),);
+      emit(AuthenticationState.error(message: 'Cannot verify OTP: $err'));
     }
   }
 
