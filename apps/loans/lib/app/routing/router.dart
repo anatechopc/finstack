@@ -7,6 +7,7 @@ import 'package:loooans/app/routing/route_utils.dart';
 import 'package:loooans/app/view/page_not_found.dart';
 import 'package:loooans/features/authentication/bloc/authentication_bloc.dart';
 import 'package:loooans/features/authentication/screen/login_screen.dart';
+import 'package:loooans/features/authentication/screen/mobile_verification_screen.dart';
 import 'package:loooans/features/index/screens/home_screen.dart';
 import 'package:loooans/features/index/screens/index_screen.dart';
 import 'package:loooans/features/loans/screens/loan_details.dart';
@@ -101,6 +102,10 @@ RouterConfig<Object> buildAppRoutes() {
         builder: (context, state) {
           return LoginScreen();
         },
+      ),
+      GoRoute(
+        path: Paths.mobileVerification,
+        builder: (context, state) => const MobileVerificationScreen(),
       ),
       ShellRoute(
         builder: (context, state, child) {
