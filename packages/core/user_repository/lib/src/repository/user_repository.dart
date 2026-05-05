@@ -128,12 +128,12 @@ class UserRepository implements BaseRepository<User> {
     );
   }
 
-  Future<bool> verifyPaymentOtp({
+  Future<bool> verifyOtp({
     required String idToken,
     required String token,
     required String otp,
   }) {
-    return _networkService.verifyPaymentOtp(
+    return _networkService.verifyOtp(
       idToken: idToken,
       token: token,
       otp: otp,
