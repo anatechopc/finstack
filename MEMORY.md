@@ -43,3 +43,15 @@ For project-specific memory, see:
 - Notification creation is server-side only (Go triggers), not in the Flutter app
 - Firestore collection paths use environment-based prefixes (`dev_`, `stg_`, none for prod)
 - Dev and staging share Firebase project `loooans-dev-stg`; production uses `loooans-prod`
+
+---
+
+## Mobile Number Verification (issue #13)
+
+- Login gate now blocks entry when `verificationStatus & 2 == 0` and routes to a dedicated `MobileVerificationScreen` at `Paths.mobileVerification`.
+- Backend `verifyPaymentOtp` was generalized into `verifyOtp` with reason-driven post-actions; `reason` is read from the RTDB OTP entry, never the request body (security invariant).
+- New `userChanges` Firestore trigger clears verification fields when `mobile_number` changes — see `functions/loans/triggers/user_changes.go`.
+- 90-day lock enforced via Firestore security rules (now source-controlled at `apps/loans/firestore.rules` — manual export from console required before next deploy). Client UX mirrors the lock by disabling the field with "Editable in N days" helper text.
+- Established the Go adapter+core test pattern on the touched handlers (`verifyOtpCore`, `handleUserChangedCore`); future Go PRs adopt the same pattern incrementally. New module `com.loooans.app/test/fakes` provides reusable fakes.
+- Local Go test workaround on macOS 26.x: `CGO_ENABLED=0 go test ./...` to bypass a `dyld: missing LC_UUID` issue. CI on Linux unaffected.
+- Follow-ups: #130 (email OTP migration), #131 (trusted device), #132 (rate limits / wrong-OTP cap), #133 (self-service mobile change during lock), #134 (Flutter bloc/widget test infrastructure + rules emulator tests).

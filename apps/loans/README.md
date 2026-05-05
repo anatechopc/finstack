@@ -12,6 +12,7 @@ Loooans! -- Your loans marketplace
 This is a customization for a customer of Jake Basanez.
 Customization involves:
 * open term loan contract functionality
+* mobile number verification — SMS OTP at first login, with a 90-day lock on changes after a successful verification (see `docs/security-rules.md`)
 
 ---
 
