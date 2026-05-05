@@ -1,24 +1,20 @@
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:user_loan_view_repository/user_loan_view_repository.dart';
 import 'package:user_repository/src/data/database/user_firestore_service.dart';
-import 'package:user_repository/src/data/database/user_otp_realtime_database_service.dart';
 import 'package:user_repository/src/data/network/user_network_service.dart';
 import 'package:user_repository/src/model/device.dart';
 import 'package:user_repository/src/model/request_otp_response.dart';
 import 'package:user_repository/src/model/user.dart';
-import 'package:user_repository/src/model/user_otp.dart';
 
 /// User repository class
 class UserRepository implements BaseRepository<User> {
   /// constructor
   UserRepository()
       : _firestoreService = UserFirestoreService(),
-        _networkService = UserNetworkService(),
-        _otpDatabaseService = UserOtpRealtimeDatabaseService();
+        _networkService = UserNetworkService();
 
   late final UserFirestoreService _firestoreService;
   late final UserNetworkService _networkService;
-  late final UserOtpRealtimeDatabaseService _otpDatabaseService;
 
   @override
   Future<User> add({required User data}) async {
@@ -138,14 +134,6 @@ class UserRepository implements BaseRepository<User> {
       token: token,
       otp: otp,
     );
-  }
-
-  Future<UserOtp> getTokenDetails({
-    required String userId,
-  }) {
-    return _otpDatabaseService
-        .get(id: userId)
-        .then((value) => value.toUserOtp());
   }
 
   Future<void> verifyUserEmail({
