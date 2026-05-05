@@ -1,6 +1,6 @@
 module com.loooans.app
 
-go 1.22
+go 1.22.12
 
 require (
 	com.loooans.app/api v0.0.0-00010101000000-000000000000
@@ -19,6 +19,7 @@ require (
 	cloud.google.com/go/iam v1.1.5 // indirect
 	cloud.google.com/go/longrunning v0.5.4 // indirect
 	cloud.google.com/go/storage v1.30.1 // indirect
+	com.loooans.app/test/fakes v0.0.0
 	com.loooans.app/types v0.0.0-00010101000000-000000000000 // indirect
 	firebase.google.com/go/v4 v4.13.0 // indirect
 	github.com/MicahParks/keyfunc v1.9.0 // indirect
@@ -70,3 +71,5 @@ replace com.loooans.app/types => ./types
 replace com.loooans.app/job => ./job
 
 replace com.loooans.app/triggers => ./triggers
+
+replace com.loooans.app/test/fakes => ./test/fakes
