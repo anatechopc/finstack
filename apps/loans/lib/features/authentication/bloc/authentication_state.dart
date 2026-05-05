@@ -20,6 +20,8 @@ final class AuthenticationState {
     this.message,
     this.token,
     this.expireAt,
+    this.canResendAt,
+    this.otpExpireAt,
   });
 
   const AuthenticationState.loading({bool isLoading = false})
@@ -50,9 +52,11 @@ final class AuthenticationState {
   const AuthenticationState.requestOtp({
     required String token,
     required int expireAt,
+    required DateTime canResendAt,
   }) : this._(
           token: token,
           expireAt: expireAt,
+          canResendAt: canResendAt,
           status: AuthenticationStateStatus.requestOtp,
         );
 
@@ -65,4 +69,6 @@ final class AuthenticationState {
   final UserVerificationStatus verifyStatus;
   final String? token;
   final int? expireAt;
+  final DateTime? canResendAt;
+  final DateTime? otpExpireAt;
 }
