@@ -61,9 +61,9 @@
           }
         },
         {
-          "source": "/api/users/verify/payment-otp",
+          "source": "/api/users/verify/otp",
           "run": {
-            "serviceId": "verifypaymentotp-development",
+            "serviceId": "verifyotp-development",
             "region": "asia-east1"
           }
         },
@@ -97,9 +97,9 @@
           }
         },
         {
-          "source": "/api/users/verify/payment-otp",
+          "source": "/api/users/verify/otp",
           "run": {
-            "serviceId": "verifypaymentotp-staging",
+            "serviceId": "verifyotp-staging",
             "region": "asia-east1"
           }
         },
@@ -133,9 +133,9 @@
           }
         },
         {
-          "source": "/api/users/verify/payment-otp",
+          "source": "/api/users/verify/otp",
           "run": {
-            "serviceId": "verifypaymentotp-production",
+            "serviceId": "verifyotp-production",
             "region": "asia-east1"
           }
         },
