@@ -10,7 +10,8 @@ enum UserStatus {
   selectedCoMakers,
   unselected,
   unselectedCoMaker,
-  refresh
+  refresh,
+  requireMobileVerify
 }
 
 final class UserState {
@@ -76,6 +77,12 @@ final class UserState {
   const UserState.refresh()
       : this._(
           status: UserStatus.refresh,
+        );
+
+  const UserState.requireMobileVerify({required User user})
+      : this._(
+          user: user,
+          status: UserStatus.requireMobileVerify,
         );
 
   final User? user;
