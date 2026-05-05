@@ -82,27 +82,40 @@ class UpdateProfilePrimaryDetails extends StatelessWidget {
             label: 'Birth date',
             initialDate: user.birthDate,
             validator: FormBuilderValidators.required(),),
-        AppWidgets.defaultFormBuilderTextField(
-          name: 'mobile_number',
-          label: 'Mobile number',
-          initialValue: user.mobileNumber,
-          inputFormatters: [
-            FilteringTextInputFormatter.digitsOnly,
-          ],
-          keyboardType: TextInputType.number,
-          validator: FormBuilderValidators.compose([
-            FormBuilderValidators.required(),
-            FormBuilderValidators.maxLength(10),
-          ]),
-          prefix: const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text(
-              '+63',
-              style: TextStyle(
-                color: AppColors.black,
+        Builder(
+          builder: (context) {
+            final verifiedAt = user.mobileVerifiedAt;
+            final daysSince = verifiedAt == null
+                ? null
+                : DateTime.now().difference(verifiedAt).inDays;
+            final locked = daysSince != null && daysSince < 90;
+            final daysLeft = locked ? 90 - daysSince : 0;
+            return AppWidgets.defaultFormBuilderTextField(
+              name: 'mobile_number',
+              label: 'Mobile number',
+              initialValue: user.mobileNumber,
+              enabled: !locked,
+              helperText:
+                  locked ? 'Editable in $daysLeft days' : null,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+              ],
+              keyboardType: TextInputType.number,
+              validator: FormBuilderValidators.compose([
+                FormBuilderValidators.required(),
+                FormBuilderValidators.maxLength(10),
+              ]),
+              prefix: const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  '+63',
+                  style: TextStyle(
+                    color: AppColors.black,
+                  ),
+                ),
               ),
-            ),
-          ),
+            );
+          },
         ),
         // AppWidgets.defaultFormBuilderTextField(
         //   name: 'email_address',
