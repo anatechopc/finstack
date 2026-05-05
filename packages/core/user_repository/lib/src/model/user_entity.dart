@@ -107,6 +107,13 @@ class UserEntity implements BaseEntity {
   @JsonKey(name: 'ai_verify_ref')
   String? aiVerifyRef;
 
+  @JsonKey(
+    name: 'mobile_verified_at',
+    toJson: handleDateTimeToJson,
+    fromJson: handleDateTimeNullableFromJson,
+  )
+  DateTime? mobileVerifiedAt;
+
   /// verification status uses bitwise or operation
   /// to determine how many verification steps the user
   /// has passed.
@@ -153,6 +160,7 @@ class UserEntity implements BaseEntity {
       ..karma = karma
       ..aiVerifyRef = aiVerifyRef
       ..verificationStatus = verificationStatus
+      ..mobileVerifiedAt = mobileVerifiedAt
       ..companyId = companyId
       ..sex = sex
       ..employmentDetails = employmentDetails
@@ -178,6 +186,7 @@ class UserEntity implements BaseEntity {
         karma,
         aiVerifyRef,
         verificationStatus,
+        mobileVerifiedAt,
         companyId,
         sex,
         employmentDetails,
