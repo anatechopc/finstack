@@ -60,9 +60,13 @@ echo "Deploying requestOtp"
 gcloud functions deploy requestOtp_$environment --set-env-vars ENVIRONMENT=$environment --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --entry-point requestOtp &
 pids[$!]="requestOtp"
 
-echo "Deploying verifyPaymentOtp"
-gcloud functions deploy verifyPaymentOtp_$environment --set-env-vars ENVIRONMENT=$environment --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --entry-point verifyPaymentOtp &
-pids[$!]="verifyPaymentOtp"
+# NOTE: Old verifyPaymentOtp_<env> Cloud Run services are no longer redeployed
+# by this script (renamed to verifyOtp in 2026-04 for issue #13). The orphaned
+# services should be deleted manually from the GCP console after the first
+# successful deploy on each environment.
+echo "Deploying verifyOtp"
+gcloud functions deploy verifyOtp_$environment --set-env-vars ENVIRONMENT=$environment --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --entry-point verifyOtp &
+pids[$!]="verifyOtp"
 
 echo "Deploying sendEmail"
 gcloud functions deploy sendEmail_$environment --set-env-vars ENVIRONMENT=$environment --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --entry-point sendEmail &
@@ -96,8 +100,12 @@ echo "Deploying PaymentCreated trigger"
 gcloud functions deploy paymentCreated_$environment --gen2 --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=paymentCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}payments/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
 pids[$!]="paymentCreated"
 
+echo "Deploying UserChanges trigger"
+gcloud functions deploy userChanges_$environment --gen2 --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=userChanges --trigger-event-filters=type=google.cloud.firestore.document.v1.updated --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}users/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+pids[$!]="userChanges"
+
 echo ""
-echo "All 10 functions deploying in parallel. Waiting for completion..."
+echo "All 11 functions deploying in parallel. Waiting for completion..."
 echo ""
 
 # Wait for all background processes and track failures
@@ -110,7 +118,7 @@ done
 
 echo ""
 if [ ${#failed[@]} -eq 0 ]; then
-  echo "Deployment done. All 10 functions deployed successfully."
+  echo "Deployment done. All 11 functions deployed successfully."
 else
   echo "Deployment finished with errors. Failed functions: ${failed[*]}"
   exit 1
