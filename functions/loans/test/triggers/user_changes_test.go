@@ -89,3 +89,27 @@ func TestHandleUserChangedCore_UpdaterErrorPropagates(t *testing.T) {
 		t.Fatal("expected propagated error")
 	}
 }
+
+func TestHandleUserChangedCore_MobileCleared_ClearsVerification(t *testing.T) {
+	updater := &fakes.UserUpdater{}
+	deps := triggers.UserChangesDeps{UpdateUser: updater.Update}
+
+	before := map[string]any{
+		"id":            "user-1",
+		"mobile_number": "9171234567",
+	}
+	after := map[string]any{
+		"id":            "user-1",
+		"mobile_number": "",
+	}
+
+	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(updater.Updates) != 1 {
+		t.Fatalf("expected 1 update when mobile is cleared, got %d", len(updater.Updates))
+	}
+	if got, ok := updater.Updates[0].Fields["verificationStatus_andNot"].(int); !ok || got != 2 {
+		t.Errorf("expected verificationStatus_andNot=2, got %v", updater.Updates[0].Fields["verificationStatus_andNot"])
+	}
+}

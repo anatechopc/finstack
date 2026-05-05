@@ -159,7 +159,7 @@ func VerifyOtp(w http.ResponseWriter, r *http.Request) {
 
 	var parsedBody map[string]string
 	if errJson := json.Unmarshal(body, &parsedBody); errJson != nil {
-		http.Error(w, errJson.Error(), http.StatusInternalServerError)
+		http.Error(w, errJson.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -209,55 +209,24 @@ func VerifyOtp(w http.ResponseWriter, r *http.Request) {
 		},
 		UpdateUser: func(ctx context.Context, uid string, fields map[string]any) error {
 			docRef := fs.Doc(collectionPrefix + "users/" + uid)
-
-			// If the caller passed a verificationStatus_or bit, fold it into
-			// the user's existing verificationStatus via OR — preserves any
-			// previously-set verification bits (email, etc.).
-			update := make(map[string]any, len(fields)+1)
-			for k, v := range fields {
-				if k == "verificationStatus_or" {
-					continue
+			now := time.Now().UTC()
+			return fs.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+				snap, err := tx.Get(docRef)
+				if err != nil {
+					return err
 				}
-				update[k] = v
-			}
-
-			if maskAny, ok := fields["verificationStatus_or"]; ok {
-				var mask int64
-				switch m := maskAny.(type) {
-				case int:
-					mask = int64(m)
-				case int64:
-					mask = m
-				case float64:
-					mask = int64(m)
-				default:
-					return errors.New("verificationStatus_or must be numeric")
+				update := map[string]any{
+					"updated_at": now,
 				}
-
-				snap, errSnap := docRef.Get(ctx)
-				if errSnap != nil {
-					return errSnap
+				if v, ok := fields["verificationStatus_or"].(int); ok {
+					current, _ := snap.Data()["verificationStatus"].(int64)
+					update["verificationStatus"] = current | int64(v)
 				}
-				var current int64
-				if snap.Exists() {
-					if v, ok := snap.Data()["verificationStatus"]; ok {
-						switch n := v.(type) {
-						case int64:
-							current = n
-						case int:
-							current = int64(n)
-						case float64:
-							current = int64(n)
-						}
-					}
+				if t, ok := fields["mobile_verified_at"].(time.Time); ok {
+					update["mobile_verified_at"] = t
 				}
-				update["verificationStatus"] = current | mask
-			}
-
-			update["updated_at"] = time.Now().UTC()
-
-			_, err := docRef.Set(ctx, update, firestore.MergeAll)
-			return err
+				return tx.Set(docRef, update, firestore.MergeAll)
+			})
 		},
 		Now: time.Now,
 	}

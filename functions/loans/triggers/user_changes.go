@@ -27,12 +27,15 @@ func HandleUserChangedCore(ctx context.Context, uid string, before, after map[st
 	}
 	beforeMobile, _ := before["mobile_number"].(string)
 	afterMobile, _ := after["mobile_number"].(string)
-	if beforeMobile == "" || afterMobile == "" {
-		return nil
-	}
 	if beforeMobile == afterMobile {
 		return nil
 	}
+	if beforeMobile == "" {
+		// No prior mobile to invalidate — first time setting a number.
+		return nil
+	}
+	// beforeMobile != afterMobile AND beforeMobile != "" — clear verification.
+	// Includes the case where afterMobile == "" (user cleared their number).
 	fields := map[string]any{
 		"verificationStatus_andNot": verificationBitMobileNumber,
 		"mobile_verified_at":        nil,
@@ -73,20 +76,21 @@ func UserChanges(ctx context.Context, ev event.Event) error {
 	deps := UserChangesDeps{
 		UpdateUser: func(ctx context.Context, uid string, fields map[string]any) error {
 			docRef := fs.Doc(collectionPrefix + "users/" + uid)
-			update := map[string]any{}
-			if v, ok := fields["verificationStatus_andNot"].(int); ok {
-				snap, sErr := docRef.Get(ctx)
-				if sErr != nil {
-					return sErr
+			return fs.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+				update := map[string]any{}
+				if v, ok := fields["verificationStatus_andNot"].(int); ok {
+					snap, sErr := tx.Get(docRef)
+					if sErr != nil {
+						return sErr
+					}
+					current, _ := snap.Data()["verificationStatus"].(int64)
+					update["verificationStatus"] = current &^ int64(v)
 				}
-				current, _ := snap.Data()["verificationStatus"].(int64)
-				update["verificationStatus"] = current &^ int64(v)
-			}
-			if _, ok := fields["mobile_verified_at"]; ok {
-				update["mobile_verified_at"] = nil
-			}
-			_, setErr := docRef.Set(ctx, update, firestore.MergeAll)
-			return setErr
+				if _, ok := fields["mobile_verified_at"]; ok {
+					update["mobile_verified_at"] = nil
+				}
+				return tx.Set(docRef, update, firestore.MergeAll)
+			})
 		},
 	}
 

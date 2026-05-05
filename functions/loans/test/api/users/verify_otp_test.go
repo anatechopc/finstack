@@ -270,7 +270,8 @@ func TestVerifyOtpCore_UpdateUserError_PropagatesAfterDelete(t *testing.T) {
 		hash: entry(hash, "mobile_verification", time.Now().Add(time.Minute).UnixMilli(), nil),
 	}}
 	deleter := &fakes.OtpDeleter{}
-	updater := &fakes.UserUpdater{Err: errors.New("firestore: write failed")}
+	wantErr := errors.New("firestore: write failed")
+	updater := &fakes.UserUpdater{Err: wantErr}
 
 	verified, err := users.VerifyOtpCore(context.Background(), hash, otp, users.VerifyOtpDeps{
 		ReadOtp: otpReader.Read, DeleteOtp: deleter.Delete, UpdateUser: updater.Update,
@@ -279,8 +280,8 @@ func TestVerifyOtpCore_UpdateUserError_PropagatesAfterDelete(t *testing.T) {
 	if !verified {
 		t.Fatal("expected verified=true even when UpdateUser fails (OTP was consumed)")
 	}
-	if err == nil || err.Error() != "firestore: write failed" {
-		t.Fatalf("expected propagated error 'firestore: write failed', got %v", err)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected propagated wantErr, got %v", err)
 	}
 	if len(deleter.DeletedTokens) != 1 {
 		t.Fatalf("expected delete to have happened before user update")
