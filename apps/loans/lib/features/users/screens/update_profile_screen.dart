@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_form_builder/flutter_form_builder.dart';
 import 'package:gap/gap.dart';
+import 'package:go_router/go_router.dart';
+import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/companies/bloc/company_bloc.dart';
 import 'package:loooans/features/users/bloc/user_bloc.dart';
 import 'package:loooans/features/users/widget/update_profile/update_profile_address.dart';
@@ -46,6 +48,8 @@ class UpdateProfileScreen extends StatelessWidget {
                 ScaffoldMessenger.of(context)
                     .showSnackBar(SnackBar(content: Text(state.message!)));
               }
+            } else if (state.status == UserStatus.requireMobileVerify) {
+              GoRouter.of(context).go(Paths.mobileVerification);
             }
           },
         ),
