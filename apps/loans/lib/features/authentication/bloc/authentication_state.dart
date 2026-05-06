@@ -21,7 +21,6 @@ final class AuthenticationState {
     this.token,
     this.expireAt,
     this.canResendAt,
-    this.otpExpireAt,
   });
 
   const AuthenticationState.loading({bool isLoading = false})
@@ -70,5 +69,4 @@ final class AuthenticationState {
   final String? token;
   final int? expireAt;
   final DateTime? canResendAt;
-  final DateTime? otpExpireAt;
 }

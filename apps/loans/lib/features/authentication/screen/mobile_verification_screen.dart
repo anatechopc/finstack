@@ -9,6 +9,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/authentication/bloc/authentication_bloc.dart';
 import 'package:loooans/services/authentication_service.dart';
+import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 
 class MobileVerificationScreen extends StatefulWidget {
@@ -72,7 +73,9 @@ class _MobileVerificationScreenState extends State<MobileVerificationScreen> {
             state.canResendAt != null) {
           _startCountdown(state.canResendAt!);
         } else if (state.status == AuthenticationStateStatus.success) {
-          GoRouter.of(context).go(Paths.dashboard);
+          GoRouter.of(context).go(
+            SettingsService.instance.appUseClassicUI ? Paths.dashboard : Paths.index,
+          );
         } else if (state.status == AuthenticationStateStatus.logout) {
           GoRouter.of(context).go(Paths.index);
         } else if (state.status == AuthenticationStateStatus.error) {

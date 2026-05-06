@@ -6,6 +6,7 @@ import 'package:form_builder_validators/form_builder_validators.dart';
 import 'package:gap/gap.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/utils/extensions.dart';
+import 'package:loooans/utils/mobile_lock.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 
@@ -84,19 +85,14 @@ class UpdateProfilePrimaryDetails extends StatelessWidget {
             validator: FormBuilderValidators.required(),),
         Builder(
           builder: (context) {
-            final verifiedAt = user.mobileVerifiedAt;
-            final daysSince = verifiedAt == null
-                ? null
-                : DateTime.now().difference(verifiedAt).inDays;
-            final locked = daysSince != null && daysSince < 90;
-            final daysLeft = locked ? 90 - daysSince : 0;
+            final lock = computeMobileLock(user.mobileVerifiedAt);
             return AppWidgets.defaultFormBuilderTextField(
               name: 'mobile_number',
               label: 'Mobile number',
               initialValue: user.mobileNumber,
-              enabled: !locked,
+              enabled: !lock.locked,
               helperText:
-                  locked ? 'Editable in $daysLeft days' : null,
+                  lock.locked ? 'Editable in ${lock.daysLeft} days' : null,
               inputFormatters: [
                 FilteringTextInputFormatter.digitsOnly,
               ],

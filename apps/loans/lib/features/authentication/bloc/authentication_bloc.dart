@@ -234,6 +234,7 @@ class AuthenticationBloc
         emit(const AuthenticationState.loading(isLoading: true));
       }
       await _authenticationRepository.signOut();
+      _otpToken = null;
       authService.dispose();
 
       await initializeAnonymousUser();

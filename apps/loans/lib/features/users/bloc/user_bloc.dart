@@ -329,6 +329,7 @@ class UserBloc extends Bloc<UserEvent, UserState> {
               if (user.id == authService.user.id) {
                 authService.user = user;
               }
+              return user;
             });
           }
 
