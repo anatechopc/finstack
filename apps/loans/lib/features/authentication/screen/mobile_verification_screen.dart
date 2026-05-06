@@ -29,8 +29,10 @@ class _MobileVerificationScreenState extends State<MobileVerificationScreen> {
   @override
   void initState() {
     super.initState();
+    debugPrint('[mobile-verify-debug] screen: initState');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      debugPrint('[mobile-verify-debug] screen: post-frame, dismissing leaks + requestOtp');
       _dismissLeakedLoadingDialog();
       context.read<AuthenticationBloc>().requestOtp();
     });
@@ -49,18 +51,28 @@ class _MobileVerificationScreenState extends State<MobileVerificationScreen> {
   void _dismissLeakedLoadingDialog() {
     final root = Navigator.of(context, rootNavigator: true);
     final isCurrent = ModalRoute.of(context)?.isCurrent ?? true;
+    debugPrint(
+      '[mobile-verify-debug] screen: leak check — isCurrent=$isCurrent canPop=${root.canPop()}',
+    );
     if (!isCurrent && root.canPop()) {
       root.pop();
+      debugPrint('[mobile-verify-debug] screen: leaked dialog popped');
     }
   }
 
   void _showLoadingDialog() {
+    debugPrint(
+      '[mobile-verify-debug] screen: _showLoadingDialog (already shown=$_loadingDialogShown)',
+    );
     if (_loadingDialogShown) return;
     _loadingDialogShown = true;
     AppWidgets.showDefaultLoadingDialog(context);
   }
 
   void _hideLoadingDialog() {
+    debugPrint(
+      '[mobile-verify-debug] screen: _hideLoadingDialog (was shown=$_loadingDialogShown)',
+    );
     if (!_loadingDialogShown) return;
     _loadingDialogShown = false;
     Navigator.of(context, rootNavigator: true).pop();
