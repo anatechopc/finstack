@@ -23,7 +23,7 @@ func init() {
 	//functions.HTTP("addUser", users.AddUser)
 	//functions.HTTP("updateUser", users.UpdateUser)
 	functions.HTTP("requestOtp", users.RequestOtp)
-	functions.HTTP("verifyPaymentOtp", users.VerifyPaymentOtp)
+	functions.HTTP("verifyOtp", users.VerifyOtp)
 	//functions.HTTP("verifyUserEmail", users.VerifyUserEmail)
 	//functions.HTTP("updateUserEmail", users.UpdateUserEmail)
 	functions.HTTP("sendEmail", utils.SendEmailHttp)
@@ -40,6 +40,7 @@ func init() {
 	functions.CloudEvent("notificationCreated", triggers.NotificationCreated)
 	functions.CloudEvent("reviewCreated", triggers.ReviewCreated)
 	functions.CloudEvent("paymentCreated", triggers.PaymentCreated)
+	functions.CloudEvent("userChanges", triggers.UserChanges)
 
 	log.Info("added cloud functions")
 	start()
