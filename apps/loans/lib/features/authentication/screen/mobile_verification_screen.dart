@@ -24,16 +24,13 @@ class _MobileVerificationScreenState extends State<MobileVerificationScreen> {
   final _formKey = GlobalKey<FormBuilderState>();
   Timer? _ticker;
   Duration _remaining = Duration.zero;
-  bool _loadingDialogShown = false;
+  bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    debugPrint('[mobile-verify-debug] screen: initState');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      debugPrint('[mobile-verify-debug] screen: post-frame, dismissing leaks + requestOtp');
-      _dismissLeakedLoadingDialog();
       context.read<AuthenticationBloc>().requestOtp();
     });
   }
@@ -42,40 +39,6 @@ class _MobileVerificationScreenState extends State<MobileVerificationScreen> {
   void dispose() {
     _ticker?.cancel();
     super.dispose();
-  }
-
-  /// Best-effort cleanup of a loading dialog that may have leaked from the
-  /// previous screen — e.g., the LoginScreen's loading dialog when the route
-  /// raced ahead of the dialog pop on web. Only pops if the topmost route on
-  /// the root navigator is NOT this page (i.e., something modal sits above).
-  void _dismissLeakedLoadingDialog() {
-    final root = Navigator.of(context, rootNavigator: true);
-    final isCurrent = ModalRoute.of(context)?.isCurrent ?? true;
-    debugPrint(
-      '[mobile-verify-debug] screen: leak check — isCurrent=$isCurrent canPop=${root.canPop()}',
-    );
-    if (!isCurrent && root.canPop()) {
-      root.pop();
-      debugPrint('[mobile-verify-debug] screen: leaked dialog popped');
-    }
-  }
-
-  void _showLoadingDialog() {
-    debugPrint(
-      '[mobile-verify-debug] screen: _showLoadingDialog (already shown=$_loadingDialogShown)',
-    );
-    if (_loadingDialogShown) return;
-    _loadingDialogShown = true;
-    AppWidgets.showDefaultLoadingDialog(context);
-  }
-
-  void _hideLoadingDialog() {
-    debugPrint(
-      '[mobile-verify-debug] screen: _hideLoadingDialog (was shown=$_loadingDialogShown)',
-    );
-    if (!_loadingDialogShown) return;
-    _loadingDialogShown = false;
-    Navigator.of(context, rootNavigator: true).pop();
   }
 
   void _startCountdown(DateTime canResendAt) {
@@ -107,10 +70,8 @@ class _MobileVerificationScreenState extends State<MobileVerificationScreen> {
     return BlocListener<AuthenticationBloc, AuthenticationState>(
       listener: (context, state) {
         if (state.status == AuthenticationStateStatus.loading) {
-          if (state.isLoading) {
-            _showLoadingDialog();
-          } else {
-            _hideLoadingDialog();
+          if (mounted) {
+            setState(() => _isLoading = state.isLoading);
           }
         } else if (state.status == AuthenticationStateStatus.requestOtp &&
             state.canResendAt != null) {
@@ -124,7 +85,9 @@ class _MobileVerificationScreenState extends State<MobileVerificationScreen> {
         } else if (state.status == AuthenticationStateStatus.logout) {
           GoRouter.of(context).go(Paths.index);
         } else if (state.status == AuthenticationStateStatus.error) {
-          _hideLoadingDialog();
+          if (mounted) {
+            setState(() => _isLoading = false);
+          }
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(state.message ?? 'Something went wrong')),
           );
@@ -133,68 +96,98 @@ class _MobileVerificationScreenState extends State<MobileVerificationScreen> {
       child: Scaffold(
         appBar: AppBar(title: const Text('Verify mobile number')),
         body: AppWidgets.rootConstraints(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: FormBuilder(
-              key: _formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Mobile: ${AuthenticationService.instance.user.mobileNumber}',
-                    style: const TextStyle(fontSize: 16),
+          child: Stack(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: FormBuilder(
+                  key: _formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Mobile: ${AuthenticationService.instance.user.mobileNumber}',
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                      const Gap(24),
+                      AppWidgets.defaultFormBuilderTextField(
+                        name: 'otp',
+                        label: 'One-time pin',
+                        enabled: !_isLoading,
+                        keyboardType: TextInputType.number,
+                        validator: FormBuilderValidators.compose([
+                          FormBuilderValidators.required(),
+                          FormBuilderValidators.minLength(6),
+                        ]),
+                      ),
+                      const Gap(16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: AppWidgets.defaultFilledButton(
+                          onPressed:
+                              _isLoading || _remaining > Duration.zero
+                                  ? null
+                                  : () => context
+                                      .read<AuthenticationBloc>()
+                                      .requestOtp(),
+                          child: Text(
+                            _remaining > Duration.zero
+                                ? 'Resend in ${_formatRemaining(_remaining)}'
+                                : 'Send OTP',
+                          ),
+                        ),
+                      ),
+                      const Gap(16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: AppWidgets.defaultFilledButton(
+                          onPressed: _isLoading
+                              ? null
+                              : () {
+                                  if (_formKey.currentState?.saveAndValidate() ??
+                                      false) {
+                                    final otp = _formKey.currentState!
+                                        .value['otp'] as String;
+                                    context
+                                        .read<AuthenticationBloc>()
+                                        .verifyOtp(otp);
+                                  }
+                                },
+                          child: const Text('Verify'),
+                        ),
+                      ),
+                      const Gap(16),
+                      Center(
+                        child: TextButton(
+                          onPressed: _isLoading
+                              ? null
+                              : () => context
+                                  .read<AuthenticationBloc>()
+                                  .sigOut(),
+                          child: const Text('Log out'),
+                        ),
+                      ),
+                    ],
                   ),
-                  const Gap(24),
-                  AppWidgets.defaultFormBuilderTextField(
-                    name: 'otp',
-                    label: 'One-time pin',
-                    keyboardType: TextInputType.number,
-                    validator: FormBuilderValidators.compose([
-                      FormBuilderValidators.required(),
-                      FormBuilderValidators.minLength(6),
-                    ]),
-                  ),
-                  const Gap(16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: AppWidgets.defaultFilledButton(
-                      onPressed: _remaining > Duration.zero
-                          ? null
-                          : () =>
-                              context.read<AuthenticationBloc>().requestOtp(),
-                      child: Text(
-                        _remaining > Duration.zero
-                            ? 'Resend in ${_formatRemaining(_remaining)}'
-                            : 'Send OTP',
+                ),
+              ),
+              if (_isLoading)
+                const Positioned.fill(
+                  child: ColoredBox(
+                    color: Color(0x99000000),
+                    child: Center(
+                      child: SizedBox(
+                        width: 56,
+                        height: 56,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                        ),
                       ),
                     ),
                   ),
-                  const Gap(16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: AppWidgets.defaultFilledButton(
-                      onPressed: () {
-                        if (_formKey.currentState?.saveAndValidate() ?? false) {
-                          final otp =
-                              _formKey.currentState!.value['otp'] as String;
-                          context.read<AuthenticationBloc>().verifyOtp(otp);
-                        }
-                      },
-                      child: const Text('Verify'),
-                    ),
-                  ),
-                  const Gap(16),
-                  Center(
-                    child: TextButton(
-                      onPressed: () =>
-                          context.read<AuthenticationBloc>().sigOut(),
-                      child: const Text('Log out'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+                ),
+            ],
           ),
         ),
       ),

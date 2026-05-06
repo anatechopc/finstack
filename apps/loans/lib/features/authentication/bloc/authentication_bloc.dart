@@ -157,22 +157,14 @@ class AuthenticationBloc
       NotificationService.instance.startListening(forUser: user.id);
 
       final finalState = _checkUserVerificationStatus();
-      debugPrint(
-        '[mobile-verify-debug] login: finished session load, finalState.status=${finalState.status} verifyStatus=${finalState.verifyStatus}',
-      );
 
       emit(const AuthenticationState.loading());
-      debugPrint('[mobile-verify-debug] login: emitted loading(false), yielding before route emit');
       // Yield so the BlocListener can fully process the loading-off state
-      // (including dismissing the loading dialog) BEFORE the next emit
-      // triggers a route change. Without this, on web the listener can
-      // miss the dialog pop because the route changes first and unmounts
-      // the LoginScreen listener. See MEMORY.md.
+      // before the next emit triggers a route change. On web, without
+      // this yield, the route change can race ahead of the listener and
+      // leave a dialog stuck on the next screen. See MEMORY.md.
       await Future<void>.delayed(Duration.zero);
       emit(finalState);
-      debugPrint(
-        '[mobile-verify-debug] login: emitted finalState (${finalState.status})',
-      );
     } on AuthenticationException catch (err) {
       log.severe('login error: ${err.message}', err);
       emit(const AuthenticationState.loading());
@@ -189,29 +181,20 @@ class AuthenticationBloc
     RequestOtpEvent event,
     Emitter<AuthenticationState> emit,
   ) async {
-    debugPrint('[mobile-verify-debug] requestOtp: handler started');
     try {
       emit(const AuthenticationState.loading(isLoading: true));
-      debugPrint('[mobile-verify-debug] requestOtp: emitted loading(true), calling backend');
       final response = await _userRepository.requestOtp(
         idToken: authService.idToken,
-      );
-      debugPrint(
-        '[mobile-verify-debug] requestOtp: backend returned token=${response.token} expireAt=${response.expireAt}',
       );
       _otpToken = response.token;
       final canResendAt = DateTime.now().add(const Duration(minutes: 4));
       emit(const AuthenticationState.loading());
-      debugPrint('[mobile-verify-debug] requestOtp: emitted loading(false)');
       emit(AuthenticationState.requestOtp(
         token: response.token,
         expireAt: response.expireAt,
         canResendAt: canResendAt,
       ),);
-      debugPrint('[mobile-verify-debug] requestOtp: emitted requestOtp state');
-    } catch (err, st) {
-      debugPrint('[mobile-verify-debug] requestOtp: ERROR $err');
-      debugPrint('[mobile-verify-debug] requestOtp: stack=$st');
+    } catch (err) {
       log.severe('Something went wrong: $err', err);
       emit(const AuthenticationState.loading());
       emit(const AuthenticationState.error(message: 'Cannot request OTP'));
