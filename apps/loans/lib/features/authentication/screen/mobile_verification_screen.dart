@@ -24,14 +24,15 @@ class _MobileVerificationScreenState extends State<MobileVerificationScreen> {
   final _formKey = GlobalKey<FormBuilderState>();
   Timer? _ticker;
   Duration _remaining = Duration.zero;
+  bool _loadingDialogShown = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        context.read<AuthenticationBloc>().requestOtp();
-      }
+      if (!mounted) return;
+      _dismissLeakedLoadingDialog();
+      context.read<AuthenticationBloc>().requestOtp();
     });
   }
 
@@ -39,6 +40,30 @@ class _MobileVerificationScreenState extends State<MobileVerificationScreen> {
   void dispose() {
     _ticker?.cancel();
     super.dispose();
+  }
+
+  /// Best-effort cleanup of a loading dialog that may have leaked from the
+  /// previous screen — e.g., the LoginScreen's loading dialog when the route
+  /// raced ahead of the dialog pop on web. Only pops if the topmost route on
+  /// the root navigator is NOT this page (i.e., something modal sits above).
+  void _dismissLeakedLoadingDialog() {
+    final root = Navigator.of(context, rootNavigator: true);
+    final isCurrent = ModalRoute.of(context)?.isCurrent ?? true;
+    if (!isCurrent && root.canPop()) {
+      root.pop();
+    }
+  }
+
+  void _showLoadingDialog() {
+    if (_loadingDialogShown) return;
+    _loadingDialogShown = true;
+    AppWidgets.showDefaultLoadingDialog(context);
+  }
+
+  void _hideLoadingDialog() {
+    if (!_loadingDialogShown) return;
+    _loadingDialogShown = false;
+    Navigator.of(context, rootNavigator: true).pop();
   }
 
   void _startCountdown(DateTime canResendAt) {
@@ -69,16 +94,25 @@ class _MobileVerificationScreenState extends State<MobileVerificationScreen> {
   Widget build(BuildContext context) {
     return BlocListener<AuthenticationBloc, AuthenticationState>(
       listener: (context, state) {
-        if (state.status == AuthenticationStateStatus.requestOtp &&
+        if (state.status == AuthenticationStateStatus.loading) {
+          if (state.isLoading) {
+            _showLoadingDialog();
+          } else {
+            _hideLoadingDialog();
+          }
+        } else if (state.status == AuthenticationStateStatus.requestOtp &&
             state.canResendAt != null) {
           _startCountdown(state.canResendAt!);
         } else if (state.status == AuthenticationStateStatus.success) {
           GoRouter.of(context).go(
-            SettingsService.instance.appUseClassicUI ? Paths.dashboard : Paths.index,
+            SettingsService.instance.appUseClassicUI
+                ? Paths.dashboard
+                : Paths.index,
           );
         } else if (state.status == AuthenticationStateStatus.logout) {
           GoRouter.of(context).go(Paths.index);
         } else if (state.status == AuthenticationStateStatus.error) {
+          _hideLoadingDialog();
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(state.message ?? 'Something went wrong')),
           );

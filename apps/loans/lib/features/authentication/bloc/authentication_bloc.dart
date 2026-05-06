@@ -159,6 +159,12 @@ class AuthenticationBloc
       final finalState = _checkUserVerificationStatus();
 
       emit(const AuthenticationState.loading());
+      // Yield so the BlocListener can fully process the loading-off state
+      // (including dismissing the loading dialog) BEFORE the next emit
+      // triggers a route change. Without this, on web the listener can
+      // miss the dialog pop because the route changes first and unmounts
+      // the LoginScreen listener. See MEMORY.md.
+      await Future<void>.delayed(Duration.zero);
       emit(finalState);
     } on AuthenticationException catch (err) {
       log.severe('login error: ${err.message}', err);
@@ -217,6 +223,8 @@ class AuthenticationBloc
       final updatedUser = await _userRepository.get(id: authService.user.id);
       authService.user = updatedUser;
       emit(const AuthenticationState.loading());
+      // See _handleLoginEvent for why we yield before a routing emit.
+      await Future<void>.delayed(Duration.zero);
       emit(const AuthenticationState.success(message: 'Verify success'));
     } catch (err) {
       log.severe('Verify otp error: $err', err);
