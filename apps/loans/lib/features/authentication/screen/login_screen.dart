@@ -21,15 +21,9 @@ class LoginScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocListener<AuthenticationBloc, AuthenticationState>(
+    return BlocConsumer<AuthenticationBloc, AuthenticationState>(
       listener: (context, state) {
-        if (state.status == AuthenticationStateStatus.loading) {
-          if (state.isLoading) {
-            AppWidgets.showDefaultLoadingDialog(context);
-          } else {
-            Navigator.of(context, rootNavigator: true).pop();
-          }
-        } else if (state.status == AuthenticationStateStatus.verify) {
+        if (state.status == AuthenticationStateStatus.verify) {
           if (state.verifyStatus == UserVerificationStatus.mobileNumberVerified) {
             GoRouter.of(context).go(Paths.mobileVerification);
           }
@@ -41,15 +35,38 @@ class LoginScreen extends StatelessWidget {
           }
         }
       },
-      child: Scaffold(
-        appBar: AppWidgets.defaultAppBar(
-          context,
-          showLogin: false,
-        ),
-        body: AppWidgets.rootConstraints(
-          child: _mainBody(context),
-        ),
-      ),
+      builder: (context, state) {
+        final isLoading = state.status == AuthenticationStateStatus.loading &&
+            state.isLoading;
+        return Stack(
+          children: [
+            Scaffold(
+              appBar: AppWidgets.defaultAppBar(
+                context,
+                showLogin: false,
+              ),
+              body: AppWidgets.rootConstraints(
+                child: _mainBody(context),
+              ),
+            ),
+            if (isLoading)
+              const Positioned.fill(
+                child: ColoredBox(
+                  color: Color(0x99000000),
+                  child: Center(
+                    child: SizedBox(
+                      width: 56,
+                      height: 56,
+                      child: CircularProgressIndicator(
+                        color: AppColors.green1,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 
