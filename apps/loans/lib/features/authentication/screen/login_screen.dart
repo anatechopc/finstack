@@ -12,7 +12,6 @@ import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 import 'package:loooans/widgets/logo_widget.dart';
-import 'package:user_repository/user_repository.dart';
 
 class LoginScreen extends StatelessWidget {
   LoginScreen({super.key});
@@ -24,9 +23,10 @@ class LoginScreen extends StatelessWidget {
     return BlocConsumer<AuthenticationBloc, AuthenticationState>(
       listener: (context, state) {
         if (state.status == AuthenticationStateStatus.verify) {
-          if (state.verifyStatus == UserVerificationStatus.mobileNumberVerified) {
-            GoRouter.of(context).go(Paths.mobileVerification);
-          }
+          // Send to the verification hub — it shows both email and mobile
+          // status and routes to the appropriate leaf when the user taps
+          // a card.
+          GoRouter.of(context).go(Paths.verify);
         } else if (state.status == AuthenticationStateStatus.success) {
           if (!SettingsService.instance.appUseClassicUI) {
             GoRouter.of(context).go(Paths.index);

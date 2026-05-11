@@ -21,6 +21,7 @@ class Paths {
   static const PathTemplate companiesAction = '$companies/:action';
   static const PathTemplate profileAction = '/profile/:action';
   static const PathTemplate verify = '/verify';
+  static const PathTemplate verifyEmail = '/verify/email';
   static const PathTemplate mobileVerification = '/verify/mobile';
   static const PathTemplate request = '/request/:action';
   static const PathTemplate requestVerify = '/request/verify';

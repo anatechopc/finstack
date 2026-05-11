@@ -7,8 +7,10 @@ import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/app/routing/route_utils.dart';
 import 'package:loooans/app/view/page_not_found.dart';
 import 'package:loooans/features/authentication/bloc/authentication_bloc.dart';
+import 'package:loooans/features/authentication/screen/email_verification_screen.dart';
 import 'package:loooans/features/authentication/screen/login_screen.dart';
 import 'package:loooans/features/authentication/screen/mobile_verification_screen.dart';
+import 'package:loooans/features/authentication/screen/verification_hub_screen.dart';
 import 'package:loooans/features/index/screens/home_screen.dart';
 import 'package:loooans/features/index/screens/index_screen.dart';
 import 'package:loooans/features/loans/screens/loan_details.dart';
@@ -62,7 +64,9 @@ RouterConfig<Object> buildAppRoutes() {
         if (Paths.publicPaths.singleWhereOrNull((p) => p == path) != null) {
           return null;
         }
-        if (path == Paths.mobileVerification) {
+        if (path == Paths.verify ||
+            path == Paths.verifyEmail ||
+            path == Paths.mobileVerification) {
           return null;
         }
         // Anonymous placeholder users are pre-login browsers — no gate.
@@ -79,7 +83,7 @@ RouterConfig<Object> buildAppRoutes() {
                 UserVerificationStatus.mobileNumberVerified.value) !=
             0;
         if (!emailVerified || !mobileVerified) {
-          return Paths.mobileVerification;
+          return Paths.verify;
         }
 
         return null;
@@ -132,6 +136,14 @@ RouterConfig<Object> buildAppRoutes() {
         builder: (context, state) {
           return LoginScreen();
         },
+      ),
+      GoRoute(
+        path: Paths.verify,
+        builder: (context, state) => const VerificationHubScreen(),
+      ),
+      GoRoute(
+        path: Paths.verifyEmail,
+        builder: (context, state) => const EmailVerificationScreen(),
       ),
       GoRoute(
         path: Paths.mobileVerification,
