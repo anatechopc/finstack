@@ -18,6 +18,7 @@ class VerificationHubScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isCompact = getScreenSize(context: context) == ScreenSize.compact;
     return BlocBuilder<AuthenticationBloc, AuthenticationState>(
       builder: (context, state) {
         final user = AuthenticationService.instance.user;
@@ -26,6 +27,33 @@ class VerificationHubScreen extends StatelessWidget {
         final mobileVerified = (user.verificationStatus &
                 UserVerificationStatus.mobileNumberVerified.value) !=
             0;
+        final emailCard = _VerificationCard(
+          label: 'Email',
+          value: firebaseUser?.email ?? '—',
+          verified: emailVerified,
+          onVerify: () => GoRouter.of(context).go(Paths.verifyEmail),
+        );
+        final mobileCard = _VerificationCard(
+          label: 'Mobile number',
+          value: user.mobileNumber,
+          verified: mobileVerified,
+          onVerify: () => GoRouter.of(context).go(Paths.mobileVerification),
+        );
+        final cards = isCompact
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [emailCard, const Gap(16), mobileCard],
+              )
+            : IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: emailCard),
+                    const Gap(16),
+                    Expanded(child: mobileCard),
+                  ],
+                ),
+              );
         return Scaffold(
           appBar: AppBar(title: const Text('Verify your account')),
           body: AppWidgets.rootConstraints(
@@ -40,21 +68,7 @@ class VerificationHubScreen extends StatelessWidget {
                     style: TextStyle(fontSize: 14),
                   ),
                   const Gap(24),
-                  _VerificationCard(
-                    label: 'Email',
-                    value: firebaseUser?.email ?? '—',
-                    verified: emailVerified,
-                    onVerify: () =>
-                        GoRouter.of(context).go(Paths.verifyEmail),
-                  ),
-                  const Gap(16),
-                  _VerificationCard(
-                    label: 'Mobile number',
-                    value: user.mobileNumber,
-                    verified: mobileVerified,
-                    onVerify: () =>
-                        GoRouter.of(context).go(Paths.mobileVerification),
-                  ),
+                  cards,
                   const Gap(24),
                   Center(
                     child: TextButton(
