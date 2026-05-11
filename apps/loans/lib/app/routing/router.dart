@@ -1,4 +1,5 @@
 import 'package:collection/collection.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
@@ -28,6 +29,7 @@ import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/notification_service.dart';
 import 'package:loooans/services/settings_service.dart';
 import 'package:user_loan_view_repository/user_loan_view_repository.dart';
+import 'package:user_repository/user_repository.dart';
 
 RouterConfig<Object> buildAppRoutes() {
   var servicesInitialized = false;
@@ -51,7 +53,35 @@ RouterConfig<Object> buildAppRoutes() {
       }
 
       try {
-        final _ = AuthenticationService.instance.user;
+        final user = AuthenticationService.instance.user;
+
+        // Public paths and the verify screen itself bypass the verification
+        // gate. Without this guard the redirect would loop on the verify
+        // screen, and unauthenticated browsing of /, /login etc. would be
+        // blocked unnecessarily.
+        if (Paths.publicPaths.singleWhereOrNull((p) => p == path) != null) {
+          return null;
+        }
+        if (path == Paths.mobileVerification) {
+          return null;
+        }
+        // Anonymous placeholder users are pre-login browsers — no gate.
+        if (user.isPlaceholder) {
+          return null;
+        }
+
+        // Gate: require BOTH email and mobile number to be verified before
+        // any authenticated route is reachable. Firebase Auth owns email
+        // verification; the mobileNumberVerified bit is owned by our backend.
+        final firebaseUser = FirebaseAuth.instance.currentUser;
+        final emailVerified = firebaseUser?.emailVerified ?? false;
+        final mobileVerified = (user.verificationStatus &
+                UserVerificationStatus.mobileNumberVerified.value) !=
+            0;
+        if (!emailVerified || !mobileVerified) {
+          return Paths.mobileVerification;
+        }
+
         return null;
       } catch (err) {
         if (Paths.publicPaths.singleWhereOrNull((p) => p == path) != null) {
