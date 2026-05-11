@@ -12,8 +12,6 @@ import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 import 'package:loooans/widgets/logo_widget.dart';
-import 'package:loooans/widgets/verify_widget.dart';
-import 'package:user_repository/user_repository.dart';
 
 class LoginScreen extends StatelessWidget {
   LoginScreen({super.key});
@@ -22,122 +20,53 @@ class LoginScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocListener<AuthenticationBloc, AuthenticationState>(
+    return BlocConsumer<AuthenticationBloc, AuthenticationState>(
       listener: (context, state) {
-        if (state.status == AuthenticationStateStatus.loading) {
-          if (state.isLoading) {
-            AppWidgets.showDefaultLoadingDialog(context);
-          } else {
-            Navigator.of(context, rootNavigator: true).pop();
-          }
-        } else if (state.status == AuthenticationStateStatus.verify) {
-          if (state.verifyStatus == UserVerificationStatus.aiVerified) {
-            // verify using veriff
-            showDialog(
-              context: context,
-              builder: (context) {
-                return AlertDialog(
-                  title: const Text('You are not verified'),
-                  content: const Text(
-                    'An email has been sent to you to verify your account. Please check your email to proceed.',),
-                  // backgroundColor: AppColors.green1,
-                  actions: [
-                    AppWidgets.defaultFilledButton(
-                      child: const Text('Ok'),
-                      onPressed: () {
-                        context.read<AuthenticationBloc>().sigOut(
-                          silent: true,
-                        );
-                        Navigator.of(context, rootNavigator: true).pop();
-                      },
-                    ),
-                    // const SizedBox(
-                    //   width: 16,
-                    // ),
-                    // AppWidgets.defaultFilledButton(
-                    //   child: const Text('Yes'),
-                    //   backgroundColor: AppColors.green1,
-                    //   foregroundColor: AppColors.black,
-                    //   onPressed: () {
-                    //     context.read<AuthenticationBloc>().requestOtp();
-                    //     Navigator.of(context, rootNavigator: true).pop();
-                    //   },
-                    // ),
-                  ],
-                );
-              },
-            );
-          } else if (state.verifyStatus ==
-              UserVerificationStatus.mobileNumberVerified) {
-            // verify mobile
-            showDialog(
-              context: context,
-              builder: (context) {
-                return AlertDialog(
-                  title: const Text('Request for OTP'),
-                  content: const Text(
-                    'Your mobile number has not been verified yet. To ensure that your mobile number is correct, we will send an OTP in your registered mobile number. You will receive a text message once your OTP is ready. \nWill you concent?',),
-                  // backgroundColor: AppColors.green1,
-                  actions: [
-                    AppWidgets.defaultFilledButton(
-                      child: const Text('No'),
-                      onPressed: () {
-                        context.read<AuthenticationBloc>().sigOut(
-                          silent: true,
-                        );
-                        Navigator.of(context, rootNavigator: true).pop();
-                      },
-                    ),
-                    const SizedBox(
-                      width: 16,
-                    ),
-                    AppWidgets.defaultFilledButton(
-                      child: const Text('Yes'),
-                      backgroundColor: AppColors.green1,
-                      foregroundColor: AppColors.black,
-                      onPressed: () {
-                        context.read<AuthenticationBloc>().requestOtp();
-                        Navigator.of(context, rootNavigator: true).pop();
-                      },
-                    ),
-                  ],
-                );
-              },
-            );
-          }
+        if (state.status == AuthenticationStateStatus.verify) {
+          // Send to the verification hub — it shows both email and mobile
+          // status and routes to the appropriate leaf when the user taps
+          // a card.
+          GoRouter.of(context).go(Paths.verify);
         } else if (state.status == AuthenticationStateStatus.success) {
           if (!SettingsService.instance.appUseClassicUI) {
             GoRouter.of(context).go(Paths.index);
           } else {
             GoRouter.of(context).go(Paths.dashboard);
           }
-        } else if (state.status == AuthenticationStateStatus.requestOtp) {
-          // GoRouter.of(context).go('${Paths.verify}?vid=${state.token}');
-          if (state.token != null && state.expireAt != null) {
-            showDialog(
-              context: context,
-              builder: (context) {
-                return AlertDialog(
-                  title: const Text('One-Time Pin'),
-                  content: VerifyWidget(
-                    expireAt: state.expireAt!,
-                  ),
-                  // backgroundColor: AppColors.green1,
-                );
-              },
-            );
-          }
         }
       },
-      child: Scaffold(
-        appBar: AppWidgets.defaultAppBar(
-          context,
-          showLogin: false,
-        ),
-        body: AppWidgets.rootConstraints(
-          child: _mainBody(context),
-        ),
-      ),
+      builder: (context, state) {
+        final isLoading = state.status == AuthenticationStateStatus.loading &&
+            state.isLoading;
+        return Stack(
+          children: [
+            Scaffold(
+              appBar: AppWidgets.defaultAppBar(
+                context,
+                showLogin: false,
+              ),
+              body: AppWidgets.rootConstraints(
+                child: _mainBody(context),
+              ),
+            ),
+            if (isLoading)
+              const Positioned.fill(
+                child: ColoredBox(
+                  color: Color(0x99000000),
+                  child: Center(
+                    child: SizedBox(
+                      width: 56,
+                      height: 56,
+                      child: CircularProgressIndicator(
+                        color: AppColors.green1,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 

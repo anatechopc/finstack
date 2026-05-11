@@ -983,7 +983,7 @@ class PaymentCenterBloc
         status: PaymentCenterStatus.otpLoading,
         isLoading: true,
       ));
-      final verified = await userRepository.verifyPaymentOtp(
+      final verified = await userRepository.verifyOtp(
         idToken: authService.idToken,
         token: event.token,
         otp: event.otp,

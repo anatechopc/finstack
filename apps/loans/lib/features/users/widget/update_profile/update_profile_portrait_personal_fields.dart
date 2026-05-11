@@ -5,6 +5,7 @@ import 'package:form_builder_validators/form_builder_validators.dart';
 import 'package:gap/gap.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/utils/extensions.dart';
+import 'package:loooans/utils/mobile_lock.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 
@@ -13,6 +14,9 @@ class UpdateProfilePortraitPersonalFields extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final user = AuthenticationService.instance.user;
+    final lock = computeMobileLock(user.mobileVerifiedAt);
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -85,6 +89,8 @@ class UpdateProfilePortraitPersonalFields extends StatelessWidget {
         AppWidgets.defaultFormBuilderTextField(
           name: 'mobile_number',
           label: 'Mobile number',
+          enabled: !lock.locked,
+          helperText: lock.locked ? 'Editable in ${lock.daysLeft} days' : null,
           inputFormatters: [
             FilteringTextInputFormatter.digitsOnly,
           ],

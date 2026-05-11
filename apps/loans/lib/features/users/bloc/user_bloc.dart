@@ -293,12 +293,16 @@ class UserBloc extends Bloc<UserEvent, UserState> {
       emit(const UserState.loading(isLoading: true));
       final fields = event.fields;
       final user = event.user;
+      final originalMobile = user.mobileNumber;
+      final newMobile = fields['mobile_number'] as String;
+      final mobileChanged =
+          originalMobile != newMobile && user.id == authService.user.id;
 
       final tempUser = user
         ..firstName = fields['first_name'] as String
         ..lastName = fields['last_name'] as String
         ..middleName = fields['middle_name'] as String?
-        ..mobileNumber = fields['mobile_number'] as String
+        ..mobileNumber = newMobile
         // ..emailAddress = fields['email_address'] as String
         ..birthDate = fields['birth_date'] as DateTime;
 
@@ -325,6 +329,7 @@ class UserBloc extends Bloc<UserEvent, UserState> {
               if (user.id == authService.user.id) {
                 authService.user = user;
               }
+              return user;
             });
           }
 
@@ -339,9 +344,14 @@ class UserBloc extends Bloc<UserEvent, UserState> {
       ]);
 
       emit(const UserState.loading());
+      final updatedUser = results[0] as User?;
+      if (mobileChanged && updatedUser != null) {
+        emit(UserState.requireMobileVerify(user: updatedUser));
+        return;
+      }
       emit(UserState.success(
         'Successfully updated user',
-        user: results[0] as User?,
+        user: updatedUser,
       ),);
     } catch (err) {
       log.severe('Update error: $err', err);

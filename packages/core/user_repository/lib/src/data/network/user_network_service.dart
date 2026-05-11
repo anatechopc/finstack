@@ -99,13 +99,13 @@ class UserNetworkService {
     return RequestOtpResponse.fromJson(body);
   }
 
-  Future<bool> verifyPaymentOtp({
+  Future<bool> verifyOtp({
     required String idToken,
     required String token,
     required String otp,
   }) async {
     final response = await http.post(
-      Uri.parse('$LOOOANS_BASE_API_URL/users/verify/payment-otp'),
+      Uri.parse('$LOOOANS_BASE_API_URL/users/verify/otp'),
       headers: {
         'Authorization': 'Bearer $idToken',
         'Content-Type': 'application/json',
@@ -118,7 +118,7 @@ class UserNetworkService {
 
     if (response.statusCode > HttpStatus.noContent) {
       throw HttpException(
-        'Verify payment OTP error: ${response.statusCode} ${response.body}',
+        'Verify OTP error: ${response.statusCode} ${response.body}',
       );
     }
 

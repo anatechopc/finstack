@@ -258,3 +258,15 @@ Updated widget files to use theme values instead of hardcoded styling:
 - Three Firebase flavors: development, staging (`loooans-dev-stg`), production (`loooans-prod`)
 - Design system documented in `DESIGN.md`; theme tokens defined in `lib/app/theme.dart`
 - Prefer using theme values (`Theme.of(context).colorScheme`, `Theme.of(context).textTheme`) over hardcoded `AppColors` and `GoogleFonts` in widgets
+
+---
+
+## Mobile Number Verification UI (issue #13)
+
+- New `MobileVerificationScreen` at `Paths.mobileVerification` reused by login gate and post-profile-edit re-verify.
+- 4-minute resend cooldown; OTP expiry stays at 5 minutes (existing backend behavior). `AuthenticationState.requestOtp` now carries a `canResendAt: DateTime` for the screen's countdown.
+- `LoginScreen` no longer hosts OTP dialogs — replaced by `GoRouter.of(context).go(Paths.mobileVerification)`. The dormant `aiVerified` branch and `VerifyWidget` were deleted.
+- `AuthenticationBloc._checkUserVerificationStatus` now actually checks `(user.verificationStatus & UserVerificationStatus.mobileNumberVerified.value) == 0`. The bloc's verify path now calls backend `UserRepository.verifyOtp` instead of client-side RTDB compare.
+- Profile widget shows ✓ icon when verified; "Verify" CTA when unverified. Update-profile mobile field is disabled with "Editable in N days" while inside the 90-day window.
+- After a profile mobile-number change saves successfully, `UserBloc` emits `UserState.requireMobileVerify`, and `UpdateProfileScreen` routes to `Paths.mobileVerification`.
+- Follow-up #134 covers `bloc_test` and widget tests (deferred — `AuthenticationBloc` currently uses `AuthenticationService.instance` singleton and takes `BuildContext` directly; testable refactor is part of the same issue).

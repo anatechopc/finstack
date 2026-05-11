@@ -316,7 +316,7 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
   ) async {
     try {
       emit(const PaymentState.loading(isLoading: true));
-      final verified = await userRepository.verifyPaymentOtp(
+      final verified = await userRepository.verifyOtp(
         idToken: authService.idToken,
         token: event.token,
         otp: event.otp,
