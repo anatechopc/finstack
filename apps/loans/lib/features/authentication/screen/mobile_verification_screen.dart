@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_form_builder/flutter_form_builder.dart';
@@ -9,6 +10,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/authentication/bloc/authentication_bloc.dart';
 import 'package:loooans/services/authentication_service.dart';
+import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 
@@ -76,10 +78,20 @@ class _MobileVerificationScreenState extends State<MobileVerificationScreen> {
             state.canResendAt != null) {
           _startCountdown(state.canResendAt!);
         } else if (state.status == AuthenticationStateStatus.success) {
-          // Router redirect re-evaluates and routes to dashboard only when
-          // both email and mobile are verified. Otherwise it sends the
-          // user to the hub.
-          GoRouter.of(context).go(Paths.verify);
+          // Smart routing: if email is already verified too, send the
+          // user straight to the app. Otherwise return to the hub so
+          // they can start the email flow.
+          final emailVerified =
+              FirebaseAuth.instance.currentUser?.emailVerified ?? false;
+          if (emailVerified) {
+            GoRouter.of(context).go(
+              SettingsService.instance.appUseClassicUI
+                  ? Paths.dashboard
+                  : Paths.index,
+            );
+          } else {
+            GoRouter.of(context).go(Paths.verify);
+          }
         } else if (state.status == AuthenticationStateStatus.logout) {
           GoRouter.of(context).go(Paths.index);
         } else if (state.status == AuthenticationStateStatus.error) {

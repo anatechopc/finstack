@@ -5,8 +5,11 @@ import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/authentication/bloc/authentication_bloc.dart';
+import 'package:loooans/services/authentication_service.dart';
+import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
+import 'package:user_repository/user_repository.dart';
 
 /// Dedicated email-verification screen. Sends the verification email
 /// via FirebaseAuth, then offers a refresh button that reloads the user
@@ -60,7 +63,22 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Email verified. Thanks!')),
         );
-        GoRouter.of(context).go(Paths.verify);
+        // Smart routing: if mobile is already verified too, send the user
+        // straight to the app. Otherwise return to the hub so they can
+        // start the mobile flow.
+        final mobileVerified = (AuthenticationService.instance.user
+                    .verificationStatus &
+                UserVerificationStatus.mobileNumberVerified.value) !=
+            0;
+        if (mobileVerified) {
+          GoRouter.of(context).go(
+            SettingsService.instance.appUseClassicUI
+                ? Paths.dashboard
+                : Paths.index,
+          );
+        } else {
+          GoRouter.of(context).go(Paths.verify);
+        }
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
