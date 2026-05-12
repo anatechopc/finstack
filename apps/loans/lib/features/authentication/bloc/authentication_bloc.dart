@@ -173,7 +173,7 @@ class AuthenticationBloc
     } catch (err) {
       log.severe('login error: $err', err);
       emit(const AuthenticationState.loading());
-      emit(const AuthenticationState.error(message: 'Something went wrong'));
+      emit(AuthenticationState.error(message: 'Login error: $err'));
     }
   }
 
