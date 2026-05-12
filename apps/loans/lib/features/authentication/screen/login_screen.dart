@@ -33,6 +33,12 @@ class LoginScreen extends StatelessWidget {
           } else {
             GoRouter.of(context).go(Paths.dashboard);
           }
+        } else if (state.status == AuthenticationStateStatus.error) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(state.message ?? 'Login failed'),
+            ),
+          );
         }
       },
       builder: (context, state) {

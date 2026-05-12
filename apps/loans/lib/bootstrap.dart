@@ -7,9 +7,9 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:loooans_helpers/logging_helpers.dart';
 import 'package:loooans_helpers/loooans_helpers.dart';
-import 'package:loooans_helpers/platform_helpers.dart';
 
 class AppBlocObserver extends BlocObserver {
   const AppBlocObserver();
