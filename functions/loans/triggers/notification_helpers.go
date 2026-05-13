@@ -28,7 +28,12 @@ func createNotification(
 		return logErr
 	}
 
-	now := time.Now().UTC()
+	// Store timestamps as int64 millis since epoch to match the codebase
+	// convention. Writing a raw Go time.Time would be auto-serialised by
+	// the Firebase Admin SDK as a Firestore Timestamp protocol object,
+	// which breaks Flutter's json_serializable `as num?` deserialisation.
+	// See root MEMORY.md > Date/Timestamp Convention.
+	nowMillis := time.Now().UTC().UnixMilli()
 
 	notificationDoc := map[string]interface{}{
 		"recipient_id": recipientId,
@@ -37,8 +42,8 @@ func createNotification(
 		"read":         false,
 		"priority":     priority,
 		"data":         data,
-		"created_at":   now,
-		"updated_at":   now,
+		"created_at":   nowMillis,
+		"updated_at":   nowMillis,
 		"deleted_at":   nil,
 	}
 
