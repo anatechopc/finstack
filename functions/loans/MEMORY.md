@@ -53,3 +53,21 @@ Log of work done on the loans Cloud Functions (Go backend).
 - This feature established the Go adapter+core unit-test pattern. Future PRs touching Go handlers should follow it; backfilling existing untested code is out of scope and tracked separately.
 - Local Go test workaround on macOS 26.x: `CGO_ENABLED=0 go test ./...`. CI on Linux uses `go test -v ./...` directly.
 - Hosting: `/api/users/verify/payment-otp` rewrite removed; `/api/users/verify/otp` → `verifyotp-<env>` Cloud Run service added across all 3 hosting target blocks in `apps/loans/firebase.json`.
+
+---
+
+## Timestamp Writes — Always use `.UnixMilli()`, never raw `time.Time` (PR #48)
+
+The Firebase Admin SDK in Go auto-serialises a Go `time.Time` as a Firestore **Timestamp** protocol object. The Flutter client expects timestamp fields as `num` millis (per `loooans_helpers/handleDateTimeToJson` returning `millisecondsSinceEpoch`), and json_serializable's generated `fromJson` casts via `as num?` — that cast throws `TypeError: Instance of 'Timestamp' is not a subtype of type 'num'` when it hits a server-written Firestore Timestamp.
+
+When writing date/time fields to Firestore (or RTDB) from Go code, always convert:
+
+```go
+// ❌ Wrong — Admin SDK serialises as Firestore Timestamp.
+update["updated_at"] = time.Now()
+
+// ✅ Right — stores int64 millis matching the codebase convention.
+update["updated_at"] = time.Now().UnixMilli()
+```
+
+Caught in `verify_otp.go` (PR #48); the convention is consistent everywhere else, e.g. `request_otp.go` writes `time.Now().UnixMilli()` and `expireAt.UnixMilli()`. PR #47 added defensive Timestamp tolerance to the Flutter helpers, but the canonical fix is at the producer.
