@@ -215,15 +215,20 @@ func VerifyOtp(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					return err
 				}
+				// Store timestamps as int64 milliseconds since epoch to match
+				// the codebase convention (Flutter's json_serializable
+				// helpers expect `num` millis). The Firestore Admin SDK
+				// would otherwise serialise Go time.Time as a Firestore
+				// Timestamp protocol object, breaking client deserialisation.
 				update := map[string]any{
-					"updated_at": now,
+					"updated_at": now.UnixMilli(),
 				}
 				if v, ok := fields["verificationStatus_or"].(int); ok {
 					current, _ := snap.Data()["verificationStatus"].(int64)
 					update["verificationStatus"] = current | int64(v)
 				}
 				if t, ok := fields["mobile_verified_at"].(time.Time); ok {
-					update["mobile_verified_at"] = t
+					update["mobile_verified_at"] = t.UnixMilli()
 				}
 				return tx.Set(docRef, update, firestore.MergeAll)
 			})
