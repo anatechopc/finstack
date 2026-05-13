@@ -55,3 +55,19 @@ For project-specific memory, see:
 - Established the Go adapter+core test pattern on the touched handlers (`verifyOtpCore`, `handleUserChangedCore`); future Go PRs adopt the same pattern incrementally. New module `com.loooans.app/test/fakes` provides reusable fakes.
 - Local Go test workaround on macOS 26.x: `CGO_ENABLED=0 go test ./...` to bypass a `dyld: missing LC_UUID` issue. CI on Linux unaffected.
 - Follow-ups: #130 (email OTP migration), #131 (trusted device), #132 (rate limits / wrong-OTP cap), #133 (self-service mobile change during lock), #134 (Flutter bloc/widget test infrastructure + rules emulator tests).
+
+---
+
+## Date/Timestamp Convention (must follow when touching date fields)
+
+- **Store dates as int64 milliseconds since epoch everywhere.** Both Firestore documents and Realtime Database entries use this single representation across the codebase.
+- **Flutter side**: `loooans_helpers/data_helpers/constants.dart` exposes `handleDateTimeToJson` / `handleDateTimeFromJson` / `handleDateTimeNullableFromJson`. Entities use these via `@JsonKey(toJson: ..., fromJson: ...)`. `handleDateTimeToJson(DateTime?)` returns `millisecondsSinceEpoch` (a `num`). After PR #47, the `fromJson` variants also tolerate Firestore `Timestamp` values as a defensive measure for any rogue producer — but new code MUST still write millis.
+- **Go side**: NEVER write a Go `time.Time` directly into a Firestore document or RTDB entry — the Firebase Admin SDK serialises `time.Time` as a Firestore **Timestamp** protocol object (not millis), which breaks Flutter's `num`-shaped deserialization. Always convert with `.UnixMilli()` before writing. Pattern from `request_otp.go`:
+  ```go
+  otpData := map[string]any{
+      "created_at": time.Now().UnixMilli(),
+      "updated_at": time.Now().UnixMilli(),
+      "expire_at":  expireAt, // already int64 millis
+  }
+  ```
+- **Why this matters**: PR #47 + PR #48 chased a `TypeError: Instance of 'Timestamp' is not a subtype of type 'num'` login failure caused by `verify_otp.go` writing `time.Time` for `updated_at` and `mobile_verified_at`. Existing user docs got contaminated and couldn't be read by the Flutter client until the helpers were made permissive. Avoid the round trip by writing millis from the start.

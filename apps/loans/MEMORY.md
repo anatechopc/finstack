@@ -270,3 +270,11 @@ Updated widget files to use theme values instead of hardcoded styling:
 - Profile widget shows ✓ icon when verified; "Verify" CTA when unverified. Update-profile mobile field is disabled with "Editable in N days" while inside the 90-day window.
 - After a profile mobile-number change saves successfully, `UserBloc` emits `UserState.requireMobileVerify`, and `UpdateProfileScreen` routes to `Paths.mobileVerification`.
 - Follow-up #134 covers `bloc_test` and widget tests (deferred — `AuthenticationBloc` currently uses `AuthenticationService.instance` singleton and takes `BuildContext` directly; testable refactor is part of the same issue).
+
+---
+
+## DateTime fields — helpers expect millis (PR #47)
+
+`handleDateTimeFromJson` and `handleDateTimeNullableFromJson` in `loooans_helpers/data_helpers/constants.dart` accept either a `num` (millis since epoch — the codebase convention) or a Firestore `Timestamp` (duck-typed via `.toDate()` to avoid a cloud_firestore dependency in `loooans_helpers`). New entities should keep using these helpers via `@JsonKey(fromJson: handleDateTimeNullableFromJson, toJson: handleDateTimeToJson)`.
+
+If a `TypeError: Instance of 'Timestamp' is not a subtype of type 'num'` ever surfaces again, the culprit is a backend producer that wrote a raw `time.Time` instead of `.UnixMilli()` — fix it at the producer. The Flutter helper's tolerance is defensive, not a license to store Timestamps deliberately.
