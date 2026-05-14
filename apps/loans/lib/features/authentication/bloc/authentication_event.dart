@@ -14,7 +14,13 @@ class LoginEvent extends AuthenticationEvent {
 }
 
 class RequestOtpEvent extends AuthenticationEvent {
+  RequestOtpEvent({this.purpose = 'mobile_number'});
 
+  /// Which channel to request the OTP on. Currently 'mobile_number' (default)
+  /// for SMS or 'email' for email. The backend's request-OTP handler uses
+  /// this to decide whether to write an SMS-pending entry in RTDB (for the
+  /// Android gateway to pick up) or send an email via Microsoft Graph.
+  final String purpose;
 }
 
 class VerifyOtpEvent extends AuthenticationEvent {

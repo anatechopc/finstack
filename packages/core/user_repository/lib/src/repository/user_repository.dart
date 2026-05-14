@@ -136,24 +136,6 @@ class UserRepository implements BaseRepository<User> {
     );
   }
 
-  Future<void> verifyUserEmail({
-    required String idToken,
-  }) {
-    return _networkService.verifyUserEmail(idToken: idToken);
-  }
-
-  Future<void> updateUserEmail({
-    required String idToken,
-    required String emailAddress,
-    bool isVerified = false,
-  }) {
-    return _networkService.updateUserEmail(
-      idToken: idToken,
-      emailAddress: emailAddress,
-      isVerified: isVerified,
-    );
-  }
-
   Future<void> addDevice({
     required String userId,
     required Device device,

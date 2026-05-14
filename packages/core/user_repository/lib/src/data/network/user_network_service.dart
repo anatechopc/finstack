@@ -126,42 +126,4 @@ class UserNetworkService {
     return body['verified'] as bool;
   }
 
-  Future<void> verifyUserEmail({
-    required String idToken,
-  }) async {
-    final response = await http.post(
-      Uri.parse('$LOOOANS_BASE_API_URL/users/verify/email'),
-      headers: {
-        'Authorization': 'Bearer $idToken',
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({}),
-    );
-
-    if (response.statusCode > HttpStatus.noContent) {
-      throw HttpException('Verify user email error: ${response.statusCode} ${response.body}');
-    }
-  }
-
-  Future<void> updateUserEmail({
-    required String idToken,
-    required String emailAddress,
-    bool isVerified = false,
-  }) async {
-    final response = await http.post(
-      Uri.parse('$LOOOANS_BASE_API_URL/users/update/email'),
-      headers: {
-        'Authorization': 'Bearer $idToken',
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'email_address': emailAddress,
-        'is_verified': isVerified,
-      }),
-    );
-
-    if (response.statusCode > HttpStatus.noContent) {
-      throw HttpException('Verify user email error: ${response.statusCode} ${response.body}');
-    }
-  }
 }

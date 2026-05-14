@@ -59,8 +59,8 @@ class AuthenticationBloc
     ),);
   }
 
-  void requestOtp() {
-    add(RequestOtpEvent());
+  void requestOtp({String purpose = 'mobile_number'}) {
+    add(RequestOtpEvent(purpose: purpose));
   }
 
   void verifyOtp(String otp) {
@@ -185,6 +185,7 @@ class AuthenticationBloc
       emit(const AuthenticationState.loading(isLoading: true));
       final response = await _userRepository.requestOtp(
         idToken: authService.idToken,
+        purpose: event.purpose,
       );
       _otpToken = response.token;
       final canResendAt = DateTime.now().add(const Duration(minutes: 4));
@@ -221,6 +222,15 @@ class AuthenticationBloc
       // Backend already updated the user doc; refresh into the auth service.
       final updatedUser = await _userRepository.get(id: authService.user.id);
       authService.user = updatedUser;
+      // Email verification flips Firebase Auth's emailVerified flag server-side
+      // (via Admin SDK in the backend). The local FirebaseUser instance caches
+      // the old value — reload() forces a fresh fetch so emailVerified is
+      // accurate when the verify screen checks it for smart routing.
+      try {
+        await _authenticationRepository.user?.reload();
+      } catch (_) {
+        // Best-effort — reload failure shouldn't block the success flow.
+      }
       emit(const AuthenticationState.loading());
       // See _handleLoginEvent for why we yield before a routing emit.
       await Future<void>.delayed(Duration.zero);
