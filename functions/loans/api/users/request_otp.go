@@ -184,7 +184,7 @@ func RequestOtp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if otpObjective == "email" {
-		_, errSendMail := utils2.SendEmail("OTP", createHtmlBody(otp, fmt.Sprintf("%sloooans.com/verify?vid=%s", subdomain, hash)), []string{fmt.Sprintf("%v", userDetails["email"])})
+		_, errSendMail := utils2.SendEmail("Verify your email — Loooans!", createHtmlBody(otp), []string{fmt.Sprintf("%v", userDetails["email"])})
 
 		if errSendMail != nil {
 			http.Error(w, errSendMail.Error(), http.StatusInternalServerError)
@@ -220,19 +220,47 @@ func RequestOtp(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func createHtmlBody(otp string, domain string) string {
-	/**
-	Hi.
-
-	Thank you for registering.
-	To continue using the app, you need to have a valid email address.
-	Please enter the one time pin below in the device.
-
-	123456
-
-	Please note that the one time pin is valid only for 5 minutes.
-
-	If you did not request for this email, please ignore.
-	*/
-	return fmt.Sprintf("<h3>Hi.</h3><p>Thank you for registering.</br>To continue using the app, you need to have a valid email address.</br>Please enter the one time pin below in the app.</p><p>%s</p><p>%s</p><p>Please note that the one time pin is valid only for 5 minutes.</p><p>If you did not make this request, please ignore.</p><p></br>Best regards,</br></br>Loooans! team</p>", otp, domain)
+// createHtmlBody renders a branded HTML email body containing the OTP code.
+// The template uses table-based layout for maximum email-client
+// compatibility (Outlook still requires this). Inline styles only — most
+// email clients strip <style> blocks.
+//
+// Brand color: AppColors.green1 (#38DC93).
+func createHtmlBody(otp string) string {
+	const tpl = `<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background-color:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1c1b1f;">
+  <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7;padding:24px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
+          <tr>
+            <td style="background-color:#38DC93;padding:24px 32px;">
+              <div style="color:#1c1b1f;font-size:20px;font-weight:600;letter-spacing:-0.3px;">Loooans!</div>
+              <div style="color:#1c1b1f;font-size:13px;opacity:0.75;margin-top:2px;">Your loans marketplace</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;">
+              <h1 style="margin:0 0 16px 0;font-size:22px;font-weight:600;color:#1c1b1f;line-height:1.3;">Verify your email</h1>
+              <p style="margin:0 0 24px 0;font-size:15px;line-height:1.5;color:#1c1b1f;">Use the one-time pin below to verify your email address in the Loooans! app.</p>
+              <div style="margin:0 0 24px 0;padding:20px;background-color:#f4f4f7;border-radius:8px;text-align:center;">
+                <div style="font-size:32px;font-weight:700;letter-spacing:8px;color:#1c1b1f;font-family:'SF Mono','Roboto Mono',Menlo,monospace;">%s</div>
+              </div>
+              <p style="margin:0 0 16px 0;font-size:13px;line-height:1.5;color:#5f5f63;">This code expires in <strong>5 minutes</strong>.</p>
+              <p style="margin:0;font-size:13px;line-height:1.5;color:#5f5f63;">If you didn't request this, you can safely ignore this email.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 32px;border-top:1px solid #ececef;background-color:#fafafb;">
+              <p style="margin:0;font-size:12px;line-height:1.5;color:#7c7c80;">© Loooans! — This is an automated message, please do not reply.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`
+	return fmt.Sprintf(tpl, otp)
 }

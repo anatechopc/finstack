@@ -24,8 +24,6 @@ func init() {
 	//functions.HTTP("updateUser", users.UpdateUser)
 	functions.HTTP("requestOtp", users.RequestOtp)
 	functions.HTTP("verifyOtp", users.VerifyOtp)
-	//functions.HTTP("verifyUserEmail", users.VerifyUserEmail)
-	//functions.HTTP("updateUserEmail", users.UpdateUserEmail)
 	functions.HTTP("sendEmail", utils.SendEmailHttp)
 	functions.HTTP("sometest", users.SomeTest)
 

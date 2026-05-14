@@ -90,6 +90,93 @@ func TestVerifyOtpCore_MobileVerification_UpdatesUserDoc(t *testing.T) {
 	}
 }
 
+func TestVerifyOtpCore_EmailVerification_FlipsFirebaseEmailVerified(t *testing.T) {
+	hash, otp := genOtpForTest(t)
+	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
+	expireAt := now.Add(5 * time.Minute).UnixMilli()
+
+	reader := &fakes.OtpReader{
+		Entries: map[string]map[string]any{
+			hash: entry(hash, "email_verification", expireAt, map[string]any{"otp": otp}),
+		},
+	}
+	deleter := &fakes.OtpDeleter{}
+	updater := &fakes.UserUpdater{}
+
+	deps := users.VerifyOtpDeps{
+		ReadOtp:    reader.Read,
+		DeleteOtp:  deleter.Delete,
+		UpdateUser: updater.Update,
+		Now:        func() time.Time { return now },
+	}
+
+	verified, err := users.VerifyOtpCore(context.Background(), hash, otp, deps)
+	if err != nil {
+		t.Fatalf("VerifyOtpCore returned error: %v", err)
+	}
+	if !verified {
+		t.Fatalf("expected verified=true, got false")
+	}
+	if len(updater.Updates) != 1 {
+		t.Fatalf("expected exactly 1 user update, got %d", len(updater.Updates))
+	}
+	u := updater.Updates[0]
+	if u.UID != "user-123" {
+		t.Errorf("expected UID=user-123, got %q", u.UID)
+	}
+	flag, ok := u.Fields["firebase_email_verified"].(bool)
+	if !ok {
+		t.Errorf("expected firebase_email_verified to be bool, got %T (%v)",
+			u.Fields["firebase_email_verified"], u.Fields["firebase_email_verified"])
+	} else if !flag {
+		t.Errorf("expected firebase_email_verified=true, got false")
+	}
+	// Email verification doesn't touch verificationStatus or mobile_verified_at.
+	if _, exists := u.Fields["verificationStatus_or"]; exists {
+		t.Errorf("did not expect verificationStatus_or in email-verification fields")
+	}
+	if _, exists := u.Fields["mobile_verified_at"]; exists {
+		t.Errorf("did not expect mobile_verified_at in email-verification fields")
+	}
+	if len(deleter.DeletedTokens) != 1 || deleter.DeletedTokens[0] != hash {
+		t.Errorf("expected exactly one delete of %q, got %v", hash, deleter.DeletedTokens)
+	}
+}
+
+func TestVerifyOtpCore_EmailVerification_MissingUserId_Errors(t *testing.T) {
+	hash, otp := genOtpForTest(t)
+	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
+	expireAt := now.Add(5 * time.Minute).UnixMilli()
+
+	reader := &fakes.OtpReader{
+		Entries: map[string]map[string]any{
+			hash: entry(hash, "email_verification", expireAt, map[string]any{
+				"otp":    otp,
+				"userId": "", // empty
+			}),
+		},
+	}
+	updater := &fakes.UserUpdater{}
+
+	deps := users.VerifyOtpDeps{
+		ReadOtp:    reader.Read,
+		DeleteOtp:  (&fakes.OtpDeleter{}).Delete,
+		UpdateUser: updater.Update,
+		Now:        func() time.Time { return now },
+	}
+
+	verified, err := users.VerifyOtpCore(context.Background(), hash, otp, deps)
+	if err == nil {
+		t.Fatalf("expected error for missing userId on email_verification, got nil")
+	}
+	if verified {
+		t.Errorf("expected verified=false when userId is missing, got true")
+	}
+	if len(updater.Updates) != 0 {
+		t.Errorf("expected no user updates when userId missing, got %d", len(updater.Updates))
+	}
+}
+
 func TestVerifyOtpCore_PaymentReason_DoesNotUpdateUser(t *testing.T) {
 	hash, otp := genOtpForTest(t)
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)

@@ -12,6 +12,7 @@ import (
 	"cloud.google.com/go/firestore"
 	"com.loooans.app/api/service"
 	utils2 "com.loooans.app/utils"
+	"firebase.google.com/go/v4/auth"
 
 	"go.uber.org/zap"
 )
@@ -31,6 +32,7 @@ const verificationBitMobileNumber = 2
 const (
 	reasonPayment            = "payment"
 	reasonMobileVerification = "mobile_verification"
+	reasonEmailVerification  = "email_verification"
 )
 
 // VerifyOtpDeps wires the side-effecting collaborators VerifyOtpCore needs.
@@ -106,6 +108,21 @@ func VerifyOtpCore(ctx context.Context, token, receivedOtp string, deps VerifyOt
 		if upErr := deps.UpdateUser(ctx, uid, map[string]any{
 			"verificationStatus_or": verificationBitMobileNumber,
 			"mobile_verified_at":    deps.Now().UTC(),
+		}); upErr != nil {
+			return true, upErr
+		}
+	case reasonEmailVerification:
+		uid, _ := otpData["userId"].(string)
+		if uid == "" {
+			return false, fmt.Errorf("email_verification otp entry missing userId")
+		}
+		// firebase_email_verified is a sentinel field the adapter interprets
+		// as a Firebase Auth Admin SDK UpdateUser call (EmailVerified(true)),
+		// not a Firestore write. We rely on Firebase Auth itself as the
+		// source of truth for emailVerified; the Flutter app reads it via
+		// FirebaseAuth.instance.currentUser?.emailVerified after a reload.
+		if upErr := deps.UpdateUser(ctx, uid, map[string]any{
+			"firebase_email_verified": true,
 		}); upErr != nil {
 			return true, upErr
 		}
@@ -194,6 +211,13 @@ func VerifyOtp(w http.ResponseWriter, r *http.Request) {
 	}
 	defer fs.Close()
 
+	authClient, errAuth := app.Auth(ctx)
+	if errAuth != nil {
+		log.Error("error firebase auth client", zap.String("error", errAuth.Error()))
+		http.Error(w, "Firebase auth client error", http.StatusInternalServerError)
+		return
+	}
+
 	collectionPrefix := utils2.GetCollectionPrefix()
 
 	deps := VerifyOtpDeps{
@@ -208,6 +232,24 @@ func VerifyOtp(w http.ResponseWriter, r *http.Request) {
 			return rtdb.NewRef("otp/" + t).Delete(ctx)
 		},
 		UpdateUser: func(ctx context.Context, uid string, fields map[string]any) error {
+			// firebase_email_verified is a sentinel — flips the Firebase Auth
+			// user's emailVerified flag via Admin SDK. Not a Firestore write.
+			if v, ok := fields["firebase_email_verified"].(bool); ok && v {
+				update := (&auth.UserToUpdate{}).EmailVerified(true)
+				if _, err := authClient.UpdateUser(ctx, uid, update); err != nil {
+					return fmt.Errorf("auth UpdateUser EmailVerified: %w", err)
+				}
+			}
+
+			// Firestore writes — only run the transaction if there's a
+			// Firestore-shaped field in the input. Avoids an unnecessary
+			// Get+Set when we only touched Firebase Auth.
+			_, fsOr := fields["verificationStatus_or"]
+			_, fsAt := fields["mobile_verified_at"]
+			if !fsOr && !fsAt {
+				return nil
+			}
+
 			docRef := fs.Doc(collectionPrefix + "users/" + uid)
 			now := time.Now().UTC()
 			return fs.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
