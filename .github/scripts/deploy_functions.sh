@@ -52,12 +52,22 @@ echo "environment: $environment"
 echo "project: $project"
 echo ""
 
+# Microsoft Graph credentials for SendEmail. Tenant + client IDs are not
+# secrets and are injected as plain env vars. The client secret is stored in
+# Google Secret Manager (secret name: ms-graph-client-secret) and mounted as
+# an env var via --set-secrets. Rotate the secret by adding a new version
+# in Secret Manager — no code change required.
+MS_GRAPH_TENANT_ID="9df89475-8709-4ec5-82f0-4cb73ebdc92b"
+MS_GRAPH_CLIENT_ID="d5b456ce-6c94-47e9-a904-f071382fb4f6"
+MS_GRAPH_ENV_VARS="ENVIRONMENT=$environment,MS_GRAPH_TENANT_ID=$MS_GRAPH_TENANT_ID,MS_GRAPH_CLIENT_ID=$MS_GRAPH_CLIENT_ID"
+MS_GRAPH_SECRETS="MS_GRAPH_CLIENT_SECRET=ms-graph-client-secret:latest"
+
 # Track background process PIDs and their function names
 declare -A pids
 
 # Deploy each function in the background
 echo "Deploying requestOtp"
-gcloud functions deploy requestOtp_$environment --set-env-vars ENVIRONMENT=$environment --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --entry-point requestOtp &
+gcloud functions deploy requestOtp_$environment --set-env-vars "$MS_GRAPH_ENV_VARS" --set-secrets "$MS_GRAPH_SECRETS" --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --entry-point requestOtp &
 pids[$!]="requestOtp"
 
 # NOTE: Old verifyPaymentOtp_<env> Cloud Run services are no longer redeployed
@@ -69,7 +79,7 @@ gcloud functions deploy verifyOtp_$environment --set-env-vars ENVIRONMENT=$envir
 pids[$!]="verifyOtp"
 
 echo "Deploying sendEmail"
-gcloud functions deploy sendEmail_$environment --set-env-vars ENVIRONMENT=$environment --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --entry-point sendEmail &
+gcloud functions deploy sendEmail_$environment --set-env-vars "$MS_GRAPH_ENV_VARS" --set-secrets "$MS_GRAPH_SECRETS" --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --entry-point sendEmail &
 pids[$!]="sendEmail"
 
 echo "Deploying UserCreated trigger"
