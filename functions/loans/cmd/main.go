@@ -23,8 +23,6 @@ func init() {
 	//functions.HTTP("addUser", users.AddUser)
 	//functions.HTTP("updateUser", users.UpdateUser)
 	functions.HTTP("requestOtp", users.RequestOtp)
-	//functions.HTTP("verifyUserEmail", users.VerifyUserEmail)
-	//functions.HTTP("updateUserEmail", users.UpdateUserEmail)
 	functions.HTTP("sendEmail", utils.SendEmailHttp)
 	functions.HTTP("sometest", users.SomeTest)
 
