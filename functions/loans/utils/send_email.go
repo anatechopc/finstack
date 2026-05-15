@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"com.loooans.app/types"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 )
 
@@ -19,18 +19,27 @@ func SendEmail(subject string, emailBody string, recipients []string) (bool, err
 		return false, errLog
 	}
 
+	// Credentials are injected at deploy time via Cloud Functions env vars
+	// (MS_GRAPH_TENANT_ID, MS_GRAPH_CLIENT_ID) and Google Secret Manager
+	// (MS_GRAPH_CLIENT_SECRET). Fail fast if any are missing so the caller
+	// surfaces a meaningful error instead of a downstream
+	// "JWT not well formed" from Microsoft Graph.
+	tenantId := os.Getenv("MS_GRAPH_TENANT_ID")
+	clientId := os.Getenv("MS_GRAPH_CLIENT_ID")
+	clientSecret := os.Getenv("MS_GRAPH_CLIENT_SECRET")
+	if tenantId == "" || clientId == "" || clientSecret == "" {
+		return false, fmt.Errorf("send_email: missing required env vars (MS_GRAPH_TENANT_ID=%v, MS_GRAPH_CLIENT_ID=%v, MS_GRAPH_CLIENT_SECRET=%v)", tenantId != "", clientId != "", clientSecret != "")
+	}
+
 	log.Info("Requesting token from microsoft")
 
-	// for microsoft to send email
-	tenantId := "9df89475-8709-4ec5-82f0-4cb73ebdc92b"
-	clientId := "d5b456ce-6c94-47e9-a904-f071382fb4f6"
-	clientSecret := "d3t8Q~LRHJTrXlhOFVkB.tJ.MZnVYMRY33WaFbLe"
 	scope := "https://graph.microsoft.com/.default"
 	tokenUrl := fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/v2.0/token", tenantId)
 
+	// url.Values.Encode() already URL-encodes values; do not pre-escape.
 	tokenUrlParams := url.Values{}
 	tokenUrlParams.Set("client_id", clientId)
-	tokenUrlParams.Set("client_secret", url.QueryEscape(clientSecret))
+	tokenUrlParams.Set("client_secret", clientSecret)
 	tokenUrlParams.Set("scope", scope)
 	tokenUrlParams.Set("grant_type", "client_credentials")
 	tokenReq, err := http.NewRequest(http.MethodPost, tokenUrl, strings.NewReader(tokenUrlParams.Encode()))
@@ -53,6 +62,15 @@ func SendEmail(subject string, emailBody string, recipients []string) (bool, err
 	defer res.Body.Close()
 	resBody, _ := io.ReadAll(res.Body)
 
+	// If Microsoft rejects our credentials (e.g. expired client secret), the
+	// response is non-2xx with an error body. Surface it directly so the
+	// caller sees the actual reason (e.g. "invalid_client") instead of a
+	// generic failure when the JSON happens to parse.
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		log.Error(fmt.Sprintf("microsoft token request failed: status=%d body=%s", res.StatusCode, string(resBody)))
+		return false, fmt.Errorf("microsoft token request failed: status=%d body=%s", res.StatusCode, string(resBody))
+	}
+
 	var responseJsonBody map[string]any
 
 	errResponseJsonBody := json.Unmarshal(resBody, &responseJsonBody)
@@ -64,12 +82,13 @@ func SendEmail(subject string, emailBody string, recipients []string) (bool, err
 	log.Info("Response token success")
 	log.Debug(fmt.Sprintf("response Token: %v", responseJsonBody))
 	// access_token, bearer, expires_in, ext_expires_in
-	accessToken := responseJsonBody["access_token"]
-	tokenType := responseJsonBody["token_type"]
+	accessToken, hasAccessToken := responseJsonBody["access_token"].(string)
+	tokenType, _ := responseJsonBody["token_type"].(string)
+	if !hasAccessToken || accessToken == "" {
+		log.Error(fmt.Sprintf("microsoft token response missing access_token: body=%s", string(resBody)))
+		return false, fmt.Errorf("microsoft token response missing access_token: body=%s", string(resBody))
+	}
 	sendMailUrl := "https://graph.microsoft.com/v1.0/users/no-reply@loooans.com/sendMail"
-	log.Debug("accessToken: " + fmt.Sprintf("%s", accessToken))
-
-	//something := fmt.Sprintf(`{"message":{"subject":"Credentials","toRecipients":[{"emailAddress":{"address":"%s"}}],"body":{"contentType":"html","content":"%s"}}}`, parsedBody.Email, createHtmlBody(parsedBody.DisplayName, parsedBody.Email, parsedBody.Password))
 
 	var toRecipients []types.EmailAddressContainer
 
@@ -96,9 +115,7 @@ func SendEmail(subject string, emailBody string, recipients []string) (bool, err
 	somebyte, _ := json.Marshal(mailContainer)
 
 	log.Debug("something: " + string(somebyte))
-	//log.Debug("something: " + something)
 	sendMailReq, errSendMail := http.NewRequest(http.MethodPost, sendMailUrl, bytes.NewReader(somebyte))
-	//sendMailReq, errSendMail := http.NewRequest(http.MethodPost, sendMailUrl, strings.NewReader(something))
 
 	if errSendMail != nil {
 		return false, errSendMail
@@ -110,25 +127,20 @@ func SendEmail(subject string, emailBody string, recipients []string) (bool, err
 	sendMailClient := &http.Client{}
 
 	sendMailResponse, errSendMailReq := sendMailClient.Do(sendMailReq)
+	if errSendMailReq != nil {
+		return false, errSendMailReq
+	}
 	defer sendMailResponse.Body.Close()
 
 	log.Debug(fmt.Sprintf("Status code: %d", sendMailResponse.StatusCode))
 
-	var responseBody map[string]interface{}
-	if responseBodyDecodeErr := json.NewDecoder(sendMailResponse.Body).Decode(&responseBody); responseBodyDecodeErr != nil {
-		return false, responseBodyDecodeErr
-	}
-	log.Debug(fmt.Sprintf("respoeBody: %s", responseBody))
+	sendMailBody, _ := io.ReadAll(sendMailResponse.Body)
 
-	// status
 	if sendMailResponse.StatusCode <= http.StatusAccepted {
 		log.Info("Email sent!")
 		return true, nil
 	}
 
-	if errSendMailReq != nil {
-		return false, errSendMailReq
-	}
-
-	return false, errors.New("unknown error")
+	log.Error(fmt.Sprintf("microsoft sendMail failed: status=%d body=%s", sendMailResponse.StatusCode, string(sendMailBody)))
+	return false, fmt.Errorf("microsoft sendMail failed: status=%d body=%s", sendMailResponse.StatusCode, string(sendMailBody))
 }
