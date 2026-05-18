@@ -406,3 +406,158 @@ func expectStringField(t *testing.T, entry map[string]any, key, want string) {
 		t.Errorf("expected entry[%q]=%q, got %q", key, want, got)
 	}
 }
+
+func TestRequestOtpCore_GenerateOtpError_PropagatesWrapped(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	otpErr := errors.New("otp service: backend down")
+	otpWriter := &fakes.OtpWriter{}
+	emailSender := &fakes.EmailSender{}
+
+	deps := users.RequestOtpDeps{
+		GenerateOtp:      func() (string, string, error) { return "", "", otpErr },
+		ReadUser:         (&fakes.UserReader{}).Read,
+		GetAuthUserEmail: (&fakes.AuthEmailReader{}).Read,
+		WriteOtp:         otpWriter.Write,
+		SendEmail:        emailSender.Send,
+		Now:              func() time.Time { return now },
+	}
+
+	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
+		UserID:    "user-123",
+		Objective: "email",
+	}, deps)
+	if !errors.Is(err, otpErr) {
+		t.Fatalf("expected wrapped otp error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "generate otp") {
+		t.Errorf("expected error message to mention 'generate otp' for context, got %q", err.Error())
+	}
+	if len(otpWriter.Writes) != 0 || len(emailSender.Sends) != 0 {
+		t.Errorf("expected no side effects on otp generation failure, got %d writes, %d sends", len(otpWriter.Writes), len(emailSender.Sends))
+	}
+}
+
+func TestRequestOtpCore_SendEmailError_Propagates(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	sendErr := errors.New("microsoft sendMail failed: status=400")
+	otpWriter := &fakes.OtpWriter{}
+	emailSender := &fakes.EmailSender{Err: sendErr}
+	authEmail := &fakes.AuthEmailReader{Emails: map[string]string{"user-123": "u@x.com"}}
+	deps, _ := buildDeps(now, "h-1", "111111", &fakes.UserReader{}, authEmail, otpWriter, emailSender)
+
+	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
+		UserID:    "user-123",
+		Objective: "email",
+	}, deps)
+	if !errors.Is(err, sendErr) {
+		t.Fatalf("expected SendEmail error to propagate, got %v", err)
+	}
+	if len(otpWriter.Writes) != 1 {
+		t.Errorf("expected RTDB write to have happened before SendEmail (so OTP is consumable), got %d", len(otpWriter.Writes))
+	}
+}
+
+func TestRequestOtpCore_EmptyTargetUserID_DefaultsToUserID(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	userReader := &fakes.UserReader{Users: map[string]map[string]any{
+		"user-123": {"mobile_number": "+1"},
+	}}
+	otpWriter := &fakes.OtpWriter{}
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
+
+	if _, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
+		UserID:       "user-123",
+		TargetUserID: "", // empty — should default to UserID
+		Objective:    "mobile_number",
+	}, deps); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if len(userReader.ReadCalls) != 1 || userReader.ReadCalls[0] != "user-123" {
+		t.Errorf("expected ReadUser to default to caller UID when TargetUserID is empty, got %v", userReader.ReadCalls)
+	}
+	entry := otpWriter.Writes[0].Entry
+	if got, _ := entry["userId"].(string); got != "user-123" {
+		t.Errorf("expected entry.userId to default to caller UID, got %v", entry["userId"])
+	}
+	if got, _ := entry["requested_by"].(string); got != "user-123" {
+		t.Errorf("expected entry.requested_by to equal caller, got %v", entry["requested_by"])
+	}
+}
+
+func TestRequestOtpCore_MobileEntry_HasNilNullableFields(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	userReader := &fakes.UserReader{Users: map[string]map[string]any{
+		"user-123": {"mobile_number": "+1"},
+	}}
+	otpWriter := &fakes.OtpWriter{}
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
+
+	if _, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
+		UserID:    "user-123",
+		Objective: "mobile_number",
+	}, deps); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	entry := otpWriter.Writes[0].Entry
+	// These three are expected to be present in the entry with literal nil
+	// — the SMS gateway uses their presence to detect a fresh OTP it has
+	// not processed yet. A missing key or a non-nil sentinel would change
+	// gateway behavior.
+	for _, k := range []string{"deleted_at", "sent_at", "error"} {
+		v, present := entry[k]
+		if !present {
+			t.Errorf("expected entry[%q] to be present with nil value, key missing", k)
+			continue
+		}
+		if v != nil {
+			t.Errorf("expected entry[%q]=nil, got %v (%T)", k, v, v)
+		}
+	}
+}
+
+func TestRequestOtpCore_MobileEntry_HasCorrectObjectiveAndReason(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	userReader := &fakes.UserReader{Users: map[string]map[string]any{
+		"user-123": {"mobile_number": "+1"},
+	}}
+	otpWriter := &fakes.OtpWriter{}
+	deps, _ := buildDeps(now, "h-mob", "654321", userReader, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
+
+	if _, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
+		UserID:    "user-123",
+		Objective: "mobile_number",
+	}, deps); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	entry := otpWriter.Writes[0].Entry
+	expectStringField(t, entry, "objective", "mobile_number")
+	expectStringField(t, entry, "reason", "mobile_verification")
+	expectStringField(t, entry, "id", "h-mob")
+	expectStringField(t, entry, "otp", "654321")
+}
+
+func TestRequestOtpCore_MobileNumberWrongType_ReturnsError(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	// Firestore returned mobile_number as int (e.g., document was created
+	// before string coercion was enforced). The type assertion in Core
+	// must not panic; instead it must fall through to ErrMobileNumberMissing.
+	userReader := &fakes.UserReader{Users: map[string]map[string]any{
+		"user-123": {"mobile_number": 639171234567},
+	}}
+	otpWriter := &fakes.OtpWriter{}
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
+
+	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
+		UserID:    "user-123",
+		Objective: "mobile_number",
+	}, deps)
+	if !errors.Is(err, users.ErrMobileNumberMissing) {
+		t.Fatalf("expected ErrMobileNumberMissing for wrong-typed mobile_number, got %v", err)
+	}
+	if len(otpWriter.Writes) != 0 {
+		t.Errorf("expected no RTDB write on type mismatch, got %d", len(otpWriter.Writes))
+	}
+}
