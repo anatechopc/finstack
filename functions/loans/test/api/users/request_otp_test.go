@@ -215,6 +215,34 @@ func TestRequestOtpCore_MobileObjective_UserNotFound_ReturnsError(t *testing.T) 
 	}
 }
 
+func TestRequestOtpCore_MobileObjective_ReadUserTransportError_Propagates(t *testing.T) {
+	// Distinguishes "user genuinely not found" (Core maps to ErrUserNotFound)
+	// from "Firestore network or permission failure" (Core must propagate
+	// the underlying error so the HTTP layer emits a 500, not a 400). The
+	// adapter's ReadUser maps Firestore codes.NotFound to (nil, nil) before
+	// reaching Core, so anything Core sees as err != nil is real transport
+	// breakage.
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	transportErr := errors.New("firestore: rpc deadline exceeded")
+	userReader := &fakes.UserReader{Err: transportErr}
+	otpWriter := &fakes.OtpWriter{}
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
+
+	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
+		UserID:    "user-123",
+		Objective: "mobile_number",
+	}, deps)
+	if !errors.Is(err, transportErr) {
+		t.Fatalf("expected ReadUser transport error to propagate, got %v", err)
+	}
+	if errors.Is(err, users.ErrUserNotFound) {
+		t.Errorf("expected transport error to NOT be masked as ErrUserNotFound — they map to different status codes")
+	}
+	if len(otpWriter.Writes) != 0 {
+		t.Errorf("expected no RTDB write when ReadUser fails, got %d", len(otpWriter.Writes))
+	}
+}
+
 func TestRequestOtpCore_InvalidObjective_ReturnsError(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	otpWriter := &fakes.OtpWriter{}
