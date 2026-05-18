@@ -184,7 +184,33 @@ func RequestOtp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if otpObjective == "email" {
-		_, errSendMail := utils2.SendEmail("Verify your email — Loooans!", createHtmlBody(otp), []string{fmt.Sprintf("%v", userDetails["email"])})
+		// Pull the recipient from Firebase Auth, not the Firestore user
+		// document. Auth is the source of truth for the email we're trying
+		// to verify, and the Firestore mirror may be missing the field on
+		// older records. Reading the wrong key produced a literal "<nil>"
+		// recipient that Microsoft Graph rejected with
+		// ErrorInvalidRecipients.
+		authClient, errAuthClient := app.Auth(ctx)
+		if errAuthClient != nil {
+			log.Error("error firebase auth client: " + errAuthClient.Error())
+			http.Error(w, "Auth client error", http.StatusInternalServerError)
+			return
+		}
+
+		authUser, errAuthUser := authClient.GetUser(ctx, targetUserId)
+		if errAuthUser != nil {
+			log.Error("error fetching auth user: " + errAuthUser.Error())
+			http.Error(w, "Auth user fetch error", http.StatusInternalServerError)
+			return
+		}
+
+		if authUser.Email == "" {
+			log.Error("auth user has no email", zap.String("uid", targetUserId))
+			http.Error(w, "User has no email on record", http.StatusBadRequest)
+			return
+		}
+
+		_, errSendMail := utils2.SendEmail("Verify your email — Loooans!", createHtmlBody(otp), []string{authUser.Email})
 
 		if errSendMail != nil {
 			http.Error(w, errSendMail.Error(), http.StatusInternalServerError)
