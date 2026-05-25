@@ -311,3 +311,27 @@ Bumped the project to the latest stable Flutter. Branch: `chore/flutter-3.44-upg
 - Wasm dry-run flags incompatibilities in `image` package + `flutter_keyboard_visibility_web` (`dart:html`) — only affects wasm builds, not the default JS build.
 
 CI workflows auto-extract the Flutter version from `apps/loans/.fvmrc` — no workflow edits needed.
+
+### iOS migration (same PR, after CocoaPods became available)
+
+- `ios/Podfile` platform uncommented and set to `iOS 13.0` (Flutter 3.44 rejects iOS 12 minimum).
+- `IPHONEOS_DEPLOYMENT_TARGET` bumped 12.0 → 13.0 across all 9 flavor/build-type combinations in `Runner.xcodeproj/project.pbxproj`.
+- Flutter auto-migrated:
+  - **UIScene lifecycle**: `AppDelegate.swift` now uses `@main` + `FlutterImplicitEngineDelegate`, plugins register via `didInitializeImplicitFlutterEngine`. `Info.plist` gained `UIApplicationSceneManifest`.
+  - `.gitignore` adds `.build/`, `.swiftpm/`.
+  - `AppFrameworkInfo.plist` drops stale `MinimumOSVersion 11.0`.
+  - `Runner.xcscheme` LastUpgradeVersion 1430 → 1510.
+- `Podfile.lock` now tracked. Only 3 cocoapods remain (`flutter_keyboard_visibility`, `flutter_local_notifications`, `printing` — the non-SPM plugins) plus the `Flutter` runtime. Everything else (Firebase, AppCheck, etc.) moved to Swift Package Manager.
+
+### SPM is enabled — repo moved to a no-space path
+
+Flutter 3.44 auto-enables Swift Package Manager. Initially that **broke on the old project path** (`/Users/.../Anaheim Technologies/...`): Flutter URL-encodes the path when locating `pubspec.yaml` for SPM Package.swift, producing `%20` which never resolves to a real file. The repo was relocated to `/Users/deibeeed/Projects/AnaheimTechnologies/finstack` (no space) and SPM auto-integration now succeeds.
+
+What SPM integration added when it succeeded:
+- `Runner.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved` and `Runner.xcworkspace/xcshareddata/swiftpm/Package.resolved` — SPM's lockfile equivalent. Tracked in git.
+- `<PreActions>` block on each flavor xcscheme (`development`, `staging`, `production`) running `$FLUTTER_ROOT/packages/flutter_tools/bin/xcode_backend.sh prepare` before Xcode build. Generated per-flavor by `flutter build ios` — if you add a new flavor, run a build once to populate.
+- `Podfile.lock` dropped from 1682 lines to 33 once SPM took over the bulk of dependencies.
+
+The 3 plugins that don't yet support SPM still pull in via CocoaPods; both managers coexist transparently. `pod install` runs in <1 second after the first build because there's so little for it to do.
+
+Future-Flutter warning: "Disabling Swift Package Manager will not be allowed in a future version of Flutter" — so this stays on, no caveat. If a future plugin or dependency needs the repo path to not have spaces again, keep it that way.
