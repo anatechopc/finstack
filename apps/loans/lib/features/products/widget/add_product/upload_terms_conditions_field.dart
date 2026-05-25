@@ -76,7 +76,7 @@ class UploadTermsConditionsField extends StatelessWidget {
             Text(
               "Not required but it's great to have your own terms and conditions",
               style: TextStyle(
-                color: AppColors.black.withOpacity(0.6),
+                color: AppColors.black.withValues(alpha: 0.6),
                 fontSize: 10,
               ),
             ),

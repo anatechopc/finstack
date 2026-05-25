@@ -101,7 +101,7 @@ class CapitalUsageChartWidget extends StatelessWidget {
                               'of ${totalCapital.toCurrency()}',
                               style: TextStyle(
                                 fontSize: 14,
-                                color: AppColors.white.withOpacity(0.6),
+                                color: AppColors.white.withValues(alpha: 0.6),
                               ),
                             ),
                           ],
@@ -125,7 +125,7 @@ class CapitalUsageChartWidget extends StatelessWidget {
                                   Text(
                                     'used',
                                     style: TextStyle(
-                                      color: AppColors.white.withOpacity(0.6),
+                                      color: AppColors.white.withValues(alpha: 0.6),
                                     ),
                                   ),
                                 ],
@@ -244,7 +244,7 @@ class CapitalUsageChartWidget extends StatelessWidget {
             Text(
               detail,
               style: TextStyle(
-                color: AppColors.white.withOpacity(0.6),
+                color: AppColors.white.withValues(alpha: 0.6),
               ),
             ),
           ],

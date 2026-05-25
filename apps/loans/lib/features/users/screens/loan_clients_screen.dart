@@ -161,7 +161,7 @@ class _LoanClientsScreenState extends State<LoanClientsScreen> {
                                 userLoanView.loanCreatedAt
                                     .toDefaultDateFormat(),
                                 style: TextStyle(
-                                  color: AppColors.white.withOpacity(0.6),
+                                  color: AppColors.white.withValues(alpha: 0.6),
                                   fontSize: 12,
                                   fontWeight: FontWeight.w500,
                                 ),
@@ -171,7 +171,7 @@ class _LoanClientsScreenState extends State<LoanClientsScreen> {
                                     ? 'Due on ${userLoanView.loanDueAt!.toDefaultDateFormat()}'
                                     : 'Open term',
                                 style: TextStyle(
-                                  color: AppColors.white.withOpacity(0.6),
+                                  color: AppColors.white.withValues(alpha: 0.6),
                                   fontSize: 12,
                                   fontWeight: FontWeight.w500,
                                 ),
@@ -192,7 +192,7 @@ class _LoanClientsScreenState extends State<LoanClientsScreen> {
                               Text(
                                 userLoanView.amount.toCurrency(),
                                 style: TextStyle(
-                                  color: AppColors.white.withOpacity(0.6),
+                                  color: AppColors.white.withValues(alpha: 0.6),
                                   fontSize: 12,
                                   fontWeight: FontWeight.w500,
                                 ),
@@ -200,7 +200,7 @@ class _LoanClientsScreenState extends State<LoanClientsScreen> {
                               Text(
                                 userLoanView.amortization.toCurrency(),
                                 style: TextStyle(
-                                  color: AppColors.white.withOpacity(0.6),
+                                  color: AppColors.white.withValues(alpha: 0.6),
                                   fontSize: 12,
                                   fontWeight: FontWeight.w500,
                                 ),
@@ -362,7 +362,7 @@ class _LoanClientsScreenState extends State<LoanClientsScreen> {
                     TextSpan(
                       text: ' (${userLoanView.loanType})',
                       style: GoogleFonts.urbanist(
-                        color: AppColors.white.withOpacity(0.6),
+                        color: AppColors.white.withValues(alpha: 0.6),
                         fontSize: 12,
                       ),
                     ),

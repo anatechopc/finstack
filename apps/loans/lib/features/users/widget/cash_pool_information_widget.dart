@@ -311,7 +311,7 @@ class CashPoolInformationWidget extends StatelessWidget {
                       separatorBuilder: (context, state) {
                         return Divider(
                           height: 16,
-                          color: AppColors.black.withOpacity(0.4),
+                          color: AppColors.black.withValues(alpha: 0.4),
                         );
                       },
                     );

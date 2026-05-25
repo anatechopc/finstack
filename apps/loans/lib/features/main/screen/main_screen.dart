@@ -271,7 +271,7 @@ class _MainScreenState extends State<MainScreen> {
           ),
           boxShadow: [
             BoxShadow(
-              color: AppColors.white.withOpacity(0.5),
+              color: AppColors.white.withValues(alpha: 0.5),
               offset: const Offset(0, 1), //(x,y)
               blurRadius: 16,
             ),

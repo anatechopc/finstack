@@ -65,8 +65,10 @@ case "$MODE" in
     ;;
 esac
 
-# Get current timestamp in milliseconds
-build_number=$(($(date +%s%N)/1000000))
+# Seconds-since-epoch keeps the build number under Android's Int versionCode
+# limit (~2.1B / Integer.MAX_VALUE). Millis would overflow — that caused the
+# AGP "For input string: ..." failure during the Flutter 3.44 upgrade.
+build_number=$(date +%s)
 
 # Append build number to version
 sed -i "s/^version: .*/version: $new_version+$build_number/" "$PUBSPEC"

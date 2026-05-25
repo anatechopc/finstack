@@ -124,7 +124,7 @@ Upload the additional documents that you want to require from the borrower upon 
                 Text(
                   'Select multiple files that will be required for additional loan applications',
                   style: TextStyle(
-                    color: AppColors.black.withOpacity(0.6),
+                    color: AppColors.black.withValues(alpha: 0.6),
                     fontSize: 10,
                   ),
                 ),

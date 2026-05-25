@@ -140,7 +140,7 @@ class _LoanOfferItemState extends State<LoanOfferItem> {
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     border: Border.all(
-                      color: AppColors.white.withOpacity(0.32),
+                      color: AppColors.white.withValues(alpha: 0.32),
                     ),
                   ),
                   child: CircleAvatar(
@@ -270,7 +270,7 @@ class _LoanOfferItemState extends State<LoanOfferItem> {
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w300,
-                    color: widget.foregroundColor.withOpacity(0.6),
+                    color: widget.foregroundColor.withValues(alpha: 0.6),
                   ),
                 ),
               ],

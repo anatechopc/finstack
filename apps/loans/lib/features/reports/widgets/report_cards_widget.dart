@@ -358,7 +358,7 @@ Please note that for unpaid clients amortization, since the payment has not yet 
       //             text: '(100)',
       //             style: GoogleFonts.urbanist(
       //               fontSize: 18,
-      //               color: AppColors.black.withOpacity(0.6),
+      //               color: AppColors.black.withValues(alpha: 0.6),
       //             ),
       //           ),
       //         ]),

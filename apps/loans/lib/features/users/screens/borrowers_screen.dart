@@ -115,7 +115,7 @@ class _BorrowerScreenState extends State<BorrowerScreen> {
                             Text(
                               item.address.completeAddress1Line,
                               style: TextStyle(
-                                color: AppColors.white.withOpacity(0.6),
+                                color: AppColors.white.withValues(alpha: 0.6),
                                 fontSize: 12,
                                 fontWeight: FontWeight.w500,
                               ),
@@ -123,7 +123,7 @@ class _BorrowerScreenState extends State<BorrowerScreen> {
                             Text(
                               item.user.mobileNumber,
                               style: TextStyle(
-                                color: AppColors.white.withOpacity(0.6),
+                                color: AppColors.white.withValues(alpha: 0.6),
                                 fontSize: 12,
                                 fontWeight: FontWeight.w500,
                               ),
@@ -141,7 +141,7 @@ class _BorrowerScreenState extends State<BorrowerScreen> {
                               item.user.createdAt
                                   .toDefaultDateFormatWithDayExtended(),
                               style: TextStyle(
-                                color: AppColors.white.withOpacity(0.6),
+                                color: AppColors.white.withValues(alpha: 0.6),
                                 fontSize: 12,
                                 fontWeight: FontWeight.w500,
                               ),

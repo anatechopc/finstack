@@ -71,3 +71,15 @@ For project-specific memory, see:
   }
   ```
 - **Why this matters**: PR #47 + PR #48 chased a `TypeError: Instance of 'Timestamp' is not a subtype of type 'num'` login failure caused by `verify_otp.go` writing `time.Time` for `updated_at` and `mobile_verified_at`. Existing user docs got contaminated and couldn't be read by the Flutter client until the helpers were made permissive. Avoid the round trip by writing millis from the start.
+
+---
+
+## Flutter 3.38.4 → 3.44.0 upgrade (issue #46, 2026-05-25)
+
+Full details in `apps/loans/MEMORY.md`. Cross-project notes:
+
+- **CI**: no workflow edits needed — `loans-app-{development,staging,production}.yml` already extract the Flutter version from `apps/loans/.fvmrc`.
+- **Pre-existing latent bug fixed**: `apps/loans/scripts/bump_version.sh` used millis as the Android `versionCode`, overflowing `Integer.MAX_VALUE`. Old AGP truncated silently; new toolchain rejects. Now uses seconds (`date +%s`) — valid until ~2038.
+- **Toolchain floor raised on Android**: AGP 8.11.1, Kotlin 2.2.20, Gradle 8.14.3, compileSdk/targetSdk 36, Java 17. Required by plugin dependencies Flutter 3.44 brings.
+- **iOS Podfile.lock will need a refresh on a Mac** (plugin versions changed) — not verified locally because no CocoaPods on dev box.
+- The `org.gradle.jvmargs=-Xmx2048M` rule (from "Build / Test gotchas") needed to go higher: **4096M** at this toolchain. Update the rule accordingly when next touched.

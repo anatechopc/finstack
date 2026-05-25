@@ -10,7 +10,7 @@ class AddLoanStageIndicator extends StatelessWidget {
   });
 
   final _selectedColor = AppColors.black;
-  final _defaultColor = AppColors.black.withOpacity(0.4);
+  final _defaultColor = AppColors.black.withValues(alpha: 0.4);
   final int selectedIndex;
 
   @override

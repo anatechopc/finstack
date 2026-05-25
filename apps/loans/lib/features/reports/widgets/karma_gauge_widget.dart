@@ -148,8 +148,8 @@ class KarmaGaugeWidget extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 12,
                   color: showCredit
-                      ? AppColors.white.withOpacity(0.5)
-                      : AppColors.black.withOpacity(0.5),
+                      ? AppColors.white.withValues(alpha: 0.5)
+                      : AppColors.black.withValues(alpha: 0.5),
                 ),
               ),
             ],
@@ -171,8 +171,8 @@ class KarmaGaugeWidget extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 12,
                   color: showCredit
-                      ? AppColors.white.withOpacity(0.5)
-                      : AppColors.black.withOpacity(0.5),
+                      ? AppColors.white.withValues(alpha: 0.5)
+                      : AppColors.black.withValues(alpha: 0.5),
                 ),
               ),
             ],
