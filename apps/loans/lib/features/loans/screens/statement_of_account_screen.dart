@@ -706,7 +706,7 @@ class _StatementOfAccountScreenState extends State<StatementOfAccountScreen> {
 
     if (currentIndex == entryCount - 1) {
       decoration = TableSpanDecoration(
-        color: AppColors.black.withOpacity(0.4),
+        color: AppColors.black.withValues(alpha: 0.4),
         border: const SpanBorder(
           leading: BorderSide(),
           trailing: BorderSide(),

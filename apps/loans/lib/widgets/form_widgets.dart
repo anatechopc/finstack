@@ -57,7 +57,7 @@ class FormWidgets {
         disabledBorder: OutlineInputBorder(
           borderRadius: defaultBorderRadius,
           borderSide: BorderSide(
-            color: borderColor.withOpacity(0.6),
+            color: borderColor.withValues(alpha: 0.6),
           ),
         ),
         errorBorder: OutlineInputBorder(
@@ -83,7 +83,7 @@ class FormWidgets {
         helperText: helperText,
         helperMaxLines: 4,
         helperStyle: TextStyle(
-          color: borderColor.withOpacity(0.6),
+          color: borderColor.withValues(alpha: 0.6),
         ),
         hintText: hintText,
         errorMaxLines: 4,
@@ -92,7 +92,7 @@ class FormWidgets {
       ),
       keyboardType: keyboardType,
       style: TextStyle(
-        color: enabled ? borderColor : borderColor.withOpacity(0.6),
+        color: enabled ? borderColor : borderColor.withValues(alpha: 0.6),
       ),
       inputFormatters: inputFormatters,
       cursorColor: borderColor,
@@ -172,7 +172,7 @@ class FormWidgets {
         helperText: helperText,
         helperMaxLines: 4,
         helperStyle: TextStyle(
-          color: borderColor.withOpacity(0.6),
+          color: borderColor.withValues(alpha: 0.6),
         ),
         hintText: hintText,
         errorMaxLines: 4,
@@ -215,7 +215,7 @@ class FormWidgets {
         disabledBorder: OutlineInputBorder(
           borderRadius: defaultBorderRadius,
           borderSide: BorderSide(
-            color: borderColor.withOpacity(0.6),
+            color: borderColor.withValues(alpha: 0.6),
           ),
         ),
         errorBorder: OutlineInputBorder(
@@ -246,7 +246,7 @@ class FormWidgets {
       onChanged: onChanged,
       dropdownColor: dropdownColor ?? AppColors.lightBlack,
       style: TextStyle(
-        color: enabled ? borderColor : borderColor.withOpacity(0.6),
+        color: enabled ? borderColor : borderColor.withValues(alpha: 0.6),
       ),
     );
   }
@@ -312,7 +312,7 @@ class FormWidgets {
         helperText: helperText,
         helperMaxLines: 3,
         helperStyle: TextStyle(
-          color: borderColor.withOpacity(0.6),
+          color: borderColor.withValues(alpha: 0.6),
         ),
       ),
       style: TextStyle(

@@ -47,7 +47,7 @@ class MomSalesChartWidget extends StatelessWidget {
                   reportsBloc.getMomYearRangeTitle(),
                   style: TextStyle(
                     fontSize: 14,
-                    color: AppColors.white.withOpacity(0.6),
+                    color: AppColors.white.withValues(alpha: 0.6),
                   ),
                 );
               },
@@ -91,7 +91,7 @@ class MomSalesChartWidget extends StatelessWidget {
                             BarChartRodData(
                               toY: summary.totalCollections,
                               width: 50,
-                              color: Colors.black.withOpacity(0.8),
+                              color: Colors.black.withValues(alpha: 0.8),
                               borderRadius: BorderRadius.circular(8),
                               rodStackItems: [
                                 BarChartRodStackItem(
@@ -118,7 +118,7 @@ class MomSalesChartWidget extends StatelessWidget {
                     borderData: FlBorderData(
                       border: Border(
                         bottom: BorderSide(
-                          color: AppColors.white.withOpacity(0.6),
+                          color: AppColors.white.withValues(alpha: 0.6),
                         ),
                       ),
                     ),

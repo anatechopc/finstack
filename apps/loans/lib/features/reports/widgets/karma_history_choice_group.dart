@@ -25,7 +25,7 @@ class _KarmaHistoryChoiceGroupState extends State<KarmaHistoryChoiceGroup> {
           title: '3 m',
           color: selected == 0
               ? AppColors.white
-              : AppColors.white.withOpacity(0.6),
+              : AppColors.white.withValues(alpha: 0.6),
           onTap: () {
             setState(() {
               selected = 0;
@@ -38,7 +38,7 @@ class _KarmaHistoryChoiceGroupState extends State<KarmaHistoryChoiceGroup> {
           title: '6 m',
           color: selected == 1
               ? AppColors.white
-              : AppColors.white.withOpacity(0.6),
+              : AppColors.white.withValues(alpha: 0.6),
           onTap: () {
             setState(() {
               selected = 1;
@@ -51,7 +51,7 @@ class _KarmaHistoryChoiceGroupState extends State<KarmaHistoryChoiceGroup> {
           title: '1 y',
           color: selected == 2
               ? AppColors.white
-              : AppColors.white.withOpacity(0.6),
+              : AppColors.white.withValues(alpha: 0.6),
           onTap: () {
             setState(() {
               selected = 2;

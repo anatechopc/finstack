@@ -129,7 +129,7 @@ class _LoanDetailsState extends State<LoanDetails> {
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     border: Border.all(
-                      color: AppColors.white.withOpacity(0.32),
+                      color: AppColors.white.withValues(alpha: 0.32),
                     ),
                   ),
                   child: CircleAvatar(

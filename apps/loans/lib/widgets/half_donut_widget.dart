@@ -41,7 +41,7 @@ class HalfDonutPainter extends CustomPainter {
         Offset(centerX, centerY),
         [
           Colors.white,
-          Colors.grey.withOpacity(0.6),
+          Colors.grey.withValues(alpha: 0.6),
           AppColors.black,
         ],
         [
@@ -58,8 +58,8 @@ class HalfDonutPainter extends CustomPainter {
         Offset(centerX, centerY),
         [
           Colors.white,
-          Colors.grey.withOpacity(0.2),
-          AppColors.black.withOpacity(0.4),
+          Colors.grey.withValues(alpha: 0.2),
+          AppColors.black.withValues(alpha: 0.4),
         ],
         [
           0.1,

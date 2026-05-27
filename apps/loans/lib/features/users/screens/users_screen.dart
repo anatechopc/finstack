@@ -112,7 +112,7 @@ class _UsersScreenState extends State<UsersScreen> {
                             Text(
                               item.mobileNumber,
                               style: TextStyle(
-                                color: AppColors.white.withOpacity(0.6),
+                                color: AppColors.white.withValues(alpha: 0.6),
                                 fontSize: 12,
                                 fontWeight: FontWeight.w500,
                               ),
@@ -130,7 +130,7 @@ class _UsersScreenState extends State<UsersScreen> {
                               item.createdAt
                                   .toDefaultDateFormatWithDayExtended(),
                               style: TextStyle(
-                                color: AppColors.white.withOpacity(0.6),
+                                color: AppColors.white.withValues(alpha: 0.6),
                                 fontSize: 12,
                                 fontWeight: FontWeight.w500,
                               ),

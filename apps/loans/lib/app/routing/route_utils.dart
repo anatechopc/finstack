@@ -185,7 +185,7 @@ class RouteUtils {
       barrierDismissible: !opaque,
       opaque: opaque,
       fullscreenDialog: fullScreenDialog,
-      barrierColor: opaque ? Colors.white : Colors.black.withOpacity(0.6),
+      barrierColor: opaque ? Colors.white : Colors.black.withValues(alpha: 0.6),
       transitionsBuilder: (context, animation, secondaryAnimation, child) =>
           FadeTransition(opacity: animation, child: child),
     );

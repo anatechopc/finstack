@@ -23,7 +23,7 @@ class MenuDrawerWidget extends StatelessWidget {
           ...Constants.allMenu(context: context).where((menu) => menu.show).map((menu) {
             return ListTile(
               selected: currentLocation == menu.redirectPath,
-              selectedTileColor: AppColors.green1.withOpacity(0.4),
+              selectedTileColor: AppColors.green1.withValues(alpha: 0.4),
               contentPadding: const EdgeInsets.all(16),
               onTap: () {
                 GoRouter.of(context).go(menu.redirectPath);
@@ -44,7 +44,7 @@ class MenuDrawerWidget extends StatelessWidget {
                 menu.title,
                 style: const TextStyle(color: AppColors.white),
               ),
-              hoverColor: AppColors.white.withOpacity(0.1),
+              hoverColor: AppColors.white.withValues(alpha: 0.1),
             );
           }),
         ],
@@ -83,7 +83,7 @@ class MenuDrawerWidget extends StatelessWidget {
           Text(
             user.userRole.label,
             style: TextStyle(
-              color: AppColors.white.withOpacity(0.6),
+              color: AppColors.white.withValues(alpha: 0.6),
               fontSize: 12,
               fontWeight: FontWeight.w300,
             ),

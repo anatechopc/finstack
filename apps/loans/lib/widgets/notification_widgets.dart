@@ -35,7 +35,7 @@ class NotificationWidgets {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               border: Border.all(
-                color: colorScheme.surface.withOpacity(0.32),
+                color: colorScheme.surface.withValues(alpha: 0.32),
               ),
             ),
             child: SizedBox.square(

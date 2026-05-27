@@ -22,7 +22,7 @@ class DisplayWidgets {
             style: TextStyle(
               fontSize: subFontSize.toDouble(),
               fontWeight: FontWeight.w300,
-              color: fontColor.withOpacity(0.6),
+              color: fontColor.withValues(alpha: 0.6),
             ),
           ),
           TextSpan(
@@ -38,7 +38,7 @@ class DisplayWidgets {
             style: TextStyle(
               fontSize: subFontSize.toDouble(),
               fontWeight: FontWeight.w300,
-              color: fontColor.withOpacity(0.6),
+              color: fontColor.withValues(alpha: 0.6),
             ),
           ),
         ],

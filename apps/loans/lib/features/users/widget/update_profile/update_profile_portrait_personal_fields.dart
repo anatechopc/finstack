@@ -42,7 +42,7 @@ class UpdateProfilePortraitPersonalFields extends StatelessWidget {
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: AppColors.black.withOpacity(0.6),
+                  color: AppColors.black.withValues(alpha: 0.6),
                   shape: BoxShape.circle,
                 ),
                 child: Center(

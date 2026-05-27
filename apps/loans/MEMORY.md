@@ -278,3 +278,60 @@ Updated widget files to use theme values instead of hardcoded styling:
 `handleDateTimeFromJson` and `handleDateTimeNullableFromJson` in `loooans_helpers/data_helpers/constants.dart` accept either a `num` (millis since epoch — the codebase convention) or a Firestore `Timestamp` (duck-typed via `.toDate()` to avoid a cloud_firestore dependency in `loooans_helpers`). New entities should keep using these helpers via `@JsonKey(fromJson: handleDateTimeNullableFromJson, toJson: handleDateTimeToJson)`.
 
 If a `TypeError: Instance of 'Timestamp' is not a subtype of type 'num'` ever surfaces again, the culprit is a backend producer that wrote a raw `time.Time` instead of `.UnixMilli()` — fix it at the producer. The Flutter helper's tolerance is defensive, not a license to store Timestamps deliberately.
+
+---
+
+## Flutter 3.38.4 → 3.44.0 upgrade (issue #46, 2026-05-25)
+
+Bumped the project to the latest stable Flutter. Branch: `chore/flutter-3.44-upgrade`.
+
+**Required toolchain bumps** (driven by plugins Flutter 3.44 pulls in):
+- AGP `8.7.2` → `8.11.1` (`android/settings.gradle`)
+- Kotlin `1.9.20` → `2.2.20` (settings.gradle + `kotlin-stdlib-jdk7` in app/build.gradle)
+- Gradle wrapper `8.9` → `8.14.3`
+- `compileSdk`/`targetSdk` `34` → `36`
+- Java source/target `1_8` → `17`, `jvmTarget` `1.8` → `17` (Java 8 is "obsolete" warning otherwise)
+- `org.gradle.jvmargs` `1536M` → `4096M` (Jetifier OOM during dex transforms — the same gotcha noted in root memory; 2048M wasn't enough at this point, used 4096M)
+- Flutter 3.44 auto-added migration shims: `android.builtInKotlin=false`, `android.newDsl=false` in `gradle.properties` — keep these.
+
+**Real bugs surfaced and fixed:**
+- `scripts/bump_version.sh` used millis-since-epoch as the build number (`$(date +%s%N)/1000000`) → 13-digit values like `1778731308889` overflow Android's `Int` `versionCode` (max ~2.1B). Old AGP silently truncated; new toolchain throws `For input string: "..."`. Switched to `date +%s` (seconds, ~10 digits, fits until 2038). Also re-bumped `pubspec.yaml` to a valid current value.
+- `packages/core/storage_repository` had `sdk: ">=2.18.0 <3.0.0"` — impossibly restrictive vs Dart 3. Latent bug pub had been tolerating. Widened to `>=3.0.0 <4.0.0`.
+
+**Codemod:** 54 `.withOpacity(x)` call sites → `.withValues(alpha: x)` across `lib/` (deprecated in Flutter 3.27+, will become an error in a future release). Pure syntactic substitution.
+
+**Build verification:**
+- Web build ✅, Android debug APK ✅, analyzer 0 errors (132 infos/warnings, all pre-existing)
+- iOS not verified locally (no CocoaPods on this machine); plugin versions changed so `Podfile.lock` will need refreshing on a Mac.
+- 2 package tests fail (`address_repository`, `bank_details_repository`) — confirmed pre-existing on `develop`, scaffold tests that construct Firestore-backed repos without `Firebase.initializeApp()`.
+
+**Known follow-ups (not in this PR):**
+- KGP → Built-in Kotlin migration: 5 plugins still use KGP (camera_android_camerax, device_info_plus, firebase_remote_config, package_info_plus, shared_preferences_android). Future Flutter releases will fail if KGP is still in use — plugin updates needed.
+- SPM (Swift Package Manager) for iOS plugins: `printing`, `flutter_keyboard_visibility`, `flutter_local_notifications` — future-deprecation warning.
+- Wasm dry-run flags incompatibilities in `image` package + `flutter_keyboard_visibility_web` (`dart:html`) — only affects wasm builds, not the default JS build.
+
+CI workflows auto-extract the Flutter version from `apps/loans/.fvmrc` — no workflow edits needed.
+
+### iOS migration (same PR, after CocoaPods became available)
+
+- `ios/Podfile` platform uncommented and set to `iOS 13.0` (Flutter 3.44 rejects iOS 12 minimum).
+- `IPHONEOS_DEPLOYMENT_TARGET` bumped 12.0 → 13.0 across all 9 flavor/build-type combinations in `Runner.xcodeproj/project.pbxproj`.
+- Flutter auto-migrated:
+  - **UIScene lifecycle**: `AppDelegate.swift` now uses `@main` + `FlutterImplicitEngineDelegate`, plugins register via `didInitializeImplicitFlutterEngine`. `Info.plist` gained `UIApplicationSceneManifest`.
+  - `.gitignore` adds `.build/`, `.swiftpm/`.
+  - `AppFrameworkInfo.plist` drops stale `MinimumOSVersion 11.0`.
+  - `Runner.xcscheme` LastUpgradeVersion 1430 → 1510.
+- `Podfile.lock` now tracked. Only 3 cocoapods remain (`flutter_keyboard_visibility`, `flutter_local_notifications`, `printing` — the non-SPM plugins) plus the `Flutter` runtime. Everything else (Firebase, AppCheck, etc.) moved to Swift Package Manager.
+
+### SPM is enabled — repo moved to a no-space path
+
+Flutter 3.44 auto-enables Swift Package Manager. Initially that **broke on the old project path** (`/Users/.../Anaheim Technologies/...`): Flutter URL-encodes the path when locating `pubspec.yaml` for SPM Package.swift, producing `%20` which never resolves to a real file. The repo was relocated to `/Users/deibeeed/Projects/AnaheimTechnologies/finstack` (no space) and SPM auto-integration now succeeds.
+
+What SPM integration added when it succeeded:
+- `Runner.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved` and `Runner.xcworkspace/xcshareddata/swiftpm/Package.resolved` — SPM's lockfile equivalent. Tracked in git.
+- `<PreActions>` block on each flavor xcscheme (`development`, `staging`, `production`) running `$FLUTTER_ROOT/packages/flutter_tools/bin/xcode_backend.sh prepare` before Xcode build. Generated per-flavor by `flutter build ios` — if you add a new flavor, run a build once to populate.
+- `Podfile.lock` dropped from 1682 lines to 33 once SPM took over the bulk of dependencies.
+
+The 3 plugins that don't yet support SPM still pull in via CocoaPods; both managers coexist transparently. `pod install` runs in <1 second after the first build because there's so little for it to do.
+
+Future-Flutter warning: "Disabling Swift Package Manager will not be allowed in a future version of Flutter" — so this stays on, no caveat. If a future plugin or dependency needs the repo path to not have spaces again, keep it that way.
