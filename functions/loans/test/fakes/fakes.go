@@ -132,3 +132,72 @@ func (s *EmailSender) Send(subject, body string, recipients []string) error {
 	s.Sends = append(s.Sends, EmailSend{Subject: subject, Body: body, Recipients: recipients})
 	return s.Err
 }
+
+// Notifier fake — records every notification the Core writes (recipient,
+// title, message, and the data map). Returns Err if set so tests can assert
+// error propagation.
+type Notification struct {
+	RecipientId string
+	Title       string
+	Message     string
+	Data        map[string]string
+}
+
+type Notifier struct {
+	Notifications []Notification
+	Err           error
+}
+
+func (n *Notifier) Notify(_ context.Context, recipientId, title, message string, data map[string]string) error {
+	n.Notifications = append(n.Notifications, Notification{
+		RecipientId: recipientId,
+		Title:       title,
+		Message:     message,
+		Data:        data,
+	})
+	return n.Err
+}
+
+// CompanyNameReader fake — returns preconfigured company display names by
+// company id. If Err is set it is returned instead. Records every companyId
+// argument in ReadCalls so tests can assert the lookup happened (or didn't).
+type CompanyNameReader struct {
+	Names     map[string]string
+	Err       error
+	ReadCalls []string
+}
+
+func (r *CompanyNameReader) Read(_ context.Context, companyId string) (string, error) {
+	r.ReadCalls = append(r.ReadCalls, companyId)
+	if r.Err != nil {
+		return "", r.Err
+	}
+	return r.Names[companyId], nil
+}
+
+// AuthorizeCall records one IsAuthorized invocation.
+type AuthorizeCall struct {
+	ResponderId string
+	CompanyId   string
+}
+
+// ResponderAuthorizer fake — reports whether a responder may respond. A nil
+// Authorized map authorizes everyone (the convenient default for tests that
+// don't exercise the gate); a non-nil map gates specific responder ids. Err is
+// returned instead when set. Records every call in Calls.
+type ResponderAuthorizer struct {
+	Authorized map[string]bool
+	Err        error
+	Calls      []AuthorizeCall
+}
+
+func (a *ResponderAuthorizer) IsAuthorized(_ context.Context, responderId, companyId string) (bool, error) {
+	a.Calls = append(a.Calls, AuthorizeCall{ResponderId: responderId, CompanyId: companyId})
+	if a.Err != nil {
+		return false, a.Err
+	}
+	if a.Authorized == nil {
+		return true, nil
+	}
+	return a.Authorized[responderId], nil
+}

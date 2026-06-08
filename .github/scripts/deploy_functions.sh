@@ -106,6 +106,10 @@ echo "Deploying ReviewCreated trigger"
 gcloud functions deploy reviewCreated_$environment --gen2 --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=reviewCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}reviews/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
 pids[$!]="reviewCreated"
 
+echo "Deploying ReviewUpdated trigger"
+gcloud functions deploy reviewUpdated_$environment --gen2 --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=reviewUpdated --trigger-event-filters=type=google.cloud.firestore.document.v1.updated --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}reviews/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+pids[$!]="reviewUpdated"
+
 echo "Deploying PaymentCreated trigger"
 gcloud functions deploy paymentCreated_$environment --gen2 --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=paymentCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}payments/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
 pids[$!]="paymentCreated"
@@ -115,7 +119,7 @@ gcloud functions deploy userChanges_$environment --gen2 --runtime=go122 --region
 pids[$!]="userChanges"
 
 echo ""
-echo "All 11 functions deploying in parallel. Waiting for completion..."
+echo "All 12 functions deploying in parallel. Waiting for completion..."
 echo ""
 
 # Wait for all background processes and track failures
@@ -128,7 +132,7 @@ done
 
 echo ""
 if [ ${#failed[@]} -eq 0 ]; then
-  echo "Deployment done. All 11 functions deployed successfully."
+  echo "Deployment done. All 12 functions deployed successfully."
 else
   echo "Deployment finished with errors. Failed functions: ${failed[*]}"
   exit 1
