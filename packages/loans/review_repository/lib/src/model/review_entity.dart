@@ -9,17 +9,6 @@ class ReviewEntity implements BaseEntity {
 
   ReviewEntity();
 
-  ReviewEntity._({
-    required this.createdAt,
-    required this.updatedAt,
-    required this.id,
-    required this.providerId,
-    required this.userId,
-    required this.userFullName,
-    required this.message,
-    required this.rating,
-  });
-
   factory ReviewEntity.fromJson(Map<String, dynamic> json) {
     return _$ReviewEntityFromJson(json);
   }
@@ -66,17 +55,39 @@ class ReviewEntity implements BaseEntity {
 
   late int rating;
 
+  /// Company response to the review. All four `response*` fields are set or
+  /// cleared together — see [Review.setResponse] / [Review.clearResponse].
+  String? response;
+
+  @JsonKey(
+    name: 'responded_at',
+    toJson: handleDateTimeToJson,
+    fromJson: handleDateTimeNullableFromJson,
+  )
+  DateTime? respondedAt;
+
+  @JsonKey(name: 'responded_by_id')
+  String? respondedById;
+
+  @JsonKey(name: 'responded_by_name')
+  String? respondedByName;
+
   @override
   List<Object?> get props => [
         createdAt,
         updatedAt,
         id,
         providerId,
+        productId,
         deletedAt,
         userId,
         userFullName,
         message,
         rating,
+        response,
+        respondedAt,
+        respondedById,
+        respondedByName,
       ];
 
   @override
@@ -92,10 +103,15 @@ class ReviewEntity implements BaseEntity {
       ..updatedAt = updatedAt
       ..id = id
       ..providerId = providerId
+      ..productId = productId
       ..deletedAt = deletedAt
       ..userId = userId
       ..userFullName = userFullName
       ..message = message
-      ..rating = rating;
+      ..rating = rating
+      ..response = response
+      ..respondedAt = respondedAt
+      ..respondedById = respondedById
+      ..respondedByName = respondedByName;
   }
 }

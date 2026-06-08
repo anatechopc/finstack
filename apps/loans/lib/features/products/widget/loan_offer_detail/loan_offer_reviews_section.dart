@@ -164,7 +164,76 @@ class LoanOfferReviewItem extends StatelessWidget {
             fontSize: 12,
           ),
         ),
+        if (review.hasResponse) ...[
+          const Gap(8),
+          _ReviewResponseBlock(review: review),
+        ],
       ],
+    );
+  }
+}
+
+/// The company's reply rendered beneath a borrower review. Shown only when
+/// [Review.hasResponse] is true. Indented with a left accent so it reads as a
+/// nested reply rather than a separate review.
+class _ReviewResponseBlock extends StatelessWidget {
+  const _ReviewResponseBlock({required this.review});
+
+  final Review review;
+
+  @override
+  Widget build(BuildContext context) {
+    final respondedAt = review.respondedAt;
+
+    return Container(
+      key: const Key('review_response_block'),
+      margin: const EdgeInsets.only(left: 16),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      decoration: BoxDecoration(
+        color: AppColors.black.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(8),
+        border: Border(
+          left: BorderSide(
+            color: AppColors.black.withValues(alpha: 0.24),
+            width: 2,
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Response from ${review.respondedByName ?? ''}'.trim(),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.black,
+                  ),
+                ),
+              ),
+              if (respondedAt != null)
+                Text(
+                  respondedAt.toDefaultDateFormat(),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: AppColors.black,
+                  ),
+                ),
+            ],
+          ),
+          const Gap(4),
+          Text(
+            review.response ?? '',
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppColors.black,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

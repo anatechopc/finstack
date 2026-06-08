@@ -9,6 +9,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/reports/bloc/reports_bloc.dart';
 import 'package:loooans/features/reports/widgets/score_card_widget.dart';
+import 'package:loooans/features/reviews/widget/reviews_dialog.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
@@ -56,16 +57,20 @@ class ReportCardsWidget extends StatelessWidget {
       child: StreamBuilder(
         stream: context.read<ReportsBloc>().reportSummaryStream(),
         builder: (context, snapshot) {
+          // Build the card map once; each lookup below reused the whole map
+          // otherwise (rebuilding every card N times on each stream tick).
+          final cards = namedReportCards(context);
           return StaggeredGrid.count(
             crossAxisCount: !fullCards ? 2 : 4,
             crossAxisSpacing: 16,
             mainAxisSpacing: 16,
             children: [
-              namedReportCards(context)['collections']!,
-              namedReportCards(context)['net_gains']!,
-              namedReportCards(context)['bad_debt']!,
-              namedReportCards(context)['active_clients']!,
-              namedReportCards(context)['receivables']!,
+              cards['collections']!,
+              cards['net_gains']!,
+              cards['bad_debt']!,
+              cards['active_clients']!,
+              cards['receivables']!,
+              cards['reviews']!,
               AppWidgets.defaultOutlinedButton(
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -336,41 +341,58 @@ Please note that for unpaid clients amortization, since the payment has not yet 
         ),
       ),
       // activate reviews https://github.com/anatechopc/loooans/issues/47
-      // 'reviews': ScoreCardWidget(
-      //   footerTitle: 'Reviews',
-      //   contentWidget: Row(
-      //     children: [
-      //       const Icon(
-      //         Icons.star_rounded,
-      //         size: 24,
-      //       ),
-      //       RichText(
-      //         text: TextSpan(children: [
-      //           TextSpan(
-      //             text: '5 ',
-      //             style: GoogleFonts.urbanist(
-      //               color: AppColors.black,
-      //               fontSize: 32,
-      //               fontWeight: FontWeight.w500,
-      //             ),
-      //           ),
-      //           TextSpan(
-      //             text: '(100)',
-      //             style: GoogleFonts.urbanist(
-      //               fontSize: 18,
-      //               color: AppColors.black.withValues(alpha: 0.6),
-      //             ),
-      //           ),
-      //         ]),
-      //       ),
-      //     ],
-      //   ),
-      //   contentCentered: false,
-      //   footerIcon: IconButton(
-      //     onPressed: () {},
-      //     icon: const Icon(Icons.info_outline_rounded),
-      //   ),
-      // ),
+      'reviews': Builder(
+        builder: (context) {
+          // `company` throws for customer roles or before the company is
+          // hydrated; guard with hasCompany so the whole reports grid never
+          // crashes on this single card (other cards source from ReportsBloc).
+          final auth = AuthenticationService.instance;
+          final company = auth.hasCompany ? auth.company : null;
+          final reviewCount = company?.reviewCount ?? 0;
+          final avg = (company == null || reviewCount == 0)
+              ? 0.0
+              : company.totalRating / reviewCount;
+          return ScoreCardWidget(
+            footerTitle: 'Reviews',
+            contentWidget: Row(
+              children: [
+                const Icon(
+                  Icons.star_rounded,
+                  size: 24,
+                ),
+                const Gap(4),
+                RichText(
+                  text: TextSpan(
+                    children: [
+                      TextSpan(
+                        text: '${avg.toStringAsFixed(1)} ',
+                        style: const TextStyle(
+                          color: AppColors.black,
+                          fontSize: 32,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      TextSpan(
+                        text: '($reviewCount)',
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: AppColors.black.withValues(alpha: 0.6),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            contentCentered: false,
+            footerIcon: IconButton(
+              onPressed:
+                  company == null ? null : () => showReviewsDialog(context),
+              icon: const Icon(Icons.info_outline_rounded),
+            ),
+          );
+        },
+      ),
       'receivables': ScoreCardWidget(
         footerTitle: 'Receivables',
         content: (receivables ?? 0).toCurrency(),
