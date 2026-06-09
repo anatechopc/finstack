@@ -53,4 +53,13 @@ void main() {
       expect(find.textContaining('Acme Capital'), findsOneWidget);
     });
   });
+
+  group('LoanOfferReviewsEmpty', () {
+    testWidgets('renders a no-reviews message', (tester) async {
+      await tester.pumpApp(const LoanOfferReviewsEmpty());
+
+      expect(find.byKey(const Key('loan_offer_reviews_empty')), findsOneWidget);
+      expect(find.text('No reviews yet.'), findsOneWidget);
+    });
+  });
 }

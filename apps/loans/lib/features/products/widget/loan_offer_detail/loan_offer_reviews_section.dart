@@ -237,3 +237,24 @@ class _ReviewResponseBlock extends StatelessWidget {
     );
   }
 }
+
+/// Shown beneath the reviews header when the company has no reviews yet, so the
+/// panel reads intentionally instead of looking blank/broken.
+class LoanOfferReviewsEmpty extends StatelessWidget {
+  const LoanOfferReviewsEmpty({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      key: Key('loan_offer_reviews_empty'),
+      padding: EdgeInsets.symmetric(vertical: 8),
+      child: Text(
+        'No reviews yet.',
+        style: TextStyle(
+          fontSize: 12,
+          color: AppColors.black,
+        ),
+      ),
+    );
+  }
+}
