@@ -160,3 +160,7 @@ func withCompanyId(id string) notificationDataOption {
 func withReviewId(id string) notificationDataOption {
 	return func(data map[string]string) { data["review_id"] = id }
 }
+
+func withUserId(id string) notificationDataOption {
+	return func(data map[string]string) { data["user_id"] = id }
+}

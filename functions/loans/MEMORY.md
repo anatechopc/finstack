@@ -4,6 +4,26 @@ Log of work done on the loans Cloud Functions (Go backend).
 
 ---
 
+## reviewCreated refactored to adapter+core (Issue #47 follow-up, 2026-06-02)
+
+`triggers/review_created.go` was a monolithic adapter with no tests. Refactored into the same adapter+core split as `reviewUpdated`:
+- `HandleReviewCreatedCore(ctx, reviewId, review, deps) (notifyFailures []error, lookupErr error)` — pure fan-out. Notifies the company's admins + reviewModerators of a new review. Two-value return preserves the original's exact semantics: responder-lookup failure → `lookupErr` (adapter returns it → retry); per-recipient Notify failures → collected in `notifyFailures` (best-effort, adapter logs them, no retry — avoids re-notifying recipients that succeeded). Empty `provider_id` → no-op.
+- Deps: `GetResponderIds` (wraps `getCompanyUserIdsByRole`), `Notify` (wraps `createNotification`).
+- Adapter `ReviewCreated` + `extractReviewCreate` helper (skips on missing value / review id, mirroring `extractReviewChange`). Now also `defer fs.Close()` and guards missing review id (originally would have proceeded with an empty id).
+- 5 core tests in `test/triggers/review_created_test.go` (notifies admins+mods, missing-provider no-op, no-responders no-op, lookup-error propagates, notify-error best-effort). Reuses the `Notifier` fake; `responderLister` test helper for the id lookup.
+- Behavior changes (all improvements): missing `provider_id`/`value`/review-`id` now skip gracefully instead of returning an error that would retry-storm on a malformed doc. Happy path identical.
+
+## reviewUpdated trigger — notify borrower on admin response (Issue #47, 2026-06-02)
+
+New trigger `triggers/review_updated.go` for the reviews-response feature (full feature notes in `apps/loans/MEMORY.md`). Follows the adapter+core split (per the established pattern):
+- `HandleReviewUpdatedCore(ctx, reviewId, before, after, deps)` — pure, testable. Fires **only** on the `response` transition `empty/nil → non-empty` (first set). No-ops on edits, clears, unrelated field changes, nil snapshots, and missing `user_id`. Builds a borrower notification (`notification_type: "review"`, carrying `review_id`/`company_id`/`product_id`/`user_id`).
+- `ReviewUpdated(ctx, event)` — CloudEvent adapter; unmarshals the Firestore update protobuf, then delegates to core.
+- Registered in `loooans_cloud_functions.go` `init()`. Fakes in `test/fakes/`. 11 core tests in `test/triggers/review_updated_test.go` (set vs no-op transitions + authorization gate) — all green via `CGO_ENABLED=0 go test ./...`.
+- **Authorization gate (defence in depth, added post-review):** `HandleReviewUpdatedCore` now verifies `responded_by_id` belongs to an `admin`/`reviewModerator` of the review's `provider_id` company (`IsAuthorizedResponder` dep, implemented via the existing `getCompanyUserIdsByRole` helper) before notifying. A spoofed/unauthorized response (one that slipped past the still-deferred Firestore rule) no longer sends the borrower a trusted-looking notification. Verification error → return error (retry), not a silent notify. NOTE: this gates the *notification* only — the Firestore rule is still required to prevent the unauthorized *write/display* of the response itself.
+- `go vet` clean for this code; the two pre-existing `loan_changes.go` lock-copy warnings are untouched by this work.
+
+---
+
 ## Completed Work
 
 ### Notification Triggers (from Flutter refactoring Phase 7)
