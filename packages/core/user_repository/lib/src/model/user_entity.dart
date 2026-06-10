@@ -129,14 +129,22 @@ class UserEntity implements BaseEntity {
   @JsonKey(name: 'company_id')
   String? companyId;
 
+  /// Mandatory, but defaults to [Sex.other] for older/incomplete user
+  /// documents that have no (or an unrecognized) `sex`, so login never crashes
+  /// while keeping the field non-nullable. New users set it via registration.
+  @JsonKey(defaultValue: Sex.other, unknownEnumValue: Sex.other)
   late Sex sex;
 
   @JsonKey(name: 'business_name')
   String? businessName;
 
+  /// Defaults to a blank record when the document has no `employment_details`
+  /// (e.g. customers who never filled them in) so login does not crash on a
+  /// null map — see [_handleEmploymentDetailsFromJson].
   @JsonKey(
     name: 'employment_details',
     toJson: _handleEmploymentDetailsToJson,
+    fromJson: _handleEmploymentDetailsFromJson,
   )
   late EmploymentDetails employmentDetails;
 
@@ -202,5 +210,13 @@ class UserEntity implements BaseEntity {
     EmploymentDetails details,
   ) {
     return details.toJson();
+  }
+
+  static EmploymentDetails _handleEmploymentDetailsFromJson(
+    Map<String, dynamic>? json,
+  ) {
+    return json == null
+        ? EmploymentDetails.createBlank()
+        : EmploymentDetails.fromJson(json);
   }
 }
