@@ -4,6 +4,18 @@ Log of work done on the loans Cloud Functions (Go backend).
 
 ---
 
+## Firebase Admin: keyless credentials (security incident, 2026-06-11)
+
+`utils/initialize_firebase.go` had a **hardcoded service-account private key** committed in source. Google's secret scanner detected it in the GitHub repo and **auto-disabled** the key (`SERVICE_ACCOUNT_KEY_DISABLE_REASON_EXPOSED`, key id `2a8c7ca0…` on `firebase-adminsdk-bqdg7@loooans-dev-stg`). Because every function/trigger inits Firebase via `InitializeFirebase`, which used `option.WithCredentialsJSON(<that key>)`, all Admin calls began failing with `rpc error: code = Unauthenticated` — surfaced first as a 500 from `requestOtp` ("verify mobile number").
+
+Fix (keyless, the correct pattern):
+- `InitializeFirebase` now calls `firebase.NewApp(ctx, conf)` with **no credentials option** → uses Application Default Credentials = the function's **runtime service account** (metadata server). Removed the embedded key and the now-unused `types.FirebaseOptions` (`types/firebase_options.go` deleted). Also fixed a latent bug: prod previously used the dev-stg key.
+- `deploy_functions.sh` now discovers the project's `firebase-adminsdk-*` SA and deploys every function with `--service-account=<it>` (it already has Firestore/RTDB/Auth roles). The deploying identity needs `roles/iam.serviceAccountUser` (actAs) on that SA.
+- The disabled key stays disabled (it's compromised + in git history). Do NOT re-enable or re-embed a key. Local runs need ADC out of band (`gcloud auth application-default login`).
+- IAM to verify before redeploy: the firebase-adminsdk SA has Firebase roles (default yes); CI deployer has actAs on it.
+
+---
+
 ## reviewCreated refactored to adapter+core (Issue #47 follow-up, 2026-06-02)
 
 `triggers/review_created.go` was a monolithic adapter with no tests. Refactored into the same adapter+core split as `reviewUpdated`:
