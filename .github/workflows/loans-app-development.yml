@@ -90,7 +90,12 @@ jobs:
               pkg_group=$(basename "$(dirname "$pkg")")
               cache_key="${pkg_group}_${pkg_name}"
 
-              current_hash=$( (cat "$pkg/pubspec.yaml"; find "$pkg/lib" -name '*.dart' ! -name '*.g.dart' -type f | sort | xargs cat) | sha256sum | cut -d' ' -f1)
+              # Hash ALL package sources (not just this package's) so a change
+              # to a shared package (e.g. loooans_helpers, whose converters are
+              # inlined into dependents' generated code) invalidates their
+              # cached codegen. Previously a shared-helper change left
+              # dependents serving outdated *.g.dart from cache.
+              current_hash=$( (cat "$pkg/pubspec.yaml"; find ../../packages -path '*/lib/*' -name '*.dart' ! -name '*.g.dart' -type f | sort | xargs cat) | sha256sum | cut -d' ' -f1)
 
               cached_hash=""
               if [ -f "/tmp/codegen-cache/${cache_key}.hash" ]; then
@@ -225,7 +230,12 @@ jobs:
               pkg_group=$(basename "$(dirname "$pkg")")
               cache_key="${pkg_group}_${pkg_name}"
 
-              current_hash=$( (cat "$pkg/pubspec.yaml"; find "$pkg/lib" -name '*.dart' ! -name '*.g.dart' -type f | sort | xargs cat) | sha256sum | cut -d' ' -f1)
+              # Hash ALL package sources (not just this package's) so a change
+              # to a shared package (e.g. loooans_helpers, whose converters are
+              # inlined into dependents' generated code) invalidates their
+              # cached codegen. Previously a shared-helper change left
+              # dependents serving outdated *.g.dart from cache.
+              current_hash=$( (cat "$pkg/pubspec.yaml"; find ../../packages -path '*/lib/*' -name '*.dart' ! -name '*.g.dart' -type f | sort | xargs cat) | sha256sum | cut -d' ' -f1)
 
               cached_hash=""
               if [ -f "/tmp/codegen-cache/${cache_key}.hash" ]; then
