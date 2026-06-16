@@ -63,6 +63,13 @@ packages:
       relative: true
     source: path
     version: "1.0.0+1"
+  bank_details_repository:
+    dependency: "direct main"
+    description:
+      path: "../../packages/core/bank_details_repository"
+      relative: true
+    source: path
+    version: "0.1.0+1"
   barcode:
     dependency: transitive
     description:

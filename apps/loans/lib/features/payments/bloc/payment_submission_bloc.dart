@@ -32,8 +32,7 @@ class PaymentSubmissionBloc
     String Function()? newSubmissionId,
   })  : _newSubmissionId = newSubmissionId ?? (() => const Uuid().v4()),
         super(const PaymentSubmissionState()) {
-    on<SubmitPayNowEvent>(_onPayNow);
-    on<SubmitPayInFullEvent>(_onPayInFull);
+    on<SubmitPaymentEvent>(_onSubmit);
   }
 
   final BaseRepository<Payment> paymentRepository;
@@ -42,41 +41,14 @@ class PaymentSubmissionBloc
   final AuthenticationService authService;
   final String Function() _newSubmissionId;
 
-  Future<void> _onPayNow(
-    SubmitPayNowEvent event,
+  Future<void> _onSubmit(
+    SubmitPaymentEvent event,
     Emitter<PaymentSubmissionState> emit,
   ) async {
-    await _submit(
-      event.fileBytes,
-      event.fileName,
-      payInFull: false,
-      emit: emit,
-    );
-  }
-
-  Future<void> _onPayInFull(
-    SubmitPayInFullEvent event,
-    Emitter<PaymentSubmissionState> emit,
-  ) async {
-    await _submit(
-      event.fileBytes,
-      event.fileName,
-      payInFull: true,
-      emit: emit,
-    );
-  }
-
-  Future<void> _submit(
-    Uint8List bytes,
-    String fileName, {
-    required bool payInFull,
-    required Emitter<PaymentSubmissionState> emit,
-  }) async {
     emit(state.copyWith(status: PaymentSubmissionStatus.submitting));
     try {
       final userId = authService.user.id;
-      final targets = await _unpaidSchedules(userId, payInFull: payInFull);
-      if (targets.isEmpty) {
+      if (event.schedules.isEmpty) {
         emit(
           state.copyWith(
             status: PaymentSubmissionStatus.error,
@@ -86,16 +58,16 @@ class PaymentSubmissionBloc
         return;
       }
 
-      final loanId = targets.first.loanId;
+      final loanId = event.schedules.first.loanId;
       final proof = await storageRepository.upload(
-        data: bytes,
+        data: event.fileBytes,
         folder: 'users/$userId/loans/$loanId',
-        fileName: fileName,
+        fileName: event.fileName,
         includeOriginal: true,
       );
       final submissionId = _newSubmissionId();
 
-      for (final schedule in targets) {
+      for (final schedule in event.schedules) {
         final payment = Payment.create(
           userId: userId,
           loanScheduleId: schedule.id,
@@ -119,37 +91,5 @@ class PaymentSubmissionBloc
         ),
       );
     }
-  }
-
-  /// Returns the schedules to pay: the single next-due one (Pay now), or all
-  /// remaining unpaid ones (Pay in full).
-  ///
-  /// IMPLEMENTATION NOTE: this uses loanScheduleRepository.load directly for now
-  /// (kept as a testable seam). Task 6 replaces this with the app's
-  /// LoanCalculationService-backed payable-schedule source (schedules are NOT
-  /// all pre-stored in Firestore — see apps/loans/MEMORY.md). Keep this return
-  /// contract so the tests stand.
-  Future<List<LoanSchedule>> _unpaidSchedules(
-    String userId, {
-    required bool payInFull,
-  }) async {
-    final all = await loanScheduleRepository.load(
-      reset: true,
-      limit: null,
-      statements: [
-        QueryStatement(field: 'user_id', isEqualTo: userId),
-      ],
-    );
-    final unpaid = all
-        .where(
-          (s) =>
-              s.status != LoanStatus.paid_on_time &&
-              s.status != LoanStatus.paid_late &&
-              s.status != LoanStatus.payment_submitted,
-        )
-        .toList()
-      ..sort((a, b) => a.dueAt.compareTo(b.dueAt));
-    if (unpaid.isEmpty) return [];
-    return payInFull ? unpaid : [unpaid.first];
   }
 }

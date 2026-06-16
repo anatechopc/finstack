@@ -73,17 +73,7 @@ void main() {
         .thenAnswer((i) async => i.namedArguments[#data] as LoanSchedule);
   });
 
-  PaymentSubmissionBloc build({
-    required List<LoanSchedule> nextDue,
-  }) {
-    when(
-      () => schedules.load(
-        statements: any(named: 'statements'),
-        limit: any(named: 'limit'),
-        page: any(named: 'page'),
-        reset: any(named: 'reset'),
-      ),
-    ).thenAnswer((_) async => nextDue);
+  PaymentSubmissionBloc build() {
     return PaymentSubmissionBloc.withDependencies(
       paymentRepository: payments,
       loanScheduleRepository: schedules,
@@ -95,8 +85,14 @@ void main() {
 
   blocTest<PaymentSubmissionBloc, PaymentSubmissionState>(
     'Pay now uploads proof + creates ONE pending payment for the next schedule',
-    build: () => build(nextDue: [_schedule('sched-1')]),
-    act: (b) => b.add(SubmitPayNowEvent(fileBytes: bytes, fileName: 'p.jpg')),
+    build: build,
+    act: (b) => b.add(
+      SubmitPaymentEvent(
+        schedules: [_schedule('sched-1')],
+        fileBytes: bytes,
+        fileName: 'p.jpg',
+      ),
+    ),
     expect: () => [
       isA<PaymentSubmissionState>().having(
         (s) => s.status,
@@ -124,9 +120,14 @@ void main() {
   blocTest<PaymentSubmissionBloc, PaymentSubmissionState>(
     'Pay in full creates one pending payment per remaining schedule '
     '(shared submission)',
-    build: () => build(nextDue: [_schedule('sched-1'), _schedule('sched-2')]),
-    act: (b) =>
-        b.add(SubmitPayInFullEvent(fileBytes: bytes, fileName: 'p.jpg')),
+    build: build,
+    act: (b) => b.add(
+      SubmitPaymentEvent(
+        schedules: [_schedule('sched-1'), _schedule('sched-2')],
+        fileBytes: bytes,
+        fileName: 'p.jpg',
+      ),
+    ),
     verify: (_) {
       final created = verify(() => payments.add(data: captureAny(named: 'data')))
           .captured

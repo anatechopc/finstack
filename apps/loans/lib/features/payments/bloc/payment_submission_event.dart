@@ -2,16 +2,15 @@ part of 'payment_submission_bloc.dart';
 
 sealed class PaymentSubmissionEvent {}
 
-/// Submit proof for the next due schedule only.
-final class SubmitPayNowEvent extends PaymentSubmissionEvent {
-  SubmitPayNowEvent({required this.fileBytes, required this.fileName});
-  final Uint8List fileBytes;
-  final String fileName;
-}
-
-/// Submit proof for the entire remaining balance (all unpaid schedules).
-final class SubmitPayInFullEvent extends PaymentSubmissionEvent {
-  SubmitPayInFullEvent({required this.fileBytes, required this.fileName});
+/// Submit a transaction screenshot as proof for the given [schedules]
+/// (one schedule for "Pay now", all remaining unpaid for "Pay in full").
+final class SubmitPaymentEvent extends PaymentSubmissionEvent {
+  SubmitPaymentEvent({
+    required this.schedules,
+    required this.fileBytes,
+    required this.fileName,
+  });
+  final List<LoanSchedule> schedules;
   final Uint8List fileBytes;
   final String fileName;
 }

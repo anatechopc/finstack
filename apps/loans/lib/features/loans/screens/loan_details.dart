@@ -9,6 +9,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
+import 'package:loooans/features/payments/widget/submit_payment_dialog.dart';
 import 'package:loooans/features/products/bloc/product_bloc.dart';
 import 'package:loooans/features/products/bloc/product_status.dart';
 import 'package:loooans/features/products/screen/loan_schedule_widget.dart';
@@ -376,6 +377,23 @@ class _LoanDetailsState extends State<LoanDetails> {
   Widget _nextPayment({
     bool fullScreen = false,
   }) {
+    final userLoanView =
+        widget.userLoanView ?? context.read<LoansBloc>().selectedUserLoanView;
+    final schedules = context.read<LoansBloc>().clientLoanSchedules;
+
+    final unpaid = schedules
+        .where(
+          (s) =>
+              s.status != LoanStatus.paid_on_time &&
+              s.status != LoanStatus.paid_late &&
+              s.status != LoanStatus.payment_submitted,
+        )
+        .toList()
+      ..sort((a, b) => a.dueAt.compareTo(b.dueAt));
+    final nextDue = unpaid.isNotEmpty ? unpaid.first : null;
+    final remainingTotal =
+        unpaid.fold<double>(0, (sum, s) => sum + s.amortization);
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -401,7 +419,7 @@ class _LoanDetailsState extends State<LoanDetails> {
           ),
           const Gap(16),
           Text(
-            DateTime.now().toDefaultDateFormatWithDay(),
+            (nextDue?.dueAt ?? DateTime.now()).toDefaultDateFormatWithDay(),
             style: const TextStyle(
               color: AppColors.green1,
               fontSize: 12,
@@ -409,7 +427,7 @@ class _LoanDetailsState extends State<LoanDetails> {
           ),
           const Gap(8),
           Text(
-            5500.toCurrency(),
+            (nextDue?.amortization ?? 0).toCurrency(),
             style: const TextStyle(
               color: AppColors.green1,
               fontSize: 12,
@@ -423,24 +441,17 @@ class _LoanDetailsState extends State<LoanDetails> {
               backgroundColor: AppColors.green1,
               foregroundColor: AppColors.black,
               onPressed: () {
-                showDialog(
-                  context: context,
-                  builder: (context) {
-                    return AlertDialog(
-                      content: const Text('TODO: redirect to payment channel'),
-                      actions: [
-                        SizedBox(
-                          width: double.infinity,
-                          child: AppWidgets.defaultFilledButton(
-                            child: const Text('Close'),
-                            onPressed: () {
-                              Navigator.of(context, rootNavigator: true).pop();
-                            },
-                          ),
-                        ),
-                      ],
-                    );
-                  },
+                if (nextDue == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('No upcoming payment')),
+                  );
+                  return;
+                }
+                showSubmitPaymentDialog(
+                  context,
+                  schedules: [nextDue],
+                  companyId: userLoanView.companyId,
+                  amount: nextDue.amortization,
                 );
               },
             ),
@@ -452,24 +463,17 @@ class _LoanDetailsState extends State<LoanDetails> {
               child: const Text('Pay in full'),
               foregroundColor: AppColors.green1,
               onPressed: () {
-                showDialog(
-                  context: context,
-                  builder: (context) {
-                    return AlertDialog(
-                      content: const Text('TODO: redirect to payment channel'),
-                      actions: [
-                        SizedBox(
-                          width: double.infinity,
-                          child: AppWidgets.defaultFilledButton(
-                            child: const Text('Close'),
-                            onPressed: () {
-                              Navigator.of(context, rootNavigator: true).pop();
-                            },
-                          ),
-                        ),
-                      ],
-                    );
-                  },
+                if (unpaid.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('No upcoming payment')),
+                  );
+                  return;
+                }
+                showSubmitPaymentDialog(
+                  context,
+                  schedules: unpaid,
+                  companyId: userLoanView.companyId,
+                  amount: remainingTotal,
                 );
               },
             ),
