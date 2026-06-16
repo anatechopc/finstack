@@ -286,19 +286,25 @@ class _LoanDetailsState extends State<LoanDetails> {
                 _reasonForLoan(reason: loan.reason),
                 const Gap(24),
                 ConstrainedBox(
+                  // maxHeight caps the quotation; when its content is taller it
+                  // scrolls within (SingleChildScrollView) instead of pushing
+                  // the schedule below out of the panel. SingleChildScrollView
+                  // shrink-wraps below the cap, so short quotations leave no gap.
                   constraints: const BoxConstraints(
                     maxWidth: 286,
+                    maxHeight: 420,
                   ),
-                  // QuotationWidget must be the direct child of the
-                  // ConstrainedBox. A wrapping Expanded here writes
-                  // FlexParentData to a child whose parent is the
-                  // ConstrainedBox (not a Flex), which is a no-op in debug but
-                  // throws "ParentData is not a subtype of FlexParentData" in
-                  // release/profile (assertions stripped) and blanks the panel.
-                  child: QuotationWidget(
-                    loanAmount: loan.amount,
-                    period: loan.period,
-                    interestRate: loan.interestRate,
+                  // QuotationWidget is the direct child here (no Expanded):
+                  // an Expanded would write FlexParentData to a child whose
+                  // parent is this ConstrainedBox (not a Flex) — a no-op in
+                  // debug but a "ParentData is not a subtype of FlexParentData"
+                  // crash in release/profile that blanks the whole panel.
+                  child: SingleChildScrollView(
+                    child: QuotationWidget(
+                      loanAmount: loan.amount,
+                      period: loan.period,
+                      interestRate: loan.interestRate,
+                    ),
                   ),
                 ),
                 const Gap(24),
