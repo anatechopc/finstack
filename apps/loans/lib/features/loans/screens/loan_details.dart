@@ -289,12 +289,16 @@ class _LoanDetailsState extends State<LoanDetails> {
                   constraints: const BoxConstraints(
                     maxWidth: 286,
                   ),
-                  child: Expanded(
-                    child: QuotationWidget(
-                      loanAmount: loan.amount,
-                      period: loan.period,
-                      interestRate: loan.interestRate,
-                    ),
+                  // QuotationWidget must be the direct child of the
+                  // ConstrainedBox. A wrapping Expanded here writes
+                  // FlexParentData to a child whose parent is the
+                  // ConstrainedBox (not a Flex), which is a no-op in debug but
+                  // throws "ParentData is not a subtype of FlexParentData" in
+                  // release/profile (assertions stripped) and blanks the panel.
+                  child: QuotationWidget(
+                    loanAmount: loan.amount,
+                    period: loan.period,
+                    interestRate: loan.interestRate,
                   ),
                 ),
                 const Gap(24),
