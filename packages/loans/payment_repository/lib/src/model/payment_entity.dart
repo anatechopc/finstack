@@ -1,6 +1,7 @@
 import 'package:json_annotation/json_annotation.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:payment_repository/src/model/payment.dart';
+import 'package:payment_repository/src/model/payment_status.dart';
 
 part 'payment_entity.g.dart';
 
@@ -80,6 +81,15 @@ class PaymentEntity implements BaseEntity {
   )
   DateTime? confirmedAt;
 
+  @JsonKey(name: 'status', defaultValue: PaymentStatus.confirmed)
+  late PaymentStatus status;
+
+  @JsonKey(name: 'rejection_reason')
+  String? rejectionReason;
+
+  @JsonKey(name: 'submission_id')
+  String? submissionId;
+
   @override
   List<Object?> get props => [
         createdAt,
@@ -94,6 +104,9 @@ class PaymentEntity implements BaseEntity {
         comment,
         signatureUrl,
         confirmedAt,
+        status,
+        rejectionReason,
+        submissionId,
       ];
 
   @override
@@ -116,6 +129,9 @@ class PaymentEntity implements BaseEntity {
       ..confirmedBy = confirmedBy
       ..comment = comment
       ..signatureUrl = signatureUrl
-      ..confirmedAt = confirmedAt;
+      ..confirmedAt = confirmedAt
+      ..status = status
+      ..rejectionReason = rejectionReason
+      ..submissionId = submissionId;
   }
 }
