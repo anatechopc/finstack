@@ -19,9 +19,9 @@ import 'package:loooans/widgets/app_widgets.dart';
 import 'package:user_loan_view_repository/user_loan_view_repository.dart';
 
 class LoanDetails extends StatefulWidget {
-
   const LoanDetails({
-    required this.id, super.key,
+    required this.id,
+    super.key,
     this.fullScreen = false,
     this.userLoanView,
   });
@@ -268,77 +268,83 @@ class _LoanDetailsState extends State<LoanDetails> {
         final userLoanView = widget.userLoanView ??
             context.read<LoansBloc>().selectedUserLoanView;
         final loan = context.read<LoansBloc>().selectedLoan;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              userLoanView.loanType,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
+        final schedules = context.read<LoansBloc>().clientLoanSchedules;
+        // The whole panel scrolls; the schedule table is sized to its content
+        // (48px per row including the header) so a long schedule extends the
+        // scroll instead of being squeezed by the fixed top section.
+        return SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                userLoanView.loanType,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-            const Gap(24),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _reasonForLoan(reason: loan.reason),
-                const Gap(24),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    maxWidth: 286,
-                  ),
-                  child: Expanded(
+              const Gap(24),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _reasonForLoan(reason: loan.reason),
+                  const Gap(24),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 286),
+                    // QuotationWidget is the direct child here (no Expanded): an
+                    // Expanded would write FlexParentData to a child whose parent
+                    // is this ConstrainedBox (not a Flex) — a no-op in debug but a
+                    // "ParentData is not a subtype of FlexParentData" crash in
+                    // release/profile that blanks the whole panel.
                     child: QuotationWidget(
                       loanAmount: loan.amount,
                       period: loan.period,
                       interestRate: loan.interestRate,
                     ),
                   ),
-                ),
-                const Gap(24),
-                Expanded(
-                  child: Column(
-                    children: [
-                      _nextPayment(
-                        fullScreen: true,
-                      ),
-                      if (loan.status == LoanStatus.completed) ...[
-                        const Gap(16),
-                        SizedBox(
-                          width: double.infinity,
-                          child: AppWidgets.defaultOutlinedButton(
-                            child: const Text(
-                              'Review',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            onPressed: () {
-                              _reviewDialog(
-                                context,
-                                companyName: userLoanView.companyName,
-                              );
-                            },
-                          ),
+                  const Gap(24),
+                  Expanded(
+                    child: Column(
+                      children: [
+                        _nextPayment(
+                          fullScreen: true,
                         ),
+                        if (loan.status == LoanStatus.completed) ...[
+                          const Gap(16),
+                          SizedBox(
+                            width: double.infinity,
+                            child: AppWidgets.defaultOutlinedButton(
+                              child: const Text(
+                                'Review',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              onPressed: () {
+                                _reviewDialog(
+                                  context,
+                                  companyName: userLoanView.companyName,
+                                );
+                              },
+                            ),
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
-                ),
-              ],
-            ),
-            const Gap(16),
-            Expanded(
-              child: LoanScheduleWidget(
+                ],
+              ),
+              const Gap(16),
+              LoanScheduleWidget(
                 amortization: loan.amount,
-                schedules: context.read<LoansBloc>().clientLoanSchedules,
+                schedules: schedules,
                 completeTerm: loan.completeTerm,
                 buildTable: true,
+                tableHeight: (schedules.length + 1) * 48.0,
               ),
-            ),
-          ],
+            ],
+          ),
         );
       },
     );
@@ -402,11 +408,13 @@ class _LoanDetailsState extends State<LoanDetails> {
             ),
           ),
           const Gap(8),
-          Text(5500.toCurrency(),
-              style: const TextStyle(
-                color: AppColors.green1,
-                fontSize: 12,
-              ),),
+          Text(
+            5500.toCurrency(),
+            style: const TextStyle(
+              color: AppColors.green1,
+              fontSize: 12,
+            ),
+          ),
           const Gap(16),
           SizedBox(
             width: !fullScreen ? null : double.infinity,

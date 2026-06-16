@@ -10,13 +10,22 @@ import 'package:two_dimensional_scrollables/two_dimensional_scrollables.dart';
 
 class LoanScheduleWidget extends StatelessWidget {
   const LoanScheduleWidget({
-    required this.amortization, required this.schedules, required this.completeTerm, super.key,
+    required this.amortization,
+    required this.schedules,
+    required this.completeTerm,
+    super.key,
     this.forDialogHeight,
     this.buildTable = false,
+    this.tableHeight,
   });
 
   final double? forDialogHeight;
   final bool buildTable;
+
+  /// When set, the schedule table is given this exact (bounded) height instead
+  /// of an Expanded. Lets the widget live inside a scroll view (the table can't
+  /// be Expanded there). Keeps the title, unlike [forDialogHeight].
+  final double? tableHeight;
   final double amortization;
   final String completeTerm;
   final List<LoanSchedule> schedules;
@@ -57,13 +66,15 @@ class LoanScheduleWidget extends StatelessWidget {
             width: 500,
             child: _table(context),
           )
+        else if (tableHeight != null)
+          SizedBox(
+            height: tableHeight,
+            child: !buildTable ? _list() : _table(context),
+          )
         else
           Expanded(
             child: !buildTable ? _list() : _table(context),
           ),
-        // Expanded(
-        //   child: _table(context),
-        // )
       ],
     );
   }
