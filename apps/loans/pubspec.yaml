@@ -84,6 +84,7 @@ dependencies:
     path: "../../packages/loans/user_loan_view_repository"
   user_repository:
     path: "../../packages/core/user_repository"
+  uuid: ^4.5.2
 
 dev_dependencies:
   bloc_test: ^9.1.6
