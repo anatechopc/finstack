@@ -59,25 +59,24 @@ void main() {
     await tester.pumpApp(
       RepositoryProvider<BaseRepository<BankDetails>>.value(
         value: bankRepo,
-        child: BlocProvider<PaymentSubmissionBloc>.value(
-          value: bloc,
-          child: Builder(
-            builder: (context) {
-              return Scaffold(
-                body: Center(
-                  child: ElevatedButton(
-                    onPressed: () => showSubmitPaymentDialog(
-                      context,
-                      schedules: [_schedule('sched-1')],
-                      companyId: 'company-1',
-                      amount: 1000,
-                    ),
-                    child: const Text('open'),
+        child: Builder(
+          builder: (context) {
+            return Scaffold(
+              body: Center(
+                child: ElevatedButton(
+                  onPressed: () => showSubmitPaymentDialog(
+                    context,
+                    schedules: [_schedule('sched-1')],
+                    loanId: 'loan-1',
+                    companyId: 'company-1',
+                    amount: 1000,
+                    createBloc: (_) => bloc,
                   ),
+                  child: const Text('open'),
                 ),
-              );
-            },
-          ),
+              ),
+            );
+          },
         ),
       ),
     );

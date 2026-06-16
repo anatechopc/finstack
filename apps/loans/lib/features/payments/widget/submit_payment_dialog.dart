@@ -12,31 +12,39 @@ import 'package:loooans_helpers/data_helpers.dart';
 
 /// Shows the borrower submit-payment dialog. The caller passes the exact
 /// payable [schedules] (one for "Pay now", all remaining unpaid for
-/// "Pay in full"), the lender [companyId] (to look up where to pay), and the
-/// total [amount] being submitted.
+/// "Pay in full"), the REAL [loanId] (runtime open-term schedules carry a
+/// placeholder loanId), the lender [companyId] (to look up where to pay), and
+/// the total [amount] being submitted.
 Future<void> showSubmitPaymentDialog(
   BuildContext context, {
   required List<LoanSchedule> schedules,
+  required String loanId,
   required String companyId,
   required double amount,
+  PaymentSubmissionBloc Function(BuildContext)? createBloc,
 }) {
-  final bloc = context.read<PaymentSubmissionBloc>();
   final bankDetailsRepository = context.read<BaseRepository<BankDetails>>();
+  // Capture the caller's messenger BEFORE the dialog is shown/popped so we can
+  // still surface SnackBars after the dialog route is gone.
+  final messenger = ScaffoldMessenger.of(context);
 
   return showDialog<void>(
     context: context,
     builder: (dialogCtx) {
-      return BlocProvider.value(
-        value: bloc,
+      // Fresh bloc per dialog so stale success/error state from a previous
+      // submission never leaks into a newly-opened dialog. [createBloc] is a
+      // test seam; production omits it and gets a real bloc.
+      return BlocProvider(
+        create: createBloc ?? PaymentSubmissionBloc.new,
         child: BlocListener<PaymentSubmissionBloc, PaymentSubmissionState>(
           listener: (listenerCtx, state) {
             if (state.status == PaymentSubmissionStatus.success) {
               Navigator.of(dialogCtx, rootNavigator: true).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
+              messenger.showSnackBar(
                 const SnackBar(content: Text('Payment submitted for review')),
               );
             } else if (state.status == PaymentSubmissionStatus.error) {
-              ScaffoldMessenger.of(listenerCtx).showSnackBar(
+              messenger.showSnackBar(
                 SnackBar(
                   content: Text(state.message ?? 'Submit failed'),
                 ),
@@ -45,6 +53,7 @@ Future<void> showSubmitPaymentDialog(
           },
           child: _SubmitPaymentDialogBody(
             schedules: schedules,
+            loanId: loanId,
             companyId: companyId,
             amount: amount,
             bankDetailsRepository: bankDetailsRepository,
@@ -58,12 +67,14 @@ Future<void> showSubmitPaymentDialog(
 class _SubmitPaymentDialogBody extends StatefulWidget {
   const _SubmitPaymentDialogBody({
     required this.schedules,
+    required this.loanId,
     required this.companyId,
     required this.amount,
     required this.bankDetailsRepository,
   });
 
   final List<LoanSchedule> schedules;
+  final String loanId;
   final String companyId;
   final double amount;
   final BaseRepository<BankDetails> bankDetailsRepository;
@@ -111,6 +122,7 @@ class _SubmitPaymentDialogBodyState extends State<_SubmitPaymentDialogBody> {
 
   Future<void> _chooseFile() async {
     final fileData = await AppWidgets.defaultMediaChooserDialog(context);
+    if (!mounted) return;
     if (fileData == null) return;
     setState(() {
       _fileName = fileData['name'] as String;
@@ -218,6 +230,7 @@ class _SubmitPaymentDialogBodyState extends State<_SubmitPaymentDialogBody> {
                             context.read<PaymentSubmissionBloc>().add(
                                   SubmitPaymentEvent(
                                     schedules: widget.schedules,
+                                    loanId: widget.loanId,
                                     fileBytes: _fileBytes!,
                                     fileName: _fileName!,
                                   ),

@@ -379,6 +379,7 @@ class _LoanDetailsState extends State<LoanDetails> {
   }) {
     final userLoanView =
         widget.userLoanView ?? context.read<LoansBloc>().selectedUserLoanView;
+    final loan = context.read<LoansBloc>().selectedLoan;
     final schedules = context.read<LoansBloc>().clientLoanSchedules;
 
     final unpaid = schedules
@@ -391,8 +392,13 @@ class _LoanDetailsState extends State<LoanDetails> {
         .toList()
       ..sort((a, b) => a.dueAt.compareTo(b.dueAt));
     final nextDue = unpaid.isNotEmpty ? unpaid.first : null;
-    final remainingTotal =
-        unpaid.fold<double>(0, (sum, s) => sum + s.amortization);
+    // The lender side collects amortization + any extraPayment.
+    final nextDueAmount =
+        nextDue == null ? 0.0 : nextDue.amortization + nextDue.extraPayment;
+    final remainingTotal = unpaid.fold<double>(
+      0,
+      (sum, s) => sum + s.amortization + s.extraPayment,
+    );
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -427,7 +433,7 @@ class _LoanDetailsState extends State<LoanDetails> {
           ),
           const Gap(8),
           Text(
-            (nextDue?.amortization ?? 0).toCurrency(),
+            nextDueAmount.toCurrency(),
             style: const TextStyle(
               color: AppColors.green1,
               fontSize: 12,
@@ -450,8 +456,9 @@ class _LoanDetailsState extends State<LoanDetails> {
                 showSubmitPaymentDialog(
                   context,
                   schedules: [nextDue],
+                  loanId: loan.id,
                   companyId: userLoanView.companyId,
-                  amount: nextDue.amortization,
+                  amount: nextDueAmount,
                 );
               },
             ),
@@ -472,6 +479,7 @@ class _LoanDetailsState extends State<LoanDetails> {
                 showSubmitPaymentDialog(
                   context,
                   schedules: unpaid,
+                  loanId: loan.id,
                   companyId: userLoanView.companyId,
                   amount: remainingTotal,
                 );

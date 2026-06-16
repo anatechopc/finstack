@@ -58,28 +58,69 @@ class PaymentSubmissionBloc
         return;
       }
 
-      final loanId = event.schedules.first.loanId;
       final proof = await storageRepository.upload(
         data: event.fileBytes,
-        folder: 'users/$userId/loans/$loanId',
+        folder: 'users/$userId/loans/${event.loanId}',
         fileName: event.fileName,
         includeOriginal: true,
       );
       final submissionId = _newSubmissionId();
 
-      for (final schedule in event.schedules) {
-        final payment = Payment.create(
-          userId: userId,
-          loanScheduleId: schedule.id,
-          transactionPhotoUrl: proof,
-          status: PaymentStatus.pending,
-          submissionId: submissionId,
-        );
-        final saved = await paymentRepository.add(data: payment);
-        schedule
-          ..status = LoanStatus.payment_submitted
-          ..paymentId = saved.id;
-        await loanScheduleRepository.update(data: schedule);
+      // TODO(payments): make the pay-in-full writes atomic (WriteBatch) — see
+      // review. For now we track how many schedules succeeded so a partial
+      // failure surfaces a clear "contact support" message instead of silently
+      // duplicating payments on retry.
+      final total = event.schedules.length;
+      var completed = 0;
+
+      try {
+        for (final schedule in event.schedules) {
+          schedule
+            ..loanId = event.loanId
+            ..status = LoanStatus.payment_submitted;
+
+          final payment = Payment.create(
+            userId: userId,
+            loanScheduleId: schedule.id, // may be NO_ID; fixed for open-term
+            transactionPhotoUrl: proof,
+            status: PaymentStatus.pending,
+            submissionId: submissionId,
+          );
+
+          if (schedule.id == NO_ID) {
+            // Open-term runtime schedule: persist payment + schedule, then
+            // backfill the payment with the newly-created schedule id.
+            final savedPayment = await paymentRepository.add(data: payment);
+            final addedSchedule = await loanScheduleRepository.add(
+              data: schedule..paymentId = savedPayment.id,
+            );
+            await paymentRepository.update(
+              data: savedPayment..loanScheduleId = addedSchedule.id,
+            );
+          } else {
+            final savedPayment = await paymentRepository.add(data: payment);
+            await loanScheduleRepository.update(
+              data: schedule..paymentId = savedPayment.id,
+            );
+          }
+
+          completed++;
+        }
+      } catch (err) {
+        if (completed > 0) {
+          // Some schedules were already written and the proof uploaded;
+          // a naive retry would duplicate payments. Tell the user to stop.
+          emit(
+            state.copyWith(
+              status: PaymentSubmissionStatus.error,
+              message: 'Payment partially submitted '
+                  '($completed of $total). '
+                  'Please contact support before retrying.',
+            ),
+          );
+          return;
+        }
+        rethrow;
       }
 
       emit(state.copyWith(status: PaymentSubmissionStatus.success));

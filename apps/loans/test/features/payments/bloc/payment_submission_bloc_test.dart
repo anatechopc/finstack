@@ -67,7 +67,15 @@ void main() {
         includeOriginal: any(named: 'includeOriginal'),
       ),
     ).thenAnswer((_) async => img);
-    when(() => payments.add(data: any(named: 'data')))
+
+    // The fake repo assigns a deterministic id on add so we can assert the
+    // schedule<->payment linkage (a real repo assigns a Firestore doc id).
+    var addCount = 0;
+    when(() => payments.add(data: any(named: 'data'))).thenAnswer((i) async {
+      addCount++;
+      return i.namedArguments[#data] as Payment..id = 'pay-$addCount';
+    });
+    when(() => payments.update(data: any(named: 'data')))
         .thenAnswer((i) async => i.namedArguments[#data] as Payment);
     when(() => schedules.update(data: any(named: 'data')))
         .thenAnswer((i) async => i.namedArguments[#data] as LoanSchedule);
@@ -89,6 +97,7 @@ void main() {
     act: (b) => b.add(
       SubmitPaymentEvent(
         schedules: [_schedule('sched-1')],
+        loanId: 'loan-1',
         fileBytes: bytes,
         fileName: 'p.jpg',
       ),
@@ -114,16 +123,26 @@ void main() {
       expect(p.loanScheduleId, 'sched-1');
       expect(p.userId, 'borrower-1');
       expect(p.transactionPhotoUrl, isNotNull);
+
+      // The linked schedule is marked submitted and points at the new payment.
+      final s = verify(() => schedules.update(data: captureAny(named: 'data')))
+          .captured
+          .single as LoanSchedule;
+      expect(s.status, LoanStatus.payment_submitted);
+      expect(s.paymentId, 'pay-1');
+      // Real (fixed-term) schedule id => update path, never add.
+      verifyNever(() => schedules.add(data: any(named: 'data')));
     },
   );
 
   blocTest<PaymentSubmissionBloc, PaymentSubmissionState>(
     'Pay in full creates one pending payment per remaining schedule '
-    '(shared submission)',
+    '(shared submission) and marks each schedule submitted',
     build: build,
     act: (b) => b.add(
       SubmitPaymentEvent(
         schedules: [_schedule('sched-1'), _schedule('sched-2')],
+        loanId: 'loan-1',
         fileBytes: bytes,
         fileName: 'p.jpg',
       ),
@@ -139,6 +158,49 @@ void main() {
         created.map((p) => p.loanScheduleId).toSet(),
         {'sched-1', 'sched-2'},
       );
+
+      final updated =
+          verify(() => schedules.update(data: captureAny(named: 'data')))
+              .captured
+              .cast<LoanSchedule>();
+      expect(updated.length, 2);
+      expect(
+        updated.every((s) => s.status == LoanStatus.payment_submitted),
+        isTrue,
+      );
+      expect(updated.every((s) => s.paymentId != null), isTrue);
+    },
+  );
+
+  blocTest<PaymentSubmissionBloc, PaymentSubmissionState>(
+    'open-term schedule (NO_ID) adds the schedule then backfills the '
+    'payment with the new schedule id',
+    build: () {
+      when(() => schedules.add(data: any(named: 'data'))).thenAnswer(
+        (i) async =>
+            i.namedArguments[#data] as LoanSchedule..id = 'real-sched-1',
+      );
+      return build();
+    },
+    act: (b) => b.add(
+      SubmitPaymentEvent(
+        schedules: [_schedule(NO_ID)],
+        loanId: 'loan-1',
+        fileBytes: bytes,
+        fileName: 'p.jpg',
+      ),
+    ),
+    verify: (_) {
+      // Open-term => add the schedule (not update), then update the payment.
+      verify(() => schedules.add(data: any(named: 'data'))).called(1);
+      verifyNever(() => schedules.update(data: any(named: 'data')));
+
+      final updatedPayment =
+          verify(() => payments.update(data: captureAny(named: 'data')))
+              .captured
+              .single as Payment;
+      expect(updatedPayment.loanScheduleId, 'real-sched-1');
+      expect(updatedPayment.status, PaymentStatus.pending);
     },
   );
 }

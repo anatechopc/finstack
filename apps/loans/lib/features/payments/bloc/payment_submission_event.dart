@@ -7,10 +7,15 @@ sealed class PaymentSubmissionEvent {}
 final class SubmitPaymentEvent extends PaymentSubmissionEvent {
   SubmitPaymentEvent({
     required this.schedules,
+    required this.loanId,
     required this.fileBytes,
     required this.fileName,
   });
   final List<LoanSchedule> schedules;
+
+  /// The REAL loan id. Runtime-generated open-term schedules carry a
+  /// placeholder `loanId`, so the caller must pass the actual loan id here.
+  final String loanId;
   final Uint8List fileBytes;
   final String fileName;
 }
