@@ -9,9 +9,22 @@ import (
 	"com.loooans.app/triggers"
 )
 
+// depsWithBoth wires both collaborator paths so a single core call can be
+// asserted against the mobile-verification updater and the name-cascade updater.
+func depsWithBoth(
+	updater *fakes.UserUpdater,
+	names *fakes.LoanViewNameUpdater,
+) triggers.UserChangesDeps {
+	return triggers.UserChangesDeps{
+		UpdateUser:              updater.Update,
+		UpdateUserLoanViewNames: names.Update,
+	}
+}
+
 func TestHandleUserChangedCore_MobileChanged_ClearsVerification(t *testing.T) {
 	updater := &fakes.UserUpdater{}
-	deps := triggers.UserChangesDeps{UpdateUser: updater.Update}
+	names := &fakes.LoanViewNameUpdater{}
+	deps := depsWithBoth(updater, names)
 
 	before := map[string]any{
 		"id":                 "user-1",
@@ -41,6 +54,115 @@ func TestHandleUserChangedCore_MobileChanged_ClearsVerification(t *testing.T) {
 		t.Errorf("expected mobile_verified_at key present")
 	} else if v != nil {
 		t.Errorf("expected mobile_verified_at=nil, got %v", v)
+	}
+	// Name fields unchanged (absent on both sides) — no cascade.
+	if len(names.Updates) != 0 {
+		t.Fatalf("mobile-only change must not cascade names, got %d", len(names.Updates))
+	}
+}
+
+func TestHandleUserChangedCore_NameChanged_CascadesFullName(t *testing.T) {
+	updater := &fakes.UserUpdater{}
+	names := &fakes.LoanViewNameUpdater{}
+	deps := depsWithBoth(updater, names)
+
+	before := map[string]any{
+		"id":            "user-1",
+		"first_name":    "Juan",
+		"last_name":     "Dela Cruz",
+		"middle_name":   "Santos",
+		"mobile_number": "9171234567",
+	}
+	after := map[string]any{
+		"id":            "user-1",
+		"first_name":    "Juan Carlos",
+		"last_name":     "Dela Cruz",
+		"middle_name":   "Santos",
+		"mobile_number": "9171234567",
+	}
+
+	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(names.Updates) != 1 {
+		t.Fatalf("expected 1 name cascade, got %d", len(names.Updates))
+	}
+	got := names.Updates[0]
+	if got.UserId != "user-1" {
+		t.Errorf("userId: got %s, want user-1", got.UserId)
+	}
+	// Eastern order: "$lastName, $firstName $middleName".
+	if want := "Dela Cruz, Juan Carlos Santos"; got.FullName != want {
+		t.Errorf("full name: got %q, want %q", got.FullName, want)
+	}
+	// Mobile unchanged — no verification clear.
+	if len(updater.Updates) != 0 {
+		t.Fatalf("name-only change must not touch verification, got %d", len(updater.Updates))
+	}
+}
+
+func TestHandleUserChangedCore_NameChanged_NoMiddleName_OmitsMiddle(t *testing.T) {
+	updater := &fakes.UserUpdater{}
+	names := &fakes.LoanViewNameUpdater{}
+	deps := depsWithBoth(updater, names)
+
+	// middle_name absent (null in Firestore arrives as "") — must render
+	// "Last, First" with no trailing middle, matching the Dart getter.
+	before := map[string]any{"id": "u", "first_name": "Ana", "last_name": "Reyes"}
+	after := map[string]any{"id": "u", "first_name": "Anabelle", "last_name": "Reyes"}
+
+	if err := triggers.HandleUserChangedCore(context.Background(), "u", before, after, deps); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(names.Updates) != 1 {
+		t.Fatalf("expected 1 name cascade, got %d", len(names.Updates))
+	}
+	if want := "Reyes, Anabelle"; names.Updates[0].FullName != want {
+		t.Errorf("full name: got %q, want %q", names.Updates[0].FullName, want)
+	}
+}
+
+func TestHandleUserChangedCore_NameUnchanged_NoCascade(t *testing.T) {
+	updater := &fakes.UserUpdater{}
+	names := &fakes.LoanViewNameUpdater{}
+	deps := depsWithBoth(updater, names)
+
+	// Only the mobile number changes; name fields are identical on both sides.
+	before := map[string]any{
+		"id":            "user-1",
+		"first_name":    "Juan",
+		"last_name":     "Dela Cruz",
+		"mobile_number": "9171234567",
+	}
+	after := map[string]any{
+		"id":            "user-1",
+		"first_name":    "Juan",
+		"last_name":     "Dela Cruz",
+		"mobile_number": "9170000000",
+	}
+
+	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(names.Updates) != 0 {
+		t.Fatalf("unchanged name must not cascade, got %d", len(names.Updates))
+	}
+	// Mobile changed and was previously set -> verification still cleared.
+	if len(updater.Updates) != 1 {
+		t.Fatalf("expected mobile logic to still run, got %d updates", len(updater.Updates))
+	}
+}
+
+func TestHandleUserChangedCore_NameCascadeErrorPropagates(t *testing.T) {
+	updater := &fakes.UserUpdater{}
+	names := &fakes.LoanViewNameUpdater{Err: errors.New("firestore: query failed")}
+	deps := depsWithBoth(updater, names)
+
+	before := map[string]any{"id": "u", "first_name": "Ana", "last_name": "Reyes"}
+	after := map[string]any{"id": "u", "first_name": "Anabelle", "last_name": "Reyes"}
+
+	if err := triggers.HandleUserChangedCore(context.Background(), "u", before, after, deps); err == nil {
+		t.Fatal("expected the name-cascade error to propagate")
 	}
 }
 

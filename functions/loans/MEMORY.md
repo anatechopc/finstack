@@ -4,6 +4,18 @@ Log of work done on the loans Cloud Functions (Go backend).
 
 ---
 
+## userChanges — cascade profile rename to user_loan_views.user_full_name (2026-06-17)
+
+Bug: `user_loan_views` denormalizes the borrower name in `user_full_name`, set once at loan creation (`loans_bloc.dart` → `user.completeNameEasternOrder`). When a user renamed their profile, the lender's "Loan clients" list stayed stale (live User detail showed the new name).
+
+Fix: extended the existing `userChanges` adapter+core trigger (`triggers/user_changes.go`) with a second, independent path. `HandleUserChangedCore` now also composes the before/after full name from `first_name`/`last_name`/`middle_name`; on a change it calls a new injected dep `UpdateUserLoanViewNames(ctx, userId, newFullName)`. The mobile-verification path is untouched and runs independently (name-only edit refreshes views, leaves verification alone; mobile-only edit clears verification, leaves views alone; both → both).
+- Name composition replicates Flutter `User.completeNameEasternOrder` exactly: `'$lastName, $firstName${middleName != null ? ' $middleName' : ''}'` → Go `lastName + ", " + firstName (+ " " + middleName if non-empty)`. A null/absent Firestore `middle_name` arrives as `""` from the proto and is omitted (matches what the list renders). Middle name is the FULL name, not an initial.
+- Adapter `UpdateUserLoanViewNames` queries `{prefix}user_loan_views where user_id == userId` (equality-only, served by the automatic single-field index — no composite index/IAM needed) and does a single-field `Set({user_full_name}, MergeAll)` per matching doc. `flattenFields` extended to carry the three name fields.
+- New fake `LoanViewNameUpdater` in `test/fakes/fakes.go`. 5 new/updated core tests in `test/triggers/user_changes_test.go`: name changed → cascade with correct eastern-order name; no middle name → omitted; name unchanged (mobile-only) → no cascade but mobile logic still runs; cascade error propagates; mobile-only change asserts no cascade.
+- `CGO_ENABLED=0 go build ./...` + `go test ./...` green. `go vet` clean for this code (the two pre-existing `loan_changes.go` lock-copy warnings are untouched). No new IAM — `userChanges` already deployed with the runtime SA.
+
+---
+
 ## Firebase Admin: keyless credentials (security incident, 2026-06-11)
 
 `utils/initialize_firebase.go` had a **hardcoded service-account private key** committed in source. Google's secret scanner detected it in the GitHub repo and **auto-disabled** the key (`SERVICE_ACCOUNT_KEY_DISABLE_REASON_EXPOSED`, key id `2a8c7ca0…` on `firebase-adminsdk-bqdg7@loooans-dev-stg`). Because every function/trigger inits Firebase via `InitializeFirebase`, which used `option.WithCredentialsJSON(<that key>)`, all Admin calls began failing with `rpc error: code = Unauthenticated` — surfaced first as a 500 from `requestOtp` ("verify mobile number").

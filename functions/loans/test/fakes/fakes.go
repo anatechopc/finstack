@@ -55,6 +55,25 @@ func (u *UserUpdater) Update(_ context.Context, uid string, fields map[string]an
 	return u.Err
 }
 
+// LoanViewNameUpdate records one UpdateUserLoanViewNames invocation.
+type LoanViewNameUpdate struct {
+	UserId   string
+	FullName string
+}
+
+// LoanViewNameUpdater fake — records every user_full_name cascade the user
+// changes core performs (the user id + the newly composed full name). Returns
+// Err if set so tests can assert error propagation.
+type LoanViewNameUpdater struct {
+	Updates []LoanViewNameUpdate
+	Err     error
+}
+
+func (u *LoanViewNameUpdater) Update(_ context.Context, userId, fullName string) error {
+	u.Updates = append(u.Updates, LoanViewNameUpdate{UserId: userId, FullName: fullName})
+	return u.Err
+}
+
 // UserReader fake — returns preconfigured Firestore user docs by uid. If
 // Err is set it is returned instead. If the uid is not in Users and Err is
 // nil, (nil, nil) is returned — the caller (typically a *Core function)
