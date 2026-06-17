@@ -47,8 +47,10 @@ class ClientDetailScheduleItem extends StatelessWidget {
     final now = Jiffy.now().startOf(Unit.day);
     final dueAt = Jiffy.parseFromDateTime(schedule.dueAt);
 
+    // Concise single-word label so the Status cell never wraps to two lines
+    // (which would make rows uneven). Full form is "Not paid (overdue)".
     if (now.isAfter(dueAt)) {
-      return LoanStatus.not_paid_overdue.label;
+      return 'Overdue';
     }
 
     return LoanStatus.not_paid.label;
@@ -185,6 +187,7 @@ class ClientDetailScheduleItem extends StatelessWidget {
         ),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           SizedBox(
             width: 48,
@@ -256,7 +259,11 @@ class ClientDetailScheduleItem extends StatelessWidget {
             child: Text(_displayAmount(schedule.principalPayment)),
           ),
           Expanded(
-            child: Text(_getLoanStatusLabel()),
+            child: Text(
+              _getLoanStatusLabel(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
           if (schedule.paidAt != null)
             Expanded(
