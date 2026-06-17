@@ -9,85 +9,96 @@ import (
 	"github.com/cloudevents/sdk-go/v2/event"
 	"github.com/golang/protobuf/proto"
 	"github.com/googleapis/google-cloudevents-go/cloud/firestoredata"
+	"google.golang.org/api/iterator"
 )
 
-// PaymentCreated
+// PaymentCreatedDeps holds the collaborator functions used by the core so the
+// notification fan-out can be unit-tested without Firestore.
+type PaymentCreatedDeps struct {
+	// LoanIdForSchedule resolves the loan id for a given loan_schedule_id by
+	// reading the loan_schedules document. Returns ("", nil) when the schedule
+	// cannot be resolved to a loan (the core treats this as a graceful no-op).
+	LoanIdForSchedule func(ctx context.Context, scheduleId string) (string, error)
+	// LoanInfo returns the company id and product id for a loan.
+	LoanInfo func(ctx context.Context, loanId string) (companyId, productId string, err error)
+	// FirstPaymentIdForSubmission returns the id of the earliest-created payment
+	// sharing the given submission_id. Used to de-dup notifications for a
+	// multi-payment "pay in full" submission.
+	FirstPaymentIdForSubmission func(ctx context.Context, submissionId string) (string, error)
+	// CompanyUserIds returns the user ids of company members holding one of the
+	// given roles.
+	CompanyUserIds func(ctx context.Context, companyId string, roles []string) ([]string, error)
+	// ProductName returns the product's display loan_type for the message.
+	ProductName func(ctx context.Context, productId string) (string, error)
+	// Notify writes a notification document for the recipient. The existing
+	// notificationCreated trigger handles FCM delivery.
+	Notify func(ctx context.Context, recipientId, title, message string, data map[string]string) error
+}
+
+// HandlePaymentCreatedCore notifies a company's admins and loan officers that a
+// borrower submitted a payment.
 //
-//	function to run firestore trigger for collection
-//		collection: payments/
-//	When a new payment document is created, this trigger
-//	creates notification documents for company admins and
-//	loan officers. The existing notificationCreated trigger
-//	handles FCM push delivery.
+// De-duplication: a borrower paying "in full" creates N payments sharing one
+// submission_id, which would otherwise fire N lender notifications. When a
+// submission_id is present, only the FIRST payment of that submission notifies;
+// siblings are a no-op. Legacy and teller payments carry no submission_id and
+// always notify.
 //
-// /**
-func PaymentCreated(ctx context.Context, event event.Event) error {
-	log, logErr := utils.InitializeLogger("payment_created")
-
-	if logErr != nil {
-		return logErr
+// Loan resolution: payment docs carry loan_schedule_id (not loan_id). The core
+// uses fields["loan_id"] when present (backward-compat) and otherwise resolves
+// it from the schedule via deps.LoanIdForSchedule. If neither yields a loan id,
+// it is a graceful no-op (returns nil) so a malformed doc does not crash the
+// function.
+func HandlePaymentCreatedCore(
+	ctx context.Context,
+	paymentId string,
+	fields map[string]any,
+	deps PaymentCreatedDeps,
+) error {
+	if fields == nil {
+		return nil
 	}
 
-	var data firestoredata.DocumentEventData
-
-	if err := proto.Unmarshal(event.Data(), &data); err != nil {
-		return fmt.Errorf("proto.Unmarshal: %w", err)
+	// De-dup gate first — avoid any lookup work for sibling payments.
+	submissionId, _ := fields["submission_id"].(string)
+	if submissionId != "" {
+		firstId, err := deps.FirstPaymentIdForSubmission(ctx, submissionId)
+		if err != nil {
+			return fmt.Errorf("first payment for submission %s: %w", submissionId, err)
+		}
+		if firstId != "" && firstId != paymentId {
+			// A sibling payment already notified — nothing to do.
+			return nil
+		}
 	}
 
-	log.Debug(fmt.Sprintf("Function triggered by change to: %v\n", event.Source()))
-	log.Debug(fmt.Sprintf("New value: %+v\n", data.GetValue()))
-
-	if data.GetValue() == nil {
-		log.Error("No value for newly created doc")
-		return errors.New("no value for newly created doc")
+	// Resolve the loan id. Prefer an explicit loan_id (legacy/teller docs),
+	// otherwise resolve it from the loan schedule.
+	loanId, _ := fields["loan_id"].(string)
+	if loanId == "" {
+		scheduleId, _ := fields["loan_schedule_id"].(string)
+		if scheduleId != "" {
+			resolved, err := deps.LoanIdForSchedule(ctx, scheduleId)
+			if err != nil {
+				return fmt.Errorf("resolve loan for schedule %s: %w", scheduleId, err)
+			}
+			loanId = resolved
+		}
+	}
+	if loanId == "" {
+		// No loan to attribute this payment to — nothing actionable.
+		return nil
 	}
 
-	var paymentId string
-	var loanId string
-
-	if value, ok := data.GetValue().GetFields()["id"]; ok {
-		paymentId = value.GetStringValue()
+	companyId, productId, err := deps.LoanInfo(ctx, loanId)
+	if err != nil {
+		return fmt.Errorf("loan info for %s: %w", loanId, err)
 	}
 
-	if value, ok := data.GetValue().GetFields()["loan_id"]; ok {
-		loanId = value.GetStringValue()
-	} else {
-		return errors.New(fmt.Sprintf("No loan_id for payment: %s", data.GetValue().GetName()))
-	}
-
-	app, errFirebaseAdmin := utils.InitializeFirebase(ctx)
-
-	if errFirebaseAdmin != nil {
-		return errFirebaseAdmin
-	}
-
-	collectionPrefix := utils.GetCollectionPrefix()
-	firestoreClient, errFirestoreClient := app.Firestore(ctx)
-
-	if errFirestoreClient != nil {
-		return fmt.Errorf("failed to instantiate firestore client: %v", errFirestoreClient)
-	}
-
-	// Read the associated loan document to get product_id and company_id
-	loanDoc, loanErr := firestoreClient.Collection(collectionPrefix + "loans").Doc(loanId).Get(ctx)
-	if loanErr != nil {
-		return fmt.Errorf("failed to get loan %s for payment notification: %w", loanId, loanErr)
-	}
-
-	var companyId string
-	var productId string
-
-	if cId, ok := loanDoc.Data()["company_id"].(string); ok {
-		companyId = cId
-	}
-	if pId, ok := loanDoc.Data()["product_id"].(string); ok {
-		productId = pId
-	}
-
-	// Get product name for notification message
+	// Product name for the message body (best-effort, defaults to "loan").
 	productName := "loan"
-	if productId != "" {
-		if name, err := getProductName(ctx, firestoreClient, collectionPrefix, productId); err == nil && name != "" {
+	if productId != "" && deps.ProductName != nil {
+		if name, nameErr := deps.ProductName(ctx, productId); nameErr == nil && name != "" {
 			productName = name
 			if len(productName) < 4 || productName[len(productName)-4:] != "loan" {
 				productName = productName + " loan"
@@ -102,24 +113,158 @@ func PaymentCreated(ctx context.Context, event event.Event) error {
 		withPaymentId(paymentId),
 	)
 
-	// Notify company admins and loan officers
-	adminIds, err := getCompanyUserIdsByRole(ctx, firestoreClient, collectionPrefix, companyId, []string{"admin", "loanOfficer"})
+	recipientIds, err := deps.CompanyUserIds(ctx, companyId, []string{"admin", "loanOfficer"})
 	if err != nil {
-		return fmt.Errorf("failed to get company users: %w", err)
+		return fmt.Errorf("company users for %s: %w", companyId, err)
 	}
 
-	for _, adminId := range adminIds {
-		notifyErr := createNotification(ctx, firestoreClient, collectionPrefix, adminId,
-			"Payment submitted",
-			fmt.Sprintf("A user has submitted a payment for their %s. Click here review.", productName),
-			"normal", notifData,
-		)
-		if notifyErr != nil {
-			log.Error(fmt.Sprintf("failed to create notification for admin %s: %v", adminId, notifyErr))
+	title := "Payment submitted"
+	message := fmt.Sprintf("A user has submitted a payment for their %s. Click here review.", productName)
+
+	for _, recipientId := range recipientIds {
+		if notifyErr := deps.Notify(ctx, recipientId, title, message, notifData); notifyErr != nil {
+			// Best-effort: log via wrapped error string; the adapter logs these.
+			// Returning would re-notify already-notified recipients on retry.
+			fmt.Printf("payment_created: failed to notify %s: %v\n", recipientId, notifyErr)
 		}
 	}
 
-	log.Debug(fmt.Sprintf("Created %d payment notifications for company %s", len(adminIds), companyId))
-
 	return nil
+}
+
+// PaymentCreated is the CloudEvent adapter. It wires real Firestore into the
+// core. Triggered by document.v1.created on payments/{id}.
+//
+// When a new payment document is created, this trigger creates notification
+// documents for company admins and loan officers. The existing
+// notificationCreated trigger handles FCM push delivery.
+func PaymentCreated(ctx context.Context, ev event.Event) error {
+	log, logErr := utils.InitializeLogger("payment_created")
+	if logErr != nil {
+		return logErr
+	}
+
+	var data firestoredata.DocumentEventData
+	if err := proto.Unmarshal(ev.Data(), &data); err != nil {
+		return fmt.Errorf("proto.Unmarshal: %w", err)
+	}
+
+	log.Debug(fmt.Sprintf("Function triggered by change to: %v\n", ev.Source()))
+
+	if data.GetValue() == nil {
+		log.Error("No value for newly created doc")
+		return errors.New("no value for newly created doc")
+	}
+
+	paymentId, fields := extractPaymentCreate(&data)
+	if paymentId == "" {
+		log.Sugar().Warnf("payment_created: skipping event: missing payment id")
+		return nil
+	}
+
+	app, fbErr := utils.InitializeFirebase(ctx)
+	if fbErr != nil {
+		return fbErr
+	}
+	fs, fsErr := app.Firestore(ctx)
+	if fsErr != nil {
+		return fmt.Errorf("failed to instantiate firestore client: %w", fsErr)
+	}
+	defer fs.Close()
+
+	collectionPrefix := utils.GetCollectionPrefix()
+
+	deps := PaymentCreatedDeps{
+		LoanIdForSchedule: func(ctx context.Context, scheduleId string) (string, error) {
+			doc, err := fs.Collection(collectionPrefix+"loan_schedules").Doc(scheduleId).Get(ctx)
+			if err != nil {
+				return "", fmt.Errorf("failed to get loan_schedule %s: %w", scheduleId, err)
+			}
+			if loanId, ok := doc.Data()["loan_id"].(string); ok {
+				return loanId, nil
+			}
+			return "", nil
+		},
+		LoanInfo: func(ctx context.Context, loanId string) (string, string, error) {
+			doc, err := fs.Collection(collectionPrefix+"loans").Doc(loanId).Get(ctx)
+			if err != nil {
+				return "", "", fmt.Errorf("failed to get loan %s: %w", loanId, err)
+			}
+			companyId, _ := doc.Data()["company_id"].(string)
+			productId, _ := doc.Data()["product_id"].(string)
+			return companyId, productId, nil
+		},
+		FirstPaymentIdForSubmission: func(ctx context.Context, submissionId string) (string, error) {
+			// Equality-only query (served by the automatic single-field index,
+			// so no composite submission_id+created_at index is required). The
+			// earliest payment is computed in code; a submission holds at most
+			// one payment per schedule, so the result set is small.
+			iter := fs.Collection(collectionPrefix + "payments").
+				Where("submission_id", "==", submissionId).
+				Documents(ctx)
+			defer iter.Stop()
+
+			firstId := ""
+			var firstCreatedAt int64
+			found := false
+			for {
+				doc, err := iter.Next()
+				if err == iterator.Done {
+					break
+				}
+				if err != nil {
+					return "", fmt.Errorf("failed to query submission %s: %w", submissionId, err)
+				}
+				id, _ := doc.Data()["id"].(string)
+				createdAt := paymentCreatedAtMillis(doc.Data()["created_at"])
+				if !found || createdAt < firstCreatedAt ||
+					(createdAt == firstCreatedAt && id < firstId) {
+					found = true
+					firstCreatedAt = createdAt
+					firstId = id
+				}
+			}
+			return firstId, nil
+		},
+		CompanyUserIds: func(ctx context.Context, companyId string, roles []string) ([]string, error) {
+			return getCompanyUserIdsByRole(ctx, fs, collectionPrefix, companyId, roles)
+		},
+		ProductName: func(ctx context.Context, productId string) (string, error) {
+			return getProductName(ctx, fs, collectionPrefix, productId)
+		},
+		Notify: func(ctx context.Context, recipientId, title, message string, data map[string]string) error {
+			return createNotification(ctx, fs, collectionPrefix, recipientId, title, message, "normal", data)
+		},
+	}
+
+	return HandlePaymentCreatedCore(ctx, paymentId, fields, deps)
+}
+
+// extractPaymentCreate pulls the payment id + the fields the trigger cares about
+// from the created-document proto event.
+func extractPaymentCreate(data *firestoredata.DocumentEventData) (string, map[string]any) {
+	fields := map[string]any{}
+	for k, v := range data.GetValue().GetFields() {
+		switch k {
+		case "id", "loan_id", "loan_schedule_id", "submission_id":
+			fields[k] = v.GetStringValue()
+		}
+	}
+	paymentId, _ := fields["id"].(string)
+	return paymentId, fields
+}
+
+// paymentCreatedAtMillis coerces a Firestore numeric created_at (stored as int
+// millis since epoch) to int64, tolerating int64/float64/int representations.
+func paymentCreatedAtMillis(v any) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case float64:
+		return int64(n)
+	case int:
+		return int64(n)
+	default:
+		return 0
+	}
 }
