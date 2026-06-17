@@ -39,6 +39,7 @@ func init() {
 	functions.CloudEvent("reviewCreated", triggers.ReviewCreated)
 	functions.CloudEvent("reviewUpdated", triggers.ReviewUpdated)
 	functions.CloudEvent("paymentCreated", triggers.PaymentCreated)
+	functions.CloudEvent("paymentUpdated", triggers.PaymentUpdated)
 	functions.CloudEvent("userChanges", triggers.UserChanges)
 
 	log.Info("added cloud functions")
