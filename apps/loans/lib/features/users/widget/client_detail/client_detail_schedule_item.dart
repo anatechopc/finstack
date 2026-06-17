@@ -14,8 +14,7 @@ class ClientDetailScheduleItem extends StatelessWidget {
     required this.index,
     required this.schedule,
     required this.onMakePayment,
-    this.onConfirmPayment,
-    this.onRejectPayment,
+    this.onReviewPayment,
     this.isHeader = false,
     super.key,
   });
@@ -24,8 +23,10 @@ class ClientDetailScheduleItem extends StatelessWidget {
   final LoanSchedule schedule;
   final bool isHeader;
   final void Function(LoanSchedule schedule) onMakePayment;
-  final void Function(LoanSchedule schedule)? onConfirmPayment;
-  final void Function(LoanSchedule schedule)? onRejectPayment;
+
+  /// Opens a review dialog (proof screenshot + confirm/reject) for a
+  /// `payment_submitted` row.
+  final void Function(LoanSchedule schedule)? onReviewPayment;
 
   String _getLoanStatusLabel() {
     // Open-term placeholders carry their own meaningful status.
@@ -288,25 +289,18 @@ class ClientDetailScheduleItem extends StatelessWidget {
         (user.isLoanOfficer() || user.isAdmin()) &&
         schedule.status == LoanStatus.pending &&
         schedule.isOpenTerm;
-    final showConfirmRejectButtons = isSelfManaged &&
+    final showReviewPaymentButton = isSelfManaged &&
         (user.isAdmin() || user.isTeller()) &&
         schedule.status == LoanStatus.payment_submitted;
 
-    if (showConfirmRejectButtons) {
+    if (showReviewPaymentButton) {
       return Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
           AppWidgets.defaultOutlinedButton(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            foregroundColor: AppColors.red,
-            child: const Text('Reject'),
-            onPressed: () => onRejectPayment?.call(schedule),
-          ),
-          const Gap(8),
-          AppWidgets.defaultOutlinedButton(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            child: const Text('Confirm'),
-            onPressed: () => onConfirmPayment?.call(schedule),
+            child: const Text('Confirm payment'),
+            onPressed: () => onReviewPayment?.call(schedule),
           ),
         ],
       );

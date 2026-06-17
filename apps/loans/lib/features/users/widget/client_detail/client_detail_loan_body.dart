@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:company_repository/company_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -17,8 +18,10 @@ import 'package:loooans/features/users/widget/client_detail/client_detail_submit
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/payment_confirmation_service.dart';
 import 'package:loooans/utils/extensions.dart';
+import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 import 'package:payment_repository/payment_repository.dart';
+import 'package:photo_view/photo_view.dart';
 
 class ClientDetailLoanBody extends StatelessWidget {
   const ClientDetailLoanBody({
@@ -98,10 +101,8 @@ class ClientDetailLoanBody extends StatelessWidget {
                 schedule: schedule,
                 onMakePayment: (schedule) =>
                     _onMakePayment(context, schedule),
-                onConfirmPayment: (schedule) =>
-                    _onConfirmPayment(context, schedule),
-                onRejectPayment: (schedule) =>
-                    _onRejectPayment(context, schedule),
+                onReviewPayment: (schedule) =>
+                    _onReviewPayment(context, schedule),
               );
             }
           },
@@ -150,27 +151,141 @@ class ClientDetailLoanBody extends StatelessWidget {
     );
   }
 
-  Future<void> _onConfirmPayment(
+  /// Loads the submitted payment, then opens a review dialog showing the proof
+  /// screenshot so the lender can confirm or reject from one place.
+  Future<void> _onReviewPayment(
     BuildContext context,
     LoanSchedule schedule,
   ) async {
     if (!_canManageSubmissions()) {
-      debugPrint('User is not allowed to confirm payment submissions');
+      debugPrint('User is not allowed to review payment submissions');
       return;
     }
 
     final paymentId = schedule.paymentId;
     if (paymentId == null || paymentId.isEmpty) {
-      debugPrint('Cannot confirm payment: schedule has no paymentId');
+      debugPrint('Cannot review payment: schedule has no paymentId');
       return;
     }
 
     final messenger = ScaffoldMessenger.of(context);
-    final service = _buildConfirmationService(context);
     final paymentRepository = context.read<PaymentRepository>();
 
+    Payment payment;
     try {
-      final payment = await paymentRepository.get(id: paymentId);
+      payment = await paymentRepository.get(id: paymentId);
+    } catch (err) {
+      debugPrint('Load payment for review error: $err');
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Failed to load payment')),
+      );
+      return;
+    }
+
+    if (!context.mounted) return;
+    await _showReviewPaymentDialog(context, schedule: schedule, payment: payment);
+  }
+
+  Future<void> _showReviewPaymentDialog(
+    BuildContext context, {
+    required LoanSchedule schedule,
+    required Payment payment,
+  }) {
+    final originalUrl = payment.transactionPhotoUrl?.original;
+    final displayUrl = payment.transactionPhotoUrl?.thumbnail ?? originalUrl;
+
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Review payment'),
+          content: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (originalUrl != null && displayUrl != null)
+                  GestureDetector(
+                    onTap: () => _showFullImage(dialogContext, originalUrl),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: CachedNetworkImage(
+                        imageUrl: displayUrl,
+                        height: 200,
+                        width: double.infinity,
+                        fit: BoxFit.cover,
+                        errorWidget: (context, url, error) => Container(
+                          height: 200,
+                          color: Colors.grey.withValues(alpha: 0.15),
+                          child: const Center(
+                            child:
+                                Icon(Icons.broken_image, color: Colors.grey),
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  Container(
+                    height: 80,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      'No screenshot provided',
+                      style: TextStyle(color: Colors.black, fontSize: 12),
+                    ),
+                  ),
+                const Gap(12),
+                Text(
+                  '${schedule.amortization.toCurrency()} • due '
+                  '${schedule.dueAt.toDefaultDateFormat()}',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            AppWidgets.defaultOutlinedButton(
+              foregroundColor: AppColors.red,
+              onPressed: () => _onRejectFromReview(
+                context,
+                dialogContext: dialogContext,
+                payment: payment,
+              ),
+              child: const Text('Reject'),
+            ),
+            AppWidgets.defaultFilledButton(
+              onPressed: () => _onConfirmFromReview(
+                context,
+                dialogContext: dialogContext,
+                payment: payment,
+              ),
+              child: const Text('Confirm'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Confirms from the review dialog. Captures the messenger/service from the
+  /// row-level [context] (the review dialog's own [dialogContext] is gone once
+  /// we pop it), pops the review dialog, then runs the confirm + refresh.
+  Future<void> _onConfirmFromReview(
+    BuildContext context, {
+    required BuildContext dialogContext,
+    required Payment payment,
+  }) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final service = _buildConfirmationService(context);
+
+    Navigator.of(dialogContext, rootNavigator: true).pop();
+
+    try {
       await service.confirm(
         payment: payment,
         confirmedById: AuthenticationService.instance.user.id,
@@ -189,31 +304,24 @@ class ClientDetailLoanBody extends StatelessWidget {
     }
   }
 
-  Future<void> _onRejectPayment(
-    BuildContext context,
-    LoanSchedule schedule,
-  ) async {
-    if (!_canManageSubmissions()) {
-      debugPrint('User is not allowed to reject payment submissions');
-      return;
-    }
-
-    final paymentId = schedule.paymentId;
-    if (paymentId == null || paymentId.isEmpty) {
-      debugPrint('Cannot reject payment: schedule has no paymentId');
-      return;
-    }
-
-    final reason = await _showRejectReasonDialog(context);
-    if (reason == null || reason.trim().isEmpty) return;
-
-    if (!context.mounted) return;
+  /// Rejects from the review dialog: asks for a reason, pops the review dialog,
+  /// then runs the reject + refresh.
+  Future<void> _onRejectFromReview(
+    BuildContext context, {
+    required BuildContext dialogContext,
+    required Payment payment,
+  }) async {
     final messenger = ScaffoldMessenger.of(context);
     final service = _buildConfirmationService(context);
-    final paymentRepository = context.read<PaymentRepository>();
+
+    final reason = await _showRejectReasonDialog(dialogContext);
+    if (reason == null || reason.trim().isEmpty) return;
+
+    if (dialogContext.mounted) {
+      Navigator.of(dialogContext, rootNavigator: true).pop();
+    }
 
     try {
-      final payment = await paymentRepository.get(id: paymentId);
       await service.reject(
         payment: payment,
         confirmedById: AuthenticationService.instance.user.id,
@@ -231,6 +339,42 @@ class ClientDetailLoanBody extends StatelessWidget {
         const SnackBar(content: Text('Failed to reject payment')),
       );
     }
+  }
+
+  /// Full-screen proof image viewer. Mirrors the Payment Center's
+  /// `_showFullImage` (`pending_submission_section.dart`) for consistency.
+  void _showFullImage(BuildContext context, String url) {
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          insetPadding: const EdgeInsets.all(16),
+          child: Stack(
+            children: [
+              SizedBox(
+                height: 400,
+                width: double.infinity,
+                child: PhotoView(
+                  imageProvider: CachedNetworkImageProvider(url),
+                  backgroundDecoration: const BoxDecoration(
+                    color: AppColors.white,
+                  ),
+                ),
+              ),
+              Positioned(
+                top: 8,
+                right: 8,
+                child: IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () =>
+                      Navigator.of(context, rootNavigator: true).maybePop(),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   /// Mirrors the Payment Center's reject reason dialog
