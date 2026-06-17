@@ -70,6 +70,7 @@ class _LoansScreenState extends State<LoansScreen> {
                 child: Row(
                   children: [
                     Expanded(
+                      flex: 2,
                       child: StreamBuilder(
                         stream: context.read<LoansBloc>().userLoanViews,
                         builder: (context, snapshot) {
@@ -98,6 +99,7 @@ class _LoansScreenState extends State<LoansScreen> {
                     if (showDetailContainer) ...[
                       const Gap(32),
                       Expanded(
+                        flex: 3,
                         child: widget.loanId != null
                             ? Container(
                                 padding: const EdgeInsets.all(16),

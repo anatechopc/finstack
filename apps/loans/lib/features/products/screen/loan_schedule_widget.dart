@@ -214,11 +214,11 @@ class LoanScheduleWidget extends StatelessWidget {
     // Status) — the fractions must sum to 1.0. Status gets the widest slice so
     // labels like "Payment submitted" / "Not paid (overdue)" fit.
     final fraction = switch (index) {
-      0 => 0.22, // Date
+      0 => 0.24, // Date
       1 => 0.16, // Amortization
       2 => 0.14, // Interest
       3 => 0.16, // Principal
-      _ => 0.32, // Status
+      _ => 0.30, // Status
     };
 
     return TableSpan(
