@@ -127,15 +127,19 @@ class _PayoutAccountsBody extends StatelessWidget {
     final result = await showBankDetailsFormDialog(context, existing: account);
     if (result == null) return;
     if (!context.mounted) return;
-    // Mutate the existing object so id/dataId/dataType are preserved.
-    bloc.add(
-      UpdateBankDetailsEvent(
-        bankDetails: account
-          ..bankName = result.bankName
-          ..accountName = result.accountName
-          ..accountNumber = result.accountNumber,
-      ),
-    );
+    // Build a NEW object (preserving id/dataId/dataType/timestamps) rather than
+    // mutating the one held in bloc state — so a failed update doesn't leave the
+    // displayed list showing the edited-but-unsaved values.
+    final updated = BankDetails()
+      ..id = account.id
+      ..dataId = account.dataId
+      ..dataType = account.dataType
+      ..createdAt = account.createdAt
+      ..updatedAt = account.updatedAt
+      ..bankName = result.bankName
+      ..accountName = result.accountName
+      ..accountNumber = result.accountNumber;
+    bloc.add(UpdateBankDetailsEvent(bankDetails: updated));
   }
 
   Future<void> _onDelete(BuildContext context, BankDetails account) async {

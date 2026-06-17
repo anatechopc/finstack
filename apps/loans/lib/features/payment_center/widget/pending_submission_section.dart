@@ -104,24 +104,7 @@ class _PendingSubmissionCard extends StatelessWidget {
             ],
           ),
           if (bankDetailsId != null && bankDetailsId.isNotEmpty)
-            FutureBuilder<BankDetails>(
-              future: context.read<BaseRepository<BankDetails>>().get(
-                    id: bankDetailsId,
-                  ),
-              builder: (context, snapshot) {
-                final acct = snapshot.data;
-                if (acct == null) return const SizedBox.shrink();
-                final n = acct.accountNumber;
-                final last4 = n.length >= 4 ? n.substring(n.length - 4) : n;
-                return Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    'Paid to: ${acct.bankName} …$last4',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                );
-              },
-            ),
+            _PaidToLine(bankDetailsId: bankDetailsId),
           const Gap(8),
           if (originalUrl != null && displayUrl != null)
             GestureDetector(
@@ -264,4 +247,49 @@ Future<String?> _showRejectReasonDialog(BuildContext context) {
       );
     },
   );
+}
+
+/// Resolves a submission's payout account once (cached) and renders a small
+/// "Paid to" line. Caching the future in `initState` avoids re-fetching on
+/// every Payment Center rebuild, and the `hasError` guard keeps a missing /
+/// hard-deleted account from crashing the card.
+class _PaidToLine extends StatefulWidget {
+  const _PaidToLine({required this.bankDetailsId});
+
+  final String bankDetailsId;
+
+  @override
+  State<_PaidToLine> createState() => _PaidToLineState();
+}
+
+class _PaidToLineState extends State<_PaidToLine> {
+  late final Future<BankDetails> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future =
+        context.read<BaseRepository<BankDetails>>().get(id: widget.bankDetailsId);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<BankDetails>(
+      future: _future,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) return const SizedBox.shrink();
+        final acct = snapshot.data;
+        if (acct == null) return const SizedBox.shrink();
+        final n = acct.accountNumber;
+        final last4 = n.length >= 4 ? n.substring(n.length - 4) : n;
+        return Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            'Paid to: ${acct.bankName} …$last4',
+            style: const TextStyle(fontSize: 12),
+          ),
+        );
+      },
+    );
+  }
 }
