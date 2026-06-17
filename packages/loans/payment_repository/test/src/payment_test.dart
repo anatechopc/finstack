@@ -36,6 +36,13 @@ void main() {
       expect(out['loan_id'], 'loan-9');
     });
 
+    test('round-trips paid_to_bank_details_id', () {
+      final json = baseJson()..['paid_to_bank_details_id'] = 'bd-1';
+      final p = PaymentEntity.fromJson(json);
+      expect(p.paidToBankDetailsId, 'bd-1');
+      expect(p.toJson()['paid_to_bank_details_id'], 'bd-1');
+    });
+
     test('Payment.create defaults to confirmed; can be pending', () {
       final confirmed = Payment.create(
         userId: 'u',

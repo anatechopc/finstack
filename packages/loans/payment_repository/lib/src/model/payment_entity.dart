@@ -57,6 +57,9 @@ class PaymentEntity implements BaseEntity {
   @JsonKey(name: 'loan_id')
   String? loanId;
 
+  @JsonKey(name: 'paid_to_bank_details_id')
+  String? paidToBankDetailsId;
+
   @JsonKey(
     name: 'transaction_photo_url',
     toJson: handleImageUrlToJson,
@@ -102,6 +105,7 @@ class PaymentEntity implements BaseEntity {
         userId,
         loanScheduleId,
         loanId,
+        paidToBankDetailsId,
         transactionPhotoUrl,
         autoCollectRef,
         confirmedBy,
@@ -129,6 +133,7 @@ class PaymentEntity implements BaseEntity {
       ..userId = userId
       ..loanScheduleId = loanScheduleId
       ..loanId = loanId
+      ..paidToBankDetailsId = paidToBankDetailsId
       ..transactionPhotoUrl = transactionPhotoUrl
       ..autoCollectRef = autoCollectRef
       ..confirmedBy = confirmedBy

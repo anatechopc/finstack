@@ -9,6 +9,7 @@ class Payment extends PaymentEntity implements BaseModel<PaymentEntity> {
     required String userId,
     required String loanScheduleId,
     String? loanId,
+    String? paidToBankDetailsId,
     ImageUrl? transactionPhotoUrl,
     ImageUrl? signatureUrl,
     String? autoCollectRef,
@@ -36,6 +37,7 @@ class Payment extends PaymentEntity implements BaseModel<PaymentEntity> {
       ..userId = userId
       ..loanScheduleId = loanScheduleId
       ..loanId = loanId
+      ..paidToBankDetailsId = paidToBankDetailsId
       ..transactionPhotoUrl = transactionPhotoUrl
       ..signatureUrl = signatureUrl
       ..autoCollectRef = autoCollectRef
