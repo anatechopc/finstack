@@ -338,7 +338,10 @@ class _LoanDetailsState extends State<LoanDetails> {
               ),
               const Gap(16),
               LoanScheduleWidget(
-                amortization: loan.amount,
+                // The per-period amortization (e.g. ₱40.92), NOT loan.amount
+                // (the principal) — otherwise the "You need to pay X every
+                // month" line shows the wrong figure.
+                amortization: context.read<LoansBloc>().monthlyAmortization,
                 schedules: schedules,
                 completeTerm: loan.completeTerm,
                 buildTable: true,
