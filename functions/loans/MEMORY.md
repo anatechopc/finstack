@@ -103,14 +103,3 @@ update["updated_at"] = time.Now().UnixMilli()
 ```
 
 Caught in `verify_otp.go` (PR #48); the convention is consistent everywhere else, e.g. `request_otp.go` writes `time.Now().UnixMilli()` and `expireAt.UnixMilli()`. PR #47 added defensive Timestamp tolerance to the Flutter helpers, but the canonical fix is at the producer.
-
----
-
-## Borrower Payment Submission — Go side (branch `feature/borrower-payment-submission`, finstack #64)
-
-The borrower submission flow writes `pending` payments that a teller later confirms/rejects; the Go triggers keep both parties notified.
-
-- **New `paymentUpdated` trigger**: fires on `payments/{id}` updates and notifies the **borrower** when their submission transitions `pending → confirmed` or `pending → rejected` (rejection carries `rejection_reason`). No-ops on any other transition (e.g. confirmed→confirmed, backfill writes). Adapter+core split: `PaymentUpdated` adapter wires real Firebase clients, `HandlePaymentUpdatedCore` is pure logic tested with in-memory fakes from `test/fakes/`. Registered in `loooans_cloud_functions.go` `init()` and added to the `deploy_functions.sh` deploy block. **Function counter 12 → 13.**
-- **`paymentCreated` refactored to adapter+core** (was inline). While refactoring, **fixed the pre-existing `loan_id` bug**: it resolved the loan via the payment's schedule, but open-term payments are created with `loan_schedule_id = NO_ID` (backfilled just after), so the schedule lookup returned nothing and lenders weren't notified. Now resolves the loan via `loan_id` on the payment (denormalized by the Flutter side at every creation site) and falls back to the schedule for older docs that lack it.
-- **De-dup per `submission_id`**: Pay-in-full creates one payment per schedule, all sharing a `submission_id`. `paymentCreated` now notifies the lender **once per submission** instead of once per schedule. Payments with no `submission_id` (legacy/single) notify per-payment as before.
-- Same testing/deploy conventions as elsewhere: `CGO_ENABLED=0 go test ./...` locally on macOS; every new function registered in `init()` and added to `deploy_functions.sh`; `go mod tidy` per sub-module when deps change.
