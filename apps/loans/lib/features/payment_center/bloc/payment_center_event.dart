@@ -139,3 +139,20 @@ final class RefreshBorrowerDataEvent extends PaymentCenterEvent {
   @override
   List<Object?> get props => [];
 }
+
+final class ConfirmSubmissionEvent extends PaymentCenterEvent {
+  const ConfirmSubmissionEvent({required this.payments});
+  final List<Payment> payments;
+
+  @override
+  List<Object?> get props => [payments];
+}
+
+final class RejectSubmissionEvent extends PaymentCenterEvent {
+  const RejectSubmissionEvent({required this.payments, required this.reason});
+  final List<Payment> payments;
+  final String reason;
+
+  @override
+  List<Object?> get props => [payments, reason];
+}

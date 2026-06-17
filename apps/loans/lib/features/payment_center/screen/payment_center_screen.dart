@@ -17,6 +17,7 @@ import 'package:loooans/features/payment_center/widget/borrower_loan_section.dar
 import 'package:loooans/features/payment_center/widget/borrower_search_widget.dart';
 import 'package:loooans/features/payment_center/widget/co_maker_loan_section.dart';
 import 'package:loooans/features/payment_center/widget/payment_center_dialogs.dart';
+import 'package:loooans/features/payment_center/widget/pending_submission_section.dart';
 import 'package:loooans/features/users/bloc/user_bloc.dart';
 import 'package:loooans/features/users/widget/client_detail/client_detail_dialogs.dart';
 import 'package:loooans/utils/screen_helpers.dart';
@@ -187,6 +188,9 @@ class _BorrowerContent extends StatelessWidget {
             ),
           ),
           const Gap(24),
+
+          // Pending borrower payment submissions awaiting confirm/reject
+          PendingSubmissionSection(state: state),
 
           // Section A: Borrower's Loans
           BorrowerLoanSection(
