@@ -6,6 +6,7 @@ import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/utils/extensions.dart';
+import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 
 class ClientDetailScheduleItem extends StatelessWidget {
@@ -13,6 +14,8 @@ class ClientDetailScheduleItem extends StatelessWidget {
     required this.index,
     required this.schedule,
     required this.onMakePayment,
+    this.onConfirmPayment,
+    this.onRejectPayment,
     this.isHeader = false,
     super.key,
   });
@@ -21,20 +24,33 @@ class ClientDetailScheduleItem extends StatelessWidget {
   final LoanSchedule schedule;
   final bool isHeader;
   final void Function(LoanSchedule schedule) onMakePayment;
+  final void Function(LoanSchedule schedule)? onConfirmPayment;
+  final void Function(LoanSchedule schedule)? onRejectPayment;
 
   String _getLoanStatusLabel() {
+    // Open-term placeholders carry their own meaningful status.
     if (schedule.isPlaceholder) {
       return schedule.status.label;
     }
 
+    // Payment-meaningful statuses render as-is.
+    if (schedule.status == LoanStatus.paid_on_time ||
+        schedule.status == LoanStatus.paid_late ||
+        schedule.status == LoanStatus.payment_submitted) {
+      return schedule.status.label;
+    }
+
+    // Any other status (not_paid, approved, pending, ...) on a schedule row
+    // is not payment-meaningful — derive the label from the due date so a
+    // schedule persisted at approval doesn't render a misleading "Approved".
     final now = Jiffy.now().startOf(Unit.day);
     final dueAt = Jiffy.parseFromDateTime(schedule.dueAt);
 
-    if (schedule.status == LoanStatus.not_paid && now.isAfter(dueAt)) {
+    if (now.isAfter(dueAt)) {
       return LoanStatus.not_paid_overdue.label;
     }
 
-    return schedule.status.label;
+    return LoanStatus.not_paid.label;
   }
 
   String _displayAmount(double amount) {
@@ -145,25 +161,28 @@ class ClientDetailScheduleItem extends StatelessWidget {
             ),
           ),
         ),
+        // Reserve space matching the data rows' trailing action column so the
+        // header columns stay aligned with the rows beneath them.
+        const Gap(8),
+        const SizedBox(width: 180),
       ],
     );
   }
 
   Widget _buildRow(BuildContext context) {
-    final company = AuthenticationService.instance.company;
-    final user = AuthenticationService.instance.user;
-    final showMakePaymentButton =
-        company.managementType == CompanyManagementType.selfManaged &&
-            user.isTeller() &&
-            schedule.status == LoanStatus.not_paid;
-    final showAdditionalLoanAmountDetailsButton =
-        company.managementType == CompanyManagementType.selfManaged &&
-            (user.isLoanOfficer() || user.isAdmin()) &&
-            schedule.status == LoanStatus.pending &&
-            schedule.isOpenTerm;
-
     return Container(
-      padding: const EdgeInsets.only(top: 16),
+      // Reserve a consistent minimum height so rows with an inline action
+      // button don't tower over plain rows, and add a subtle divider for
+      // readability on the green background.
+      constraints: const BoxConstraints(minHeight: 56),
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: AppColors.black.withValues(alpha: 0.1),
+          ),
+        ),
+      ),
       child: Row(
         children: [
           SizedBox(
@@ -242,65 +261,96 @@ class ClientDetailScheduleItem extends StatelessWidget {
             Expanded(
               child: Text(schedule.paidAt!.toDefaultDateFormat()),
             ),
-          if (schedule.status == LoanStatus.payment_submitted) ...[
-            const Gap(
-              8,
-            ),
-            AppWidgets.defaultOutlinedButton(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              child: const Text('Confirm payment'),
-              onPressed: () {
-                // NOTE: this is confirmation of payment for
-                // managementType = CompanyManagementType.app
-              },
-            ),
-          ],
-          if (schedule.paidAt == null &&
-              !schedule.isAdditionalLoanAmount) ...[
-            Opacity(
-              opacity: showMakePaymentButton ? 1.0 : 0.0,
-              child: SizedBox(
-                width: 160,
-                child: AppWidgets.defaultOutlinedButton(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 12,
-                  ),
-                  child: const Text('Make payment'),
-                  onPressed: !showMakePaymentButton
-                      ? null
-                      : () {
-                          onMakePayment(schedule);
-                        },
-                ),
-              ),
-            ),
-          ],
-          if (schedule.isAdditionalLoanAmount)
-            Opacity(
-              opacity: showAdditionalLoanAmountDetailsButton ? 1.0 : 0.0,
-              child: SizedBox(
-                width: 160,
-                child: AppWidgets.defaultOutlinedButton(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 12,
-                  ),
-                  child: const Text('Details'),
-                  onPressed: !showAdditionalLoanAmountDetailsButton
-                      ? null
-                      : () {
-                          AppWidgets.showAdditionalLoanDetailDialog(
-                            context,
-                            additionalLoanId: schedule.id,
-                          );
-                        },
-                ),
-              ),
-            ),
+          // Trailing action column — fixed width so it reserves space even
+          // when empty, keeping every row's columns aligned.
+          const Gap(8),
+          SizedBox(
+            width: 180,
+            child: _buildTrailingAction(context),
+          ),
         ],
       ),
     );
+  }
+
+  /// Renders the row's trailing action (confirm/reject, make payment, or
+  /// details) inside a fixed-width column. Returns an empty placeholder when
+  /// no action applies so rows stay aligned.
+  Widget _buildTrailingAction(BuildContext context) {
+    final company = AuthenticationService.instance.company;
+    final user = AuthenticationService.instance.user;
+    final isSelfManaged =
+        company.managementType == CompanyManagementType.selfManaged;
+    final showMakePaymentButton = isSelfManaged &&
+        user.isTeller() &&
+        schedule.status == LoanStatus.not_paid;
+    final showAdditionalLoanAmountDetailsButton = isSelfManaged &&
+        (user.isLoanOfficer() || user.isAdmin()) &&
+        schedule.status == LoanStatus.pending &&
+        schedule.isOpenTerm;
+    final showConfirmRejectButtons = isSelfManaged &&
+        (user.isAdmin() || user.isTeller()) &&
+        schedule.status == LoanStatus.payment_submitted;
+
+    if (showConfirmRejectButtons) {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          AppWidgets.defaultOutlinedButton(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            foregroundColor: AppColors.red,
+            child: const Text('Reject'),
+            onPressed: () => onRejectPayment?.call(schedule),
+          ),
+          const Gap(8),
+          AppWidgets.defaultOutlinedButton(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: const Text('Confirm'),
+            onPressed: () => onConfirmPayment?.call(schedule),
+          ),
+        ],
+      );
+    }
+
+    if (schedule.paidAt == null && !schedule.isAdditionalLoanAmount) {
+      return Opacity(
+        opacity: showMakePaymentButton ? 1.0 : 0.0,
+        child: AppWidgets.defaultOutlinedButton(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 12,
+          ),
+          child: const Text('Make payment'),
+          onPressed: !showMakePaymentButton
+              ? null
+              : () {
+                  onMakePayment(schedule);
+                },
+        ),
+      );
+    }
+
+    if (schedule.isAdditionalLoanAmount) {
+      return Opacity(
+        opacity: showAdditionalLoanAmountDetailsButton ? 1.0 : 0.0,
+        child: AppWidgets.defaultOutlinedButton(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 12,
+          ),
+          child: const Text('Details'),
+          onPressed: !showAdditionalLoanAmountDetailsButton
+              ? null
+              : () {
+                  AppWidgets.showAdditionalLoanDetailDialog(
+                    context,
+                    additionalLoanId: schedule.id,
+                  );
+                },
+        ),
+      );
+    }
+
+    return const SizedBox.shrink();
   }
 }
