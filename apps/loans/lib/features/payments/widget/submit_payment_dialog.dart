@@ -100,7 +100,9 @@ class _SubmitPaymentDialogBodyState extends State<_SubmitPaymentDialogBody> {
     try {
       final results = await widget.bankDetailsRepository.load(
         statements: [
-          QueryStatement(field: 'data_id', isEqualTo: widget.companyId),
+          // NB: the stored field is `dataId` (camelCase) — BankDetailsEntity
+          // has no @JsonKey on it, unlike its snake_case siblings.
+          QueryStatement(field: 'dataId', isEqualTo: widget.companyId),
         ],
       );
       final company = results
