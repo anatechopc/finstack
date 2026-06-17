@@ -22,15 +22,18 @@ void main() {
       final json = baseJson()
         ..['status'] = 'pending'
         ..['rejection_reason'] = 'blurry'
-        ..['submission_id'] = 'sub-9';
+        ..['submission_id'] = 'sub-9'
+        ..['loan_id'] = 'loan-9';
       final p = PaymentEntity.fromJson(json);
       expect(p.status, PaymentStatus.pending);
       expect(p.rejectionReason, 'blurry');
       expect(p.submissionId, 'sub-9');
+      expect(p.loanId, 'loan-9');
       final out = p.toJson();
       expect(out['status'], 'pending');
       expect(out['rejection_reason'], 'blurry');
       expect(out['submission_id'], 'sub-9');
+      expect(out['loan_id'], 'loan-9');
     });
 
     test('Payment.create defaults to confirmed; can be pending', () {

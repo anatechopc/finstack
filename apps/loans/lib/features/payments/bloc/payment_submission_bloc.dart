@@ -82,6 +82,7 @@ class PaymentSubmissionBloc
           final payment = Payment.create(
             userId: userId,
             loanScheduleId: schedule.id, // may be NO_ID; fixed for open-term
+            loanId: event.loanId,
             transactionPhotoUrl: proof,
             status: PaymentStatus.pending,
             submissionId: submissionId,

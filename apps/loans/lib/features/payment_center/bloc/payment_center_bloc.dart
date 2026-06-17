@@ -652,12 +652,14 @@ class PaymentCenterBloc
       final tempPayment = Payment.create(
         userId: loan.userId,
         loanScheduleId: schedule.id,
+        loanId: loan.id,
         transactionPhotoUrl: transactionPhotoUrl,
         signatureUrl: signatureUrl,
         bypassPaymentProof: event.force || event.otpVerified,
         comment: comment,
         confirmedBy: authService.user.id,
         confirmedAt: DateTime.timestamp(),
+        status: PaymentStatus.confirmed,
       );
 
       if (!schedule.isOpenTerm) {
@@ -849,12 +851,14 @@ class PaymentCenterBloc
         final tempPayment = Payment.create(
           userId: loan.userId,
           loanScheduleId: schedule.id,
+          loanId: loan.id,
           transactionPhotoUrl: transactionPhotoUrl,
           signatureUrl: signatureUrl,
           bypassPaymentProof: event.force || event.otpVerified,
           comment: comment,
           confirmedBy: authService.user.id,
           confirmedAt: DateTime.timestamp(),
+          status: PaymentStatus.confirmed,
         );
 
         if (schedule.id == NO_ID) {

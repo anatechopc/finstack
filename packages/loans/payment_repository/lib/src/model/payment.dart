@@ -8,6 +8,7 @@ class Payment extends PaymentEntity implements BaseModel<PaymentEntity> {
   factory Payment.create({
     required String userId,
     required String loanScheduleId,
+    String? loanId,
     ImageUrl? transactionPhotoUrl,
     ImageUrl? signatureUrl,
     String? autoCollectRef,
@@ -34,6 +35,7 @@ class Payment extends PaymentEntity implements BaseModel<PaymentEntity> {
       ..id = NO_ID
       ..userId = userId
       ..loanScheduleId = loanScheduleId
+      ..loanId = loanId
       ..transactionPhotoUrl = transactionPhotoUrl
       ..signatureUrl = signatureUrl
       ..autoCollectRef = autoCollectRef
