@@ -10,6 +10,7 @@ final class SubmitPaymentEvent extends PaymentSubmissionEvent {
     required this.loanId,
     required this.fileBytes,
     required this.fileName,
+    required this.bankDetailsId,
   });
   final List<LoanSchedule> schedules;
 
@@ -18,4 +19,8 @@ final class SubmitPaymentEvent extends PaymentSubmissionEvent {
   final String loanId;
   final Uint8List fileBytes;
   final String fileName;
+
+  /// The id of the lender payout account the borrower chose to pay to.
+  /// Recorded on every created Payment.
+  final String bankDetailsId;
 }

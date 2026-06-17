@@ -100,6 +100,7 @@ void main() {
         loanId: 'loan-1',
         fileBytes: bytes,
         fileName: 'p.jpg',
+        bankDetailsId: 'bd-1',
       ),
     ),
     expect: () => [
@@ -123,6 +124,7 @@ void main() {
       expect(p.loanScheduleId, 'sched-1');
       expect(p.userId, 'borrower-1');
       expect(p.transactionPhotoUrl, isNotNull);
+      expect(p.paidToBankDetailsId, 'bd-1');
 
       // The linked schedule is marked submitted and points at the new payment.
       final s = verify(() => schedules.update(data: captureAny(named: 'data')))
@@ -145,6 +147,7 @@ void main() {
         loanId: 'loan-1',
         fileBytes: bytes,
         fileName: 'p.jpg',
+        bankDetailsId: 'bd-1',
       ),
     ),
     verify: (_) {
@@ -188,6 +191,7 @@ void main() {
         loanId: 'loan-1',
         fileBytes: bytes,
         fileName: 'p.jpg',
+        bankDetailsId: 'bd-1',
       ),
     ),
     verify: (_) {

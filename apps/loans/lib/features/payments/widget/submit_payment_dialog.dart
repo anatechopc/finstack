@@ -86,7 +86,8 @@ class _SubmitPaymentDialogBody extends StatefulWidget {
 
 class _SubmitPaymentDialogBodyState extends State<_SubmitPaymentDialogBody> {
   bool _loadingBankDetails = true;
-  BankDetails? _bankDetails;
+  List<BankDetails> _accounts = [];
+  BankDetails? _selected;
   String? _fileName;
   Uint8List? _fileBytes;
 
@@ -95,6 +96,8 @@ class _SubmitPaymentDialogBodyState extends State<_SubmitPaymentDialogBody> {
     super.initState();
     _loadBankDetails();
   }
+
+  String _last4(String s) => s.length >= 4 ? s.substring(s.length - 4) : s;
 
   Future<void> _loadBankDetails() async {
     try {
@@ -105,18 +108,20 @@ class _SubmitPaymentDialogBodyState extends State<_SubmitPaymentDialogBody> {
           QueryStatement(field: 'dataId', isEqualTo: widget.companyId),
         ],
       );
-      final company = results
+      final filtered = results
           .where((b) => b.dataType == DataType.provider)
           .toList();
       if (!mounted) return;
       setState(() {
-        _bankDetails = company.isNotEmpty ? company.first : null;
+        _accounts = filtered;
+        _selected = filtered.length == 1 ? filtered.first : null;
         _loadingBankDetails = false;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _bankDetails = null;
+        _accounts = [];
+        _selected = null;
         _loadingBankDetails = false;
       });
     }
@@ -134,8 +139,8 @@ class _SubmitPaymentDialogBodyState extends State<_SubmitPaymentDialogBody> {
 
   @override
   Widget build(BuildContext context) {
-    final bankDetails = _bankDetails;
-    final hasBankDetails = bankDetails != null;
+    final hasBankDetails = _accounts.isNotEmpty;
+    final selected = _selected;
     final hasFile = _fileBytes != null && _fileName != null;
 
     return AlertDialog(
@@ -168,26 +173,58 @@ class _SubmitPaymentDialogBodyState extends State<_SubmitPaymentDialogBody> {
                     style: TextStyle(color: Colors.black),
                   )
                 else ...[
-                  const Text(
-                    'Pay to:',
-                    style: TextStyle(
-                      color: Colors.black,
-                      fontWeight: FontWeight.w600,
+                  if (_accounts.length > 1) ...[
+                    const Text(
+                      'Choose account to pay to',
+                      style: TextStyle(
+                        color: Colors.black,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
-                  const Gap(8),
-                  Text(
-                    'Bank: ${bankDetails.bankName}',
-                    style: const TextStyle(color: Colors.black),
-                  ),
-                  Text(
-                    'Account name: ${bankDetails.accountName}',
-                    style: const TextStyle(color: Colors.black),
-                  ),
-                  Text(
-                    'Account number: ${bankDetails.accountNumber}',
-                    style: const TextStyle(color: Colors.black),
-                  ),
+                    const Gap(8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: DropdownButton<BankDetails>(
+                        isExpanded: true,
+                        value: _selected,
+                        items: [
+                          for (final a in _accounts)
+                            DropdownMenuItem<BankDetails>(
+                              value: a,
+                              child: Text(
+                                '${a.bankName} ·…${_last4(a.accountNumber)}',
+                              ),
+                            ),
+                        ],
+                        onChanged: submitting
+                            ? null
+                            : (v) => setState(() => _selected = v),
+                      ),
+                    ),
+                    const Gap(16),
+                  ],
+                  if (selected != null) ...[
+                    const Text(
+                      'Pay to:',
+                      style: TextStyle(
+                        color: Colors.black,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const Gap(8),
+                    Text(
+                      'Bank: ${selected.bankName}',
+                      style: const TextStyle(color: Colors.black),
+                    ),
+                    Text(
+                      'Account name: ${selected.accountName}',
+                      style: const TextStyle(color: Colors.black),
+                    ),
+                    Text(
+                      'Account number: ${selected.accountNumber}',
+                      style: const TextStyle(color: Colors.black),
+                    ),
+                  ],
                 ],
                 const Gap(16),
                 Text(
@@ -219,7 +256,7 @@ class _SubmitPaymentDialogBodyState extends State<_SubmitPaymentDialogBody> {
           builder: (context, state) {
             final submitting =
                 state.status == PaymentSubmissionStatus.submitting;
-            final canSend = hasBankDetails && hasFile && !submitting;
+            final canSend = _selected != null && hasFile && !submitting;
 
             return Column(
               mainAxisSize: MainAxisSize.min,
@@ -235,6 +272,7 @@ class _SubmitPaymentDialogBodyState extends State<_SubmitPaymentDialogBody> {
                                     loanId: widget.loanId,
                                     fileBytes: _fileBytes!,
                                     fileName: _fileName!,
+                                    bankDetailsId: _selected!.id,
                                   ),
                                 );
                           }

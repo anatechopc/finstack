@@ -33,6 +33,14 @@ BankDetails _companyBankDetails() => BankDetails()
   ..accountName = 'Acme Lending'
   ..accountNumber = '0001112223';
 
+BankDetails _secondCompanyBankDetails() => BankDetails()
+  ..id = 'bd-2'
+  ..dataId = 'company-1'
+  ..dataType = DataType.provider
+  ..bankName = 'Beta Bank'
+  ..accountName = 'Beta Lending'
+  ..accountNumber = '0004445556';
+
 void main() {
   late PaymentSubmissionBloc bloc;
   late BaseRepository<BankDetails> bankRepo;
@@ -117,6 +125,24 @@ void main() {
       expect(find.text('Choose screenshot'), findsOneWidget);
 
       // No file chosen yet -> Send still disabled.
+      expect(sendButton(tester).onPressed, isNull);
+    },
+  );
+
+  testWidgets(
+    'shows a payout-account dropdown when the lender has more than one '
+    'account; Send disabled until an account and file are chosen',
+    (tester) async {
+      await pumpDialog(
+        tester,
+        bankDetails: [_companyBankDetails(), _secondCompanyBankDetails()],
+      );
+
+      // More than one account -> borrower must choose where to pay.
+      expect(find.text('Choose account to pay to'), findsOneWidget);
+      expect(find.byType(DropdownButton<BankDetails>), findsOneWidget);
+
+      // Nothing selected and no file chosen yet -> Send still disabled.
       expect(sendButton(tester).onPressed, isNull);
     },
   );

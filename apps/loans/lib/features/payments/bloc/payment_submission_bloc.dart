@@ -86,6 +86,7 @@ class PaymentSubmissionBloc
             transactionPhotoUrl: proof,
             status: PaymentStatus.pending,
             submissionId: submissionId,
+            paidToBankDetailsId: event.bankDetailsId,
           );
 
           if (schedule.id == NO_ID) {
