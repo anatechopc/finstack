@@ -4,6 +4,19 @@ Log of refactoring and bug fix work done across multiple sessions.
 
 ---
 
+## Lender payout accounts (2026-06-17, branch `feature/lender-payout-accounts`)
+
+Makes the borrower-payment-submission feature usable: lenders had no way to set
+bank details, so the borrower's Submit dialog was permanently blocked. Stacked on
+`feature/borrower-payment-submission` (PR #65). Spec/plan in `docs/superpowers/`.
+
+- **Lender CRUD** — `lib/features/bank_details/`: `BankDetailsBloc` (Load/Add/Update/Delete over `BaseRepository<BankDetails>`, scoped to `authService.company.id` + `DataType.provider`). `PayoutAccountsSection` + `showBankDetailsFormDialog` rendered inside `SettingsWidget`, gated to a self-managed company admin (`hasCompany && userRole.index > customer && managementType == selfManaged`). Delete is **soft** (repo sets `deletedAt`; `load` filters `deleted_at == null`).
+- **Multiple accounts**: lender can keep several; the borrower Submit dialog shows a dropdown when >1 (auto-selects when exactly 1), Send requires a selection. The chosen account id is recorded via new `Payment.paidToBankDetailsId` (`paid_to_bank_details_id`). Payment Center pending-submission card resolves it (`get(id)`, cached + hasError-guarded) → "Paid to: <bank> …<last4>".
+- **GOTCHA**: the `bank_details` stored id field is **`dataId`** (camelCase — `BankDetailsEntity.dataId` has NO `@JsonKey`, unlike its snake_case siblings). Query `field: 'dataId'`, NOT `data_id`. The original submit dialog used `data_id` and silently matched nothing — fixed.
+- **Firestore rule** (console-managed, deferred): a company admin may write `bank_details` where `dataId == their company` — tracked with the payments rule.
+
+---
+
 ## Refactoring Plan
 
 Full plan documented at: `~/.claude-personal/plans/tender-tickling-kahn.md`
