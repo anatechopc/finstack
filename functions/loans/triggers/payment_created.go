@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"cloud.google.com/go/firestore"
 	"com.loooans.app/utils"
 	"github.com/cloudevents/sdk-go/v2/event"
 	"github.com/golang/protobuf/proto"
@@ -196,24 +195,36 @@ func PaymentCreated(ctx context.Context, ev event.Event) error {
 			return companyId, productId, nil
 		},
 		FirstPaymentIdForSubmission: func(ctx context.Context, submissionId string) (string, error) {
-			iter := fs.Collection(collectionPrefix+"payments").
+			// Equality-only query (served by the automatic single-field index,
+			// so no composite submission_id+created_at index is required). The
+			// earliest payment is computed in code; a submission holds at most
+			// one payment per schedule, so the result set is small.
+			iter := fs.Collection(collectionPrefix + "payments").
 				Where("submission_id", "==", submissionId).
-				OrderBy("created_at", firestore.Asc).
-				Limit(1).
 				Documents(ctx)
 			defer iter.Stop()
 
-			doc, err := iter.Next()
-			if err == iterator.Done {
-				return "", nil
+			firstId := ""
+			var firstCreatedAt int64
+			found := false
+			for {
+				doc, err := iter.Next()
+				if err == iterator.Done {
+					break
+				}
+				if err != nil {
+					return "", fmt.Errorf("failed to query submission %s: %w", submissionId, err)
+				}
+				id, _ := doc.Data()["id"].(string)
+				createdAt := paymentCreatedAtMillis(doc.Data()["created_at"])
+				if !found || createdAt < firstCreatedAt ||
+					(createdAt == firstCreatedAt && id < firstId) {
+					found = true
+					firstCreatedAt = createdAt
+					firstId = id
+				}
 			}
-			if err != nil {
-				return "", fmt.Errorf("failed to query submission %s: %w", submissionId, err)
-			}
-			if id, ok := doc.Data()["id"].(string); ok {
-				return id, nil
-			}
-			return "", nil
+			return firstId, nil
 		},
 		CompanyUserIds: func(ctx context.Context, companyId string, roles []string) ([]string, error) {
 			return getCompanyUserIdsByRole(ctx, fs, collectionPrefix, companyId, roles)
@@ -241,4 +252,19 @@ func extractPaymentCreate(data *firestoredata.DocumentEventData) (string, map[st
 	}
 	paymentId, _ := fields["id"].(string)
 	return paymentId, fields
+}
+
+// paymentCreatedAtMillis coerces a Firestore numeric created_at (stored as int
+// millis since epoch) to int64, tolerating int64/float64/int representations.
+func paymentCreatedAtMillis(v any) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case float64:
+		return int64(n)
+	case int:
+		return int64(n)
+	default:
+		return 0
+	}
 }

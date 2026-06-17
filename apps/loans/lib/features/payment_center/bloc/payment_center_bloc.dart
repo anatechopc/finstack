@@ -1145,6 +1145,11 @@ class PaymentCenterBloc
     );
 
     try {
+      if (authService.company.managementType !=
+          CompanyManagementType.selfManaged) {
+        throw Exception('This action is not supported');
+      }
+
       emit(state.copyWith(
         status: PaymentCenterStatus.paymentLoading,
         isLoading: true,
@@ -1190,6 +1195,11 @@ class PaymentCenterBloc
     );
 
     try {
+      if (authService.company.managementType !=
+          CompanyManagementType.selfManaged) {
+        throw Exception('This action is not supported');
+      }
+
       emit(state.copyWith(
         status: PaymentCenterStatus.paymentLoading,
         isLoading: true,
