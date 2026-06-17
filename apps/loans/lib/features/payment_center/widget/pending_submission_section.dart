@@ -1,3 +1,4 @@
+import 'package:bank_details_repository/bank_details_repository.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -7,6 +8,7 @@ import 'package:loooans/features/payment_center/model/pending_submission.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
+import 'package:loooans_helpers/data_helpers.dart';
 import 'package:photo_view/photo_view.dart';
 
 /// Lender-facing list of borrower payment submissions awaiting confirm/reject,
@@ -59,6 +61,7 @@ class _PendingSubmissionCard extends StatelessWidget {
         .firstWhere((url) => url?.original != null, orElse: () => null);
     final originalUrl = firstPhoto?.original;
     final displayUrl = firstPhoto?.thumbnail ?? originalUrl;
+    final bankDetailsId = submission.payments.first.paidToBankDetailsId;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -100,6 +103,25 @@ class _PendingSubmissionCard extends StatelessWidget {
                 ),
             ],
           ),
+          if (bankDetailsId != null && bankDetailsId.isNotEmpty)
+            FutureBuilder<BankDetails>(
+              future: context.read<BaseRepository<BankDetails>>().get(
+                    id: bankDetailsId,
+                  ),
+              builder: (context, snapshot) {
+                final acct = snapshot.data;
+                if (acct == null) return const SizedBox.shrink();
+                final n = acct.accountNumber;
+                final last4 = n.length >= 4 ? n.substring(n.length - 4) : n;
+                return Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'Paid to: ${acct.bankName} …$last4',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                );
+              },
+            ),
           const Gap(8),
           if (originalUrl != null && displayUrl != null)
             GestureDetector(
