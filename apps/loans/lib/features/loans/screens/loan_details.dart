@@ -418,8 +418,8 @@ class _LoanDetailsState extends State<LoanDetails> {
           crossAxisAlignment: !fullScreen
               ? CrossAxisAlignment.start
               : CrossAxisAlignment.center,
-          children: [
-            const Row(
+          children: const [
+            Row(
               children: [
                 Text(
                   'Next payment',
@@ -431,10 +431,10 @@ class _LoanDetailsState extends State<LoanDetails> {
                 ),
               ],
             ),
-            const Gap(16),
+            Gap(16),
             Row(
               mainAxisSize: MainAxisSize.min,
-              children: const [
+              children: [
                 Icon(Icons.check_circle, color: AppColors.green1, size: 18),
                 Gap(8),
                 Text(
