@@ -10,9 +10,11 @@ import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/features/cash_pool/bloc/cash_pool_functions.dart';
 import 'package:loooans/features/payment_center/model/borrower_loan_group.dart';
+import 'package:loooans/features/payment_center/model/pending_submission.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/charge_calculator.dart';
 import 'package:loooans/services/loan_calculation_service.dart';
+import 'package:loooans/services/payment_confirmation_service.dart';
 import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans_helpers/data_helpers.dart';
@@ -53,6 +55,8 @@ class PaymentCenterBloc
     on<RequestOtpEvent>(_handleRequestOtpEvent);
     on<VerifyOtpEvent>(_handleVerifyOtpEvent);
     on<RefreshBorrowerDataEvent>(_handleRefreshBorrowerDataEvent);
+    on<ConfirmSubmissionEvent>(_handleConfirmSubmission);
+    on<RejectSubmissionEvent>(_handleRejectSubmission);
   }
 
   final AuthenticationService authService;
@@ -135,6 +139,7 @@ class PaymentCenterBloc
         status: PaymentCenterStatus.borrowerSelected,
         borrowerLoans: results.$1,
         coMakerLoans: results.$2,
+        pendingSubmissions: results.$3,
         isLoading: false,
         expandedLoanSchedules: const {},
       ));
@@ -148,8 +153,12 @@ class PaymentCenterBloc
     }
   }
 
-  Future<(List<BorrowerLoanGroup>, List<BorrowerLoanGroup>)>
-      _loadBorrowerData(User borrower) async {
+  Future<
+      (
+        List<BorrowerLoanGroup>,
+        List<BorrowerLoanGroup>,
+        Map<String, List<PendingSubmission>>,
+      )> _loadBorrowerData(User borrower) async {
     final borrowerLoans = await loanRepository.load(
       reset: true,
       limit: null,
@@ -174,7 +183,88 @@ class PaymentCenterBloc
     final coMakerGroups =
         await _buildLoanGroups(coMakerLoans, flat: true);
 
-    return (borrowerGroups, coMakerGroups);
+    final pendingSubmissions =
+        await _loadPendingSubmissions([...borrowerLoans, ...coMakerLoans]);
+
+    return (borrowerGroups, coMakerGroups, pendingSubmissions);
+  }
+
+  /// Resolves borrower-submitted payments awaiting confirm/reject for the
+  /// given loans.
+  ///
+  /// Scope: there is no global "all pending payments for a company" query
+  /// (payments aren't tagged with a company), so we mirror the borrower-centric
+  /// flow — for each loan we look at its persisted schedules in
+  /// [LoanStatus.payment_submitted] carrying a paymentId, load those payments,
+  /// keep only the pending ones, and group them by submissionId so a "Pay in
+  /// full" submission (N schedules) surfaces/acts as ONE item.
+  ///
+  /// Returns a map keyed by loanId.
+  Future<Map<String, List<PendingSubmission>>> _loadPendingSubmissions(
+    List<Loan> loans,
+  ) async {
+    final result = <String, List<PendingSubmission>>{};
+
+    for (final loan in loans) {
+      final persistedSchedules = await loanScheduleRepository.allByLoanId(
+        loanId: loan.id,
+        onlyPaid: false,
+      );
+
+      final submittedSchedules = persistedSchedules
+          .where(
+            (s) =>
+                s.status == LoanStatus.payment_submitted &&
+                s.paymentId != null &&
+                s.paymentId!.isNotEmpty,
+          )
+          .toList();
+
+      if (submittedSchedules.isEmpty) continue;
+
+      // Group submissionId -> payments and accumulate schedule amounts.
+      final paymentsBySubmission = <String, List<Payment>>{};
+      final amountBySubmission = <String, double>{};
+
+      for (final schedule in submittedSchedules) {
+        Payment payment;
+        try {
+          payment = await paymentRepository.get(id: schedule.paymentId!);
+        } catch (err) {
+          _log.warning(
+            'Failed to load payment ${schedule.paymentId} for pending '
+            'submission: $err',
+          );
+          continue;
+        }
+
+        if (payment.status != PaymentStatus.pending) continue;
+
+        // Fall back to the payment id when no submissionId is set so a lone
+        // submission still surfaces as its own item.
+        final key = payment.submissionId ?? payment.id;
+        paymentsBySubmission.putIfAbsent(key, () => []).add(payment);
+        amountBySubmission.update(
+          key,
+          (value) => value + schedule.amortization,
+          ifAbsent: () => schedule.amortization,
+        );
+      }
+
+      if (paymentsBySubmission.isEmpty) continue;
+
+      result[loan.id] = paymentsBySubmission.entries
+          .map(
+            (entry) => PendingSubmission(
+              submissionId: entry.key,
+              payments: entry.value,
+              totalAmount: amountBySubmission[entry.key],
+            ),
+          )
+          .toList();
+    }
+
+    return result;
   }
 
   Future<List<BorrowerLoanGroup>> _buildLoanGroups(
@@ -562,12 +652,14 @@ class PaymentCenterBloc
       final tempPayment = Payment.create(
         userId: loan.userId,
         loanScheduleId: schedule.id,
+        loanId: loan.id,
         transactionPhotoUrl: transactionPhotoUrl,
         signatureUrl: signatureUrl,
         bypassPaymentProof: event.force || event.otpVerified,
         comment: comment,
         confirmedBy: authService.user.id,
         confirmedAt: DateTime.timestamp(),
+        status: PaymentStatus.confirmed,
       );
 
       if (!schedule.isOpenTerm) {
@@ -759,12 +851,14 @@ class PaymentCenterBloc
         final tempPayment = Payment.create(
           userId: loan.userId,
           loanScheduleId: schedule.id,
+          loanId: loan.id,
           transactionPhotoUrl: transactionPhotoUrl,
           signatureUrl: signatureUrl,
           bypassPaymentProof: event.force || event.otpVerified,
           comment: comment,
           confirmedBy: authService.user.id,
           confirmedAt: DateTime.timestamp(),
+          status: PaymentStatus.confirmed,
         );
 
         if (schedule.id == NO_ID) {
@@ -1024,10 +1118,120 @@ class PaymentCenterBloc
         status: PaymentCenterStatus.borrowerSelected,
         borrowerLoans: results.$1,
         coMakerLoans: results.$2,
+        pendingSubmissions: results.$3,
         expandedLoanSchedules: const {},
       ));
     } catch (err) {
       _log.severe('Refresh borrower data error: $err', err);
+    }
+  }
+
+  /// Confirm a borrower payment submission (all schedules under it).
+  void confirmSubmission(List<Payment> payments) =>
+      add(ConfirmSubmissionEvent(payments: payments));
+
+  /// Reject a borrower payment submission (all schedules under it).
+  void rejectSubmission(List<Payment> payments, String reason) =>
+      add(RejectSubmissionEvent(payments: payments, reason: reason));
+
+  Future<void> _handleConfirmSubmission(
+    ConfirmSubmissionEvent event,
+    Emitter<PaymentCenterState> emit,
+  ) async {
+    final service = PaymentConfirmationService(
+      loanScheduleRepository: loanScheduleRepository,
+      loanRepository: loanRepository,
+      paymentRepository: paymentRepository,
+    );
+
+    try {
+      if (authService.company.managementType !=
+          CompanyManagementType.selfManaged) {
+        throw Exception('This action is not supported');
+      }
+
+      emit(state.copyWith(
+        status: PaymentCenterStatus.paymentLoading,
+        isLoading: true,
+      ));
+
+      // TODO(payments): atomic multi-schedule confirm — a failure partway
+      // through a "pay in full" submission leaves earlier schedules confirmed.
+      for (final payment in event.payments) {
+        await service.confirm(
+          payment: payment,
+          confirmedById: authService.user.id,
+        );
+      }
+
+      emit(state.copyWith(
+        status: PaymentCenterStatus.paymentSuccess,
+        message: 'Payment submission confirmed',
+        isLoading: false,
+      ));
+
+      // Defer refresh to allow BlocListener to process paymentSuccess first.
+      if (state.selectedBorrower != null) {
+        unawaited(Future.microtask(() => add(RefreshBorrowerDataEvent())));
+      }
+    } catch (err) {
+      _log.severe('Confirm submission error: $err', err);
+      emit(state.copyWith(
+        status: PaymentCenterStatus.error,
+        message: 'Something went wrong while confirming the submission',
+        isLoading: false,
+      ));
+    }
+  }
+
+  Future<void> _handleRejectSubmission(
+    RejectSubmissionEvent event,
+    Emitter<PaymentCenterState> emit,
+  ) async {
+    final service = PaymentConfirmationService(
+      loanScheduleRepository: loanScheduleRepository,
+      loanRepository: loanRepository,
+      paymentRepository: paymentRepository,
+    );
+
+    try {
+      if (authService.company.managementType !=
+          CompanyManagementType.selfManaged) {
+        throw Exception('This action is not supported');
+      }
+
+      emit(state.copyWith(
+        status: PaymentCenterStatus.paymentLoading,
+        isLoading: true,
+      ));
+
+      // TODO(payments): atomic multi-schedule confirm — a failure partway
+      // through a "pay in full" submission leaves earlier schedules reverted.
+      for (final payment in event.payments) {
+        await service.reject(
+          payment: payment,
+          confirmedById: authService.user.id,
+          reason: event.reason,
+        );
+      }
+
+      emit(state.copyWith(
+        status: PaymentCenterStatus.paymentSuccess,
+        message: 'Payment submission rejected',
+        isLoading: false,
+      ));
+
+      // Defer refresh to allow BlocListener to process paymentSuccess first.
+      if (state.selectedBorrower != null) {
+        unawaited(Future.microtask(() => add(RefreshBorrowerDataEvent())));
+      }
+    } catch (err) {
+      _log.severe('Reject submission error: $err', err);
+      emit(state.copyWith(
+        status: PaymentCenterStatus.error,
+        message: 'Something went wrong while rejecting the submission',
+        isLoading: false,
+      ));
     }
   }
 }

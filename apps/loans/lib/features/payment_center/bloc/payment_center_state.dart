@@ -23,6 +23,7 @@ final class PaymentCenterState extends Equatable {
     this.borrowerLoans = const [],
     this.coMakerLoans = const [],
     this.expandedLoanSchedules = const {},
+    this.pendingSubmissions = const {},
     this.message,
     this.otpToken,
     this.otpExpireAt,
@@ -35,6 +36,10 @@ final class PaymentCenterState extends Equatable {
   final List<BorrowerLoanGroup> borrowerLoans;
   final List<BorrowerLoanGroup> coMakerLoans;
   final Map<String, List<LoanSchedule>> expandedLoanSchedules;
+
+  /// Borrower-submitted payments awaiting confirm/reject, keyed by loan id and
+  /// grouped per submission.
+  final Map<String, List<PendingSubmission>> pendingSubmissions;
   final String? message;
   final String? otpToken;
   final int? otpExpireAt;
@@ -47,6 +52,7 @@ final class PaymentCenterState extends Equatable {
     List<BorrowerLoanGroup>? borrowerLoans,
     List<BorrowerLoanGroup>? coMakerLoans,
     Map<String, List<LoanSchedule>>? expandedLoanSchedules,
+    Map<String, List<PendingSubmission>>? pendingSubmissions,
     String? message,
     String? otpToken,
     int? otpExpireAt,
@@ -60,6 +66,7 @@ final class PaymentCenterState extends Equatable {
       coMakerLoans: coMakerLoans ?? this.coMakerLoans,
       expandedLoanSchedules:
           expandedLoanSchedules ?? this.expandedLoanSchedules,
+      pendingSubmissions: pendingSubmissions ?? this.pendingSubmissions,
       message: message,
       otpToken: otpToken ?? this.otpToken,
       otpExpireAt: otpExpireAt ?? this.otpExpireAt,
@@ -75,6 +82,7 @@ final class PaymentCenterState extends Equatable {
         borrowerLoans,
         coMakerLoans,
         expandedLoanSchedules,
+        pendingSubmissions,
         message,
         otpToken,
         otpExpireAt,

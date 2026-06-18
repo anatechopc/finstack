@@ -18,6 +18,7 @@ import 'package:loooans/widgets/dialog_widgets.dart';
 import 'package:loooans/widgets/form_widgets.dart';
 import 'package:loooans/widgets/notification_widgets.dart';
 import 'package:loooans/widgets/profile_widgets.dart';
+import 'package:user_repository/user_repository.dart';
 
 class LayoutWidgets {
   static Widget rootConstraints({required Widget child}) {
@@ -234,6 +235,30 @@ class LayoutWidgets {
           const SizedBox(
             width: 48,
           ),
+          // Payment Center entry for lenders. The classic UI surfaces this via
+          // the menu drawer (Constants.allMenu); the non-classic UI has no
+          // drawer, so expose it here next to the header icons. Gated to the
+          // same roles as the allMenu Payment Center entry (admin / teller).
+          if (AuthenticationService.instance.user.userRole == UserRole.admin ||
+              AuthenticationService.instance.user.userRole ==
+                  UserRole.teller) ...[
+            IconButton(
+              tooltip: 'Payment Center',
+              onPressed: () {
+                GoRouter.of(context).go(Paths.paymentCenter);
+              },
+              style: IconButton.styleFrom(
+                backgroundColor: AppColors.white,
+                foregroundColor: AppColors.black,
+              ),
+              icon: const Icon(
+                Icons.payments_rounded,
+              ),
+            ),
+            const SizedBox(
+              width: 8,
+            ),
+          ],
           IconButton(
             onPressed: () {
               debugPrint('route location: ${GoRouter.of(context).location}');

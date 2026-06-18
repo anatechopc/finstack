@@ -115,6 +115,7 @@ class Constants {
     'Amortization',
     'Interest',
     'Principal',
+    'Status',
   ];
 
   static List<String> statementOfAccountHeaders = [

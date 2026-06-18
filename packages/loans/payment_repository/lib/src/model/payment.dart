@@ -1,5 +1,6 @@
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:payment_repository/src/model/payment_entity.dart';
+import 'package:payment_repository/src/model/payment_status.dart';
 
 class Payment extends PaymentEntity implements BaseModel<PaymentEntity> {
   Payment() : super();
@@ -7,6 +8,8 @@ class Payment extends PaymentEntity implements BaseModel<PaymentEntity> {
   factory Payment.create({
     required String userId,
     required String loanScheduleId,
+    String? loanId,
+    String? paidToBankDetailsId,
     ImageUrl? transactionPhotoUrl,
     ImageUrl? signatureUrl,
     String? autoCollectRef,
@@ -14,6 +17,8 @@ class Payment extends PaymentEntity implements BaseModel<PaymentEntity> {
     String? comment,
     String? confirmedBy,
     DateTime? confirmedAt,
+    PaymentStatus status = PaymentStatus.confirmed,
+    String? submissionId,
   }) {
     if (!bypassPaymentProof) {
       if (transactionPhotoUrl == null && autoCollectRef == null) {
@@ -31,12 +36,30 @@ class Payment extends PaymentEntity implements BaseModel<PaymentEntity> {
       ..id = NO_ID
       ..userId = userId
       ..loanScheduleId = loanScheduleId
+      ..loanId = loanId
+      ..paidToBankDetailsId = paidToBankDetailsId
       ..transactionPhotoUrl = transactionPhotoUrl
       ..signatureUrl = signatureUrl
       ..autoCollectRef = autoCollectRef
       ..confirmedBy = confirmedBy
       ..comment = comment
-      ..confirmedAt = confirmedAt;
+      ..confirmedAt = confirmedAt
+      ..status = status
+      ..submissionId = submissionId;
+  }
+
+  void markConfirmed({required String confirmedById}) {
+    status = PaymentStatus.confirmed;
+    confirmedBy = confirmedById;
+    confirmedAt = DateTime.timestamp();
+    rejectionReason = null;
+  }
+
+  void markRejected({required String confirmedById, required String reason}) {
+    status = PaymentStatus.rejected;
+    confirmedBy = confirmedById;
+    confirmedAt = DateTime.timestamp();
+    rejectionReason = reason;
   }
 
   @override

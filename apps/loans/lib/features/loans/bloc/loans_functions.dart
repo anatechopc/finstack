@@ -29,7 +29,15 @@ void _calculateLoan({
     companyId: companyId,
     paidSchedules: paidSchedules,
   );
-  _clientLoanSchedules.addAll(result.schedules);
+  // The persisted schedules must lead the displayed list (they hold the real
+  // id + status + paymentId). calculateFixedTerm returns only the COMPUTED
+  // remaining schedules, so prepend the persisted ones here — the same shape
+  // the teller flow and calculateOpenTerm already use. Without this, fixed-term
+  // loans drop their paid/submitted schedule from the view (showing a
+  // recomputed "overdue" status and NO_ID, which also causes duplicate-on-pay).
+  _clientLoanSchedules
+    ..addAll(paidSchedules)
+    ..addAll(result.schedules);
   _monthlyAmortization = result.monthlyAmortization;
   _totalLoanPayment = result.totalLoanPayment;
 }

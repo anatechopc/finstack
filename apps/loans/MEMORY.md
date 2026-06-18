@@ -4,6 +4,19 @@ Log of refactoring and bug fix work done across multiple sessions.
 
 ---
 
+## Lender payout accounts (2026-06-17, branch `feature/lender-payout-accounts`)
+
+Makes the borrower-payment-submission feature usable: lenders had no way to set
+bank details, so the borrower's Submit dialog was permanently blocked. Stacked on
+`feature/borrower-payment-submission` (PR #65). Spec/plan in `docs/superpowers/`.
+
+- **Lender CRUD** — `lib/features/bank_details/`: `BankDetailsBloc` (Load/Add/Update/Delete over `BaseRepository<BankDetails>`, scoped to `authService.company.id` + `DataType.provider`). `PayoutAccountsSection` + `showBankDetailsFormDialog` rendered inside `SettingsWidget`, gated to a self-managed company admin (`hasCompany && userRole.index > customer && managementType == selfManaged`). Delete is **soft** (repo sets `deletedAt`; `load` filters `deleted_at == null`).
+- **Multiple accounts**: lender can keep several; the borrower Submit dialog shows a dropdown when >1 (auto-selects when exactly 1), Send requires a selection. The chosen account id is recorded via new `Payment.paidToBankDetailsId` (`paid_to_bank_details_id`). Payment Center pending-submission card resolves it (`get(id)`, cached + hasError-guarded) → "Paid to: <bank> …<last4>".
+- **GOTCHA**: the `bank_details` stored id field is **`dataId`** (camelCase — `BankDetailsEntity.dataId` has NO `@JsonKey`, unlike its snake_case siblings). Query `field: 'dataId'`, NOT `data_id`. The original submit dialog used `data_id` and silently matched nothing — fixed.
+- **Firestore rule** (console-managed, deferred): a company admin may write `bank_details` where `dataId == their company` — tracked with the payments rule.
+
+---
+
 ## Refactoring Plan
 
 Full plan documented at: `~/.claude-personal/plans/tender-tickling-kahn.md`
@@ -335,3 +348,16 @@ What SPM integration added when it succeeded:
 The 3 plugins that don't yet support SPM still pull in via CocoaPods; both managers coexist transparently. `pod install` runs in <1 second after the first build because there's so little for it to do.
 
 Future-Flutter warning: "Disabling Swift Package Manager will not be allowed in a future version of Flutter" — so this stays on, no caveat. If a future plugin or dependency needs the repo path to not have spaces again, keep it that way.
+
+---
+
+## Borrower Payment Submission — Flutter side (branch `feature/borrower-payment-submission`, finstack #64)
+
+Borrowers can now submit their own payment proof for confirmation, instead of only tellers recording payments in the Payment Center.
+
+- **`PaymentStatus` lifecycle** (`packages/loans/payment_repository`): `pending` / `confirmed` / `rejected`. `@JsonKey(defaultValue: PaymentStatus.confirmed)` so legacy + teller-created docs (no `status` field) deserialize as `confirmed` — no migration needed. Borrower submissions start `pending`; teller/force/OTP paths stay `confirmed`.
+- **`submission_id` grouping**: Pay-in-full spans multiple schedules → all the payments from one submit share a single `submission_id`. Lets the Payment Center group a multi-schedule submission as one reviewable unit and lets the Go `paymentCreated` trigger de-dup lender notifications per submission.
+- **`PaymentSubmissionBloc`** (`lib/features/payments/bloc/`) + submit dialog (`lib/features/payments/widget/`): borrower picks the lender's payout account (bank details via `BankDetailsRepository` filtered to `DataType.provider`), uploads a transaction screenshot, and the bloc writes one `pending` `Payment` per selected schedule. Open-term schedules carry `id == NO_ID` at submit time → payment is added first, then the schedule, then the payment is backfilled with the real `loan_schedule_id`. Schedules are flipped to `LoanStatus.payment_submitted`.
+- **Payment Center pending-submissions**: tellers confirm/reject pending borrower submissions, reusing `PaymentConfirmationService` (same confirm/reject path that flips schedule status and writes `confirmed_by` / `confirmed_at` / `rejection_reason`). Covered by `test/features/payment_center/payment_center_confirm_test.dart`.
+- **`loan_id` denormalized onto `Payment`** (`payment_entity.dart` / `payment.dart` `Payment.create(loanId:)`): every creation site now writes the real loan id directly on the payment. Needed because open-term payments are created with `loan_schedule_id = NO_ID`, so the Go trigger's schedule fallback can't resolve the loan at creation time — `loan_id` makes lender notification work for all loan types. Wired at all three `Payment.create` sites: borrower `PaymentSubmissionBloc._onSubmit` (`loanId: event.loanId`), teller `PaymentCenterBloc._handleMakePaymentEvent` and `_handleMakeOverduePaymentEvent` (`loanId: loan.id` + explicit `status: PaymentStatus.confirmed` for intent clarity — default was already confirmed, no behavior change).
+- **DEFERRED**: the Firestore security rule for *who* may write/confirm payments (borrower may create `pending`; only teller/admin may move to `confirmed`/`rejected`) is still managed in the console, not in repo rules. Close this before relying on the rule for authorization.
