@@ -473,4 +473,12 @@ class AppWidgets {
         initialRating: initialRating,
         itemSize: itemSize,
       );
+
+  /// Read-only star rating that fills continuously by [rating] (half/quarter
+  /// stars). For displaying an average rating.
+  static RatingBarIndicator ratingIndicator({
+    required double rating,
+    double itemSize = 24,
+  }) =>
+      DisplayWidgets.ratingIndicator(rating: rating, itemSize: itemSize);
 }

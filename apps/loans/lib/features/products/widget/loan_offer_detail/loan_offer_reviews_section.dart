@@ -66,13 +66,9 @@ class LoanOfferReviewsHeader extends StatelessWidget {
         const Gap(4),
         Row(
           children: [
-            AbsorbPointer(
-              child: AppWidgets.defaultRatingBar(
-                  initialRating: reviewAvg,
-                  itemSize: 24,
-                  onRatingUpdate: (rating) {
-                    debugPrint('ratig');
-                  },),
+            AppWidgets.ratingIndicator(
+              rating: reviewAvg,
+              itemSize: 24,
             ),
             const Gap(8),
             Text(
