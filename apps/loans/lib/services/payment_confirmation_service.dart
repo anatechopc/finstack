@@ -1,5 +1,6 @@
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
+import 'package:loooans_helpers/data_helpers.dart';
 import 'package:payment_repository/payment_repository.dart';
 
 /// Shared rules for marking a [LoanSchedule] paid (on confirm) or reverted
@@ -78,8 +79,35 @@ class PaymentConfirmationService {
 
   Future<void> _advanceLoanStatus(String loanId, LoanStatus status) async {
     final loan = await loanRepository.get(id: loanId);
+    var newStatus = status;
+
+    // A fixed-term loan (period != 0) auto-completes once every scheduled
+    // payment is paid, so the borrower can review and the pay buttons hide.
+    // Open-term loans are indefinite — they only complete via settlement.
+    if (loan.period != 0) {
+      final schedules = await loanScheduleRepository.load(
+        reset: true,
+        limit: null,
+        statements: [
+          QueryStatement(field: 'loan_id', isEqualTo: loanId),
+        ],
+      );
+      final paidCount = schedules
+          .where(
+            (s) =>
+                s.status == LoanStatus.paid_on_time ||
+                s.status == LoanStatus.paid_late,
+          )
+          .length;
+      // 15-day-term loans have twice the period's number of schedules.
+      final expectedSchedules = loan.period * (loan.term == '15d' ? 2 : 1);
+      if (paidCount >= expectedSchedules) {
+        newStatus = LoanStatus.completed;
+      }
+    }
+
     await loanRepository.update(
-      data: loan..status = status,
+      data: loan..status = newStatus,
       updateView: true,
     );
   }
