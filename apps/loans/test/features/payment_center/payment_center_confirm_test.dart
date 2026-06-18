@@ -123,4 +123,51 @@ void main() {
     ).captured.single as Loan;
     expect(loan.status, LoanStatus.completed);
   });
+
+  test('completeLoanIfFullyPaid completes a fully-paid fixed-term loan',
+      () async {
+    when(() => loans.get(id: any(named: 'id'))).thenAnswer(
+      (_) async => Loan()
+        ..id = 'loan-1'
+        ..period = 1
+        ..term = '1m'
+        ..status = LoanStatus.paid_late,
+    );
+    when(
+      () => schedules.load(
+        statements: any(named: 'statements'),
+        limit: any(named: 'limit'),
+        page: any(named: 'page'),
+        reset: any(named: 'reset'),
+      ),
+    ).thenAnswer((_) async => [sched()..status = LoanStatus.paid_on_time]);
+
+    await svc.completeLoanIfFullyPaid('loan-1');
+
+    final loan = verify(
+      () => loans.update(
+        data: captureAny(named: 'data'),
+        updateView: any(named: 'updateView'),
+      ),
+    ).captured.single as Loan;
+    expect(loan.status, LoanStatus.completed);
+  });
+
+  test('completeLoanIfFullyPaid is a no-op for an open-term loan', () async {
+    when(() => loans.get(id: any(named: 'id'))).thenAnswer(
+      (_) async => Loan()
+        ..id = 'loan-1'
+        ..period = 0
+        ..term = '1m',
+    );
+
+    await svc.completeLoanIfFullyPaid('loan-1');
+
+    verifyNever(
+      () => loans.update(
+        data: any(named: 'data'),
+        updateView: any(named: 'updateView'),
+      ),
+    );
+  });
 }
