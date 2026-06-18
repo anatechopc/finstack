@@ -116,7 +116,7 @@ class LoanOfferDetail extends StatelessWidget {
                   background: background,
                 ),
               1 => LoanOfferReviewsHeader(
-                  productView: productView,
+                  reviews: reviews,
                   fullScreen: fullScreen,
                 ),
               _ when reviews.isEmpty => const LoanOfferReviewsEmpty(),
@@ -167,7 +167,7 @@ class LoanOfferDetail extends StatelessWidget {
                 itemBuilder: (context, index) {
                   if (index == 0) {
                     return LoanOfferReviewsHeader(
-                      productView: productView,
+                      reviews: reviews,
                       fullScreen: fullScreen,
                     );
                   }

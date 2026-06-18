@@ -8,22 +8,28 @@ import 'package:loooans/features/products/bloc/product_bloc.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
-import 'package:product_view_repository/product_view_repository.dart';
 import 'package:review_repository/review_repository.dart';
 
 class LoanOfferReviewsHeader extends StatelessWidget {
   const LoanOfferReviewsHeader({
-    required this.productView,
+    required this.reviews,
     required this.fullScreen,
     super.key,
   });
 
-  final ProductView productView;
+  /// The actual loaded reviews — the summary (average + count) is derived from
+  /// these so it always matches what's displayed, instead of a stored
+  /// per-product aggregate that drifts out of sync.
+  final List<Review> reviews;
   final bool fullScreen;
 
   @override
   Widget build(BuildContext context) {
     final isMedium = getScreenSize(context: context) == ScreenSize.medium;
+    final reviewCount = reviews.length;
+    final reviewAvg = reviewCount == 0
+        ? 0.0
+        : reviews.fold<double>(0, (sum, r) => sum + r.rating) / reviewCount;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -62,7 +68,7 @@ class LoanOfferReviewsHeader extends StatelessWidget {
           children: [
             AbsorbPointer(
               child: AppWidgets.defaultRatingBar(
-                  initialRating: productView.reviewRatingAvg,
+                  initialRating: reviewAvg,
                   itemSize: 24,
                   onRatingUpdate: (rating) {
                     debugPrint('ratig');
@@ -70,7 +76,7 @@ class LoanOfferReviewsHeader extends StatelessWidget {
             ),
             const Gap(8),
             Text(
-              '${productView.reviewRatingAvg}(${productView.reviewCount})',
+              '${reviewAvg.toStringAsFixed(1)}($reviewCount)',
               style: const TextStyle(
                 fontSize: 12,
               ),
