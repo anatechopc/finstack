@@ -265,10 +265,17 @@ class ClientDetailScheduleItem extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          if (schedule.paidAt != null)
-            Expanded(
-              child: Text(schedule.paidAt!.toDefaultDateFormat()),
+          // 'Paid on' must ALWAYS be rendered (empty when unpaid) so every row
+          // has the same number of Expanded cells as the header — otherwise an
+          // unpaid row has one fewer column and all its cells widen + shift,
+          // breaking alignment with the header and the paid rows.
+          Expanded(
+            child: Text(
+              schedule.paidAt != null
+                  ? schedule.paidAt!.toDefaultDateFormat()
+                  : '',
             ),
+          ),
           // Trailing action column — fixed width so it reserves space even
           // when empty, keeping every row's columns aligned.
           const Gap(8),
