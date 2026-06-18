@@ -116,9 +116,10 @@ class LoanOfferDetail extends StatelessWidget {
                   background: background,
                 ),
               1 => LoanOfferReviewsHeader(
-                  productView: productView,
+                  reviews: reviews,
                   fullScreen: fullScreen,
                 ),
+              _ when reviews.isEmpty => const LoanOfferReviewsEmpty(),
               _ => LoanOfferReviewItem(
                   review: reviews[index - 2],
                 ),
@@ -127,7 +128,7 @@ class LoanOfferDetail extends StatelessWidget {
           separatorBuilder: (context, index) {
             return const Gap(16);
           },
-          itemCount: reviews.length + 2,
+          itemCount: reviews.isEmpty ? 3 : reviews.length + 2,
         );
       },
     );
@@ -166,9 +167,13 @@ class LoanOfferDetail extends StatelessWidget {
                 itemBuilder: (context, index) {
                   if (index == 0) {
                     return LoanOfferReviewsHeader(
-                      productView: productView,
+                      reviews: reviews,
                       fullScreen: fullScreen,
                     );
+                  }
+
+                  if (reviews.isEmpty) {
+                    return const LoanOfferReviewsEmpty();
                   }
 
                   return LoanOfferReviewItem(review: reviews[index - 1]);
@@ -176,7 +181,7 @@ class LoanOfferDetail extends StatelessWidget {
                 separatorBuilder: (context, index) {
                   return const Gap(16);
                 },
-                itemCount: reviews.length + 1,
+                itemCount: reviews.isEmpty ? 2 : reviews.length + 1,
               );
             },
           ),

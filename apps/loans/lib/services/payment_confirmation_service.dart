@@ -1,5 +1,6 @@
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
+import 'package:loooans_helpers/data_helpers.dart';
 import 'package:payment_repository/payment_repository.dart';
 
 /// Shared rules for marking a [LoanSchedule] paid (on confirm) or reverted
@@ -78,9 +79,61 @@ class PaymentConfirmationService {
 
   Future<void> _advanceLoanStatus(String loanId, LoanStatus status) async {
     final loan = await loanRepository.get(id: loanId);
+    var newStatus = status;
+
+    // A fixed-term loan auto-completes once every scheduled payment is paid, so
+    // the borrower can review and the pay buttons hide. (This advance runs
+    // AFTER the just-paid schedule is persisted, so the count is correct.)
+    if (loan.period != 0 &&
+        _fixedTermFullyPaid(loan, await _loadLoanSchedules(loanId))) {
+      newStatus = LoanStatus.completed;
+    }
+
     await loanRepository.update(
-      data: loan..status = status,
+      data: loan..status = newStatus,
       updateView: true,
     );
+  }
+
+  /// Marks the loan [LoanStatus.completed] if every scheduled payment is now
+  /// paid. Use from flows that set the loan status themselves BEFORE persisting
+  /// the paid schedule (e.g. the teller Payment Center) — call this AFTER the
+  /// schedule has been persisted so the paid count is accurate. No-op for
+  /// open-term loans or loans already completed.
+  Future<void> completeLoanIfFullyPaid(String loanId) async {
+    final loan = await loanRepository.get(id: loanId);
+    if (loan.period == 0 || loan.status == LoanStatus.completed) return;
+    if (_fixedTermFullyPaid(loan, await _loadLoanSchedules(loanId))) {
+      await loanRepository.update(
+        data: loan..status = LoanStatus.completed,
+        updateView: true,
+      );
+    }
+  }
+
+  Future<List<LoanSchedule>> _loadLoanSchedules(String loanId) {
+    return loanScheduleRepository.load(
+      reset: true,
+      limit: null,
+      statements: [
+        QueryStatement(field: 'loan_id', isEqualTo: loanId),
+      ],
+    );
+  }
+
+  /// True when a fixed-term loan has all of its scheduled payments paid.
+  /// Open-term loans (period == 0) are indefinite and never "fully paid" here.
+  /// 15-day-term loans have twice the period's number of schedules.
+  bool _fixedTermFullyPaid(Loan loan, List<LoanSchedule> schedules) {
+    if (loan.period == 0) return false;
+    final paidCount = schedules
+        .where(
+          (s) =>
+              s.status == LoanStatus.paid_on_time ||
+              s.status == LoanStatus.paid_late,
+        )
+        .length;
+    final expectedSchedules = loan.period * (loan.term == '15d' ? 2 : 1);
+    return paidCount >= expectedSchedules;
   }
 }

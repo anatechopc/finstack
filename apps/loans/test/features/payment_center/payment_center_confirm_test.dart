@@ -49,8 +49,23 @@ void main() {
         .thenAnswer((_) async => sched());
     when(() => schedules.update(data: any(named: 'data')))
         .thenAnswer((i) async => i.namedArguments[#data] as LoanSchedule);
-    when(() => loans.get(id: any(named: 'id')))
-        .thenAnswer((_) async => Loan()..id = 'loan-1');
+    // Default: the loan has 1 scheduled payment and no other paid schedules,
+    // so confirming one does NOT complete the loan (unless a test overrides
+    // the load stub to return enough paid schedules).
+    when(
+      () => schedules.load(
+        statements: any(named: 'statements'),
+        limit: any(named: 'limit'),
+        page: any(named: 'page'),
+        reset: any(named: 'reset'),
+      ),
+    ).thenAnswer((_) async => <LoanSchedule>[]);
+    when(() => loans.get(id: any(named: 'id'))).thenAnswer(
+      (_) async => Loan()
+        ..id = 'loan-1'
+        ..period = 1
+        ..term = '1m',
+    );
     when(
       () => loans.update(
         data: any(named: 'data'),
@@ -82,5 +97,77 @@ void main() {
         .single as LoanSchedule;
     expect(s.status, LoanStatus.not_paid);
     expect(s.paymentId, isNull);
+  });
+
+  test('confirming the final payment completes a fixed-term loan', () async {
+    // The loan has period 1; after this confirmation there is one paid
+    // schedule, so the loan should advance to completed (not paid_on_time).
+    when(
+      () => schedules.load(
+        statements: any(named: 'statements'),
+        limit: any(named: 'limit'),
+        page: any(named: 'page'),
+        reset: any(named: 'reset'),
+      ),
+    ).thenAnswer(
+      (_) async => [sched()..status = LoanStatus.paid_on_time],
+    );
+
+    await svc.confirm(payment: pay(), confirmedById: 'lender-1');
+
+    final loan = verify(
+      () => loans.update(
+        data: captureAny(named: 'data'),
+        updateView: any(named: 'updateView'),
+      ),
+    ).captured.single as Loan;
+    expect(loan.status, LoanStatus.completed);
+  });
+
+  test('completeLoanIfFullyPaid completes a fully-paid fixed-term loan',
+      () async {
+    when(() => loans.get(id: any(named: 'id'))).thenAnswer(
+      (_) async => Loan()
+        ..id = 'loan-1'
+        ..period = 1
+        ..term = '1m'
+        ..status = LoanStatus.paid_late,
+    );
+    when(
+      () => schedules.load(
+        statements: any(named: 'statements'),
+        limit: any(named: 'limit'),
+        page: any(named: 'page'),
+        reset: any(named: 'reset'),
+      ),
+    ).thenAnswer((_) async => [sched()..status = LoanStatus.paid_on_time]);
+
+    await svc.completeLoanIfFullyPaid('loan-1');
+
+    final loan = verify(
+      () => loans.update(
+        data: captureAny(named: 'data'),
+        updateView: any(named: 'updateView'),
+      ),
+    ).captured.single as Loan;
+    expect(loan.status, LoanStatus.completed);
+  });
+
+  test('completeLoanIfFullyPaid is a no-op for an open-term loan', () async {
+    when(() => loans.get(id: any(named: 'id'))).thenAnswer(
+      (_) async => Loan()
+        ..id = 'loan-1'
+        ..period = 0
+        ..term = '1m',
+    );
+
+    await svc.completeLoanIfFullyPaid('loan-1');
+
+    verifyNever(
+      () => loans.update(
+        data: any(named: 'data'),
+        updateView: any(named: 'updateView'),
+      ),
+    );
   });
 }

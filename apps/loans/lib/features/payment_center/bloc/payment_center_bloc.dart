@@ -707,6 +707,14 @@ class PaymentCenterBloc
         _log.warning('Loan payment is null. Please check.');
       }
 
+      // Auto-complete the loan if this teller payment was the final schedule.
+      // Runs after the schedule is persisted so the paid count is accurate.
+      await PaymentConfirmationService(
+        loanScheduleRepository: loanScheduleRepository,
+        loanRepository: loanRepository,
+        paymentRepository: paymentRepository,
+      ).completeLoanIfFullyPaid(loan.id);
+
       await _processCashPool(
         loan: loan,
         loanPayment: loanPayment,
@@ -887,6 +895,14 @@ class PaymentCenterBloc
         data: loan..status = lastStatus,
         updateView: true,
       );
+
+      // Auto-complete the loan if these overdue payments cleared the last
+      // remaining schedule. Runs after the schedules are persisted.
+      await PaymentConfirmationService(
+        loanScheduleRepository: loanScheduleRepository,
+        loanRepository: loanRepository,
+        paymentRepository: paymentRepository,
+      ).completeLoanIfFullyPaid(loan.id);
 
       // Process cash pool for the total payment
       final totalPayment =

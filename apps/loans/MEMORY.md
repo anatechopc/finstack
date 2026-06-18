@@ -4,6 +4,31 @@ Log of refactoring and bug fix work done across multiple sessions.
 
 ---
 
+## Issue #47 — Reviews: admin responses to borrower reviews (IN PROGRESS)
+
+Adds the ability for a company's `admin`/`reviewModerator` to respond to a borrower review; the borrower sees the response and gets notified. Tracks `anatechopc/loooans` issue #47. Branch: `develop` (uncommitted as of 2026-06-02).
+
+**Locked design decisions:** one response per review; response is editable + deletable; `admin` + `reviewModerator` of the review's `provider_id` company may respond; borrower notified only on the **first** response-set transition (not every edit), to avoid spam.
+
+**Done so far:**
+- **Data model** (`packages/loans/review_repository`) — `Review`/`ReviewEntity` gained `response`, `respondedAt`, `respondedById`, `respondedByName` (snake_case JSON keys). Helpers on `Review`: `hasResponse`, `setResponse(...)`, `clearResponse()` — all four fields always written/cleared together so the doc never holds a partial response. 9 package tests green.
+- **Go trigger** (`functions/loans/triggers/review_updated.go`) — see `functions/loans/MEMORY.md`. Fires only on `response` first-set transition, notifies `review.user_id`. 8 tests green.
+- **Borrower-side rendering** (`apps/loans/lib/features/products/widget/loan_offer_detail/loan_offer_reviews_section.dart`) — new private `_ReviewResponseBlock` shown beneath a review when `review.hasResponse`. Indented + left-accent so it reads as a nested reply; header "Response from {respondedByName}" + `respondedAt` date; **black text** (grey is unreadable on the green background — see memory). Widget test at `test/features/products/widget/loan_offer_detail/loan_offer_reviews_section_test.dart` (3 cases, TDD red→green). This is the app's first real widget test beyond the VGV counter boilerplate — uses the existing `tester.pumpApp()` helper in `test/helpers/`.
+
+**Admin side (images 4–5) — DONE (2026-06-02):** new feature dir `lib/features/reviews/`.
+- `bloc/reviews_bloc.dart` (+ `reviews_event.dart`, `reviews_state.dart`) — `ReviewsBloc`. Events: `LoadCompanyReviewsEvent` (loads `provider_id == authService.company.id`), `RespondToReviewEvent` (sets response with logged-in admin's `user.id` / `completeNameEasternOrder`), `DeleteReviewResponseEvent` (clears). Two constructors: default `ReviewsBloc(BuildContext)` for DI, `ReviewsBloc.withDependencies({reviewRepository, authService})` for tests. Repo field typed as `BaseRepository<Review>` (abstract/mockable) because concrete `ReviewRepository` is a `final class` (can't be mocked). 4 bloc tests.
+- `widget/review_response_dialog.dart` — `ReviewResponseDialog` + `showReviewResponseDialog(context, review:)`. Original review on top, `Message` field (prefilled in edit mode), Send; **Delete response** button shown only when `review.hasResponse`. 5 widget tests.
+- `widget/reviews_dialog.dart` — `ReviewsDialog({required summary})` + `showReviewsDialog(context)`. Header summary via pure `reviewsSummary(Company)` (kept out of the widget so it's testable without the auth singleton); list reuses borrower `LoanOfferReviewItem` (so existing responses render) + a Respond/Edit button per row. 5 widget tests.
+- Score card wired in `lib/features/reports/widgets/report_cards_widget.dart` — replaced the commented `'reviews'` block with a real `ScoreCardWidget` (★ `avg.toStringAsFixed(1)` `(reviewCount)` from `AuthenticationService.instance.company`, no GoogleFonts), `footerIcon` opens `showReviewsDialog`. Added `namedReportCards(context)['reviews']!` to the compact grid (the full grid picks it up via `.values`).
+- `ReviewsBloc` registered in `lib/app/di/bloc_providers.dart` (ReviewRepository was already provided in `repository_providers.dart`).
+- **All 17 app tests pass; `flutter analyze` clean on all touched files.**
+
+**Still remaining:**
+- **Firestore rules — DEFERRED** (user chose to skip for now, 2026-06-02). NOTE: repo Firestore rules are NOT the source of truth — `apps/loans/firestore.rules` is the stale default template (its `allow` expired 2024-06-22) and `firebase.json` references only `firestore.indexes.json`; only `firestore:indexes` is deployed (`scripts/deploy-indexes.sh`). Real rules are **console-managed manually** (same pattern as prod RTDB rules). The review-response permission (admin/reviewModerator of the review's `provider_id` company may write only `response*` fields; borrowers read-only) must be added there separately.
+- PR not yet opened; all work still uncommitted on `develop`.
+
+---
+
 ## Lender payout accounts (2026-06-17, branch `feature/lender-payout-accounts`)
 
 Makes the borrower-payment-submission feature usable: lenders had no way to set

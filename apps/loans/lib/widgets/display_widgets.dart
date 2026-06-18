@@ -64,4 +64,22 @@ class DisplayWidgets {
       onRatingUpdate: onRatingUpdate,
     );
   }
+
+  /// Read-only star rating that fills CONTINUOUSLY by [rating] — a 4.5 shows a
+  /// half-filled star, 4.25 a quarter, etc. Use for displaying an average
+  /// (unlike [defaultRatingBar], which is for input and renders whole stars).
+  static RatingBarIndicator ratingIndicator({
+    required double rating,
+    double itemSize = 24,
+  }) {
+    return RatingBarIndicator(
+      rating: rating,
+      itemSize: itemSize,
+      unratedColor: AppColors.black.withValues(alpha: 0.25),
+      itemBuilder: (context, _) => const Icon(
+        Icons.star_rounded,
+        color: AppColors.black,
+      ),
+    );
+  }
 }

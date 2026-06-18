@@ -403,6 +403,54 @@ class _LoanDetailsState extends State<LoanDetails> {
       (sum, s) => sum + s.amortization + s.extraPayment,
     );
 
+    // Nothing left to pay (or the loan has completed) — show a "fully paid"
+    // panel instead of the Pay now / Pay in full buttons, which would otherwise
+    // invite payment on a zero-balance loan.
+    if (unpaid.isEmpty || loan.status == LoanStatus.completed) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.black,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: !fullScreen
+              ? CrossAxisAlignment.start
+              : CrossAxisAlignment.center,
+          children: const [
+            Row(
+              children: [
+                Text(
+                  'Next payment',
+                  style: TextStyle(
+                    color: AppColors.green1,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            Gap(16),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.check_circle, color: AppColors.green1, size: 18),
+                Gap(8),
+                Text(
+                  'Loan fully paid',
+                  style: TextStyle(
+                    color: AppColors.green1,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
