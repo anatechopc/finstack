@@ -413,20 +413,38 @@ class _LoanDetailsState extends State<LoanDetails> {
           color: AppColors.black,
           borderRadius: BorderRadius.circular(16),
         ),
-        child: Row(
+        child: Column(
           mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment:
-              !fullScreen ? MainAxisAlignment.start : MainAxisAlignment.center,
-          children: const [
-            Icon(Icons.check_circle, color: AppColors.green1, size: 18),
-            Gap(8),
-            Text(
-              'Loan fully paid',
-              style: TextStyle(
-                color: AppColors.green1,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
+          crossAxisAlignment: !fullScreen
+              ? CrossAxisAlignment.start
+              : CrossAxisAlignment.center,
+          children: [
+            const Row(
+              children: [
+                Text(
+                  'Next payment',
+                  style: TextStyle(
+                    color: AppColors.green1,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            const Gap(16),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: const [
+                Icon(Icons.check_circle, color: AppColors.green1, size: 18),
+                Gap(8),
+                Text(
+                  'Loan fully paid',
+                  style: TextStyle(
+                    color: AppColors.green1,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
