@@ -55,6 +55,25 @@ func (u *UserUpdater) Update(_ context.Context, uid string, fields map[string]an
 	return u.Err
 }
 
+// LoanViewNameUpdate records one UpdateUserLoanViewNames invocation.
+type LoanViewNameUpdate struct {
+	UserId   string
+	FullName string
+}
+
+// LoanViewNameUpdater fake — records every user_full_name cascade the user
+// changes core performs (the user id + the newly composed full name). Returns
+// Err if set so tests can assert error propagation.
+type LoanViewNameUpdater struct {
+	Updates []LoanViewNameUpdate
+	Err     error
+}
+
+func (u *LoanViewNameUpdater) Update(_ context.Context, userId, fullName string) error {
+	u.Updates = append(u.Updates, LoanViewNameUpdate{UserId: userId, FullName: fullName})
+	return u.Err
+}
+
 // UserReader fake — returns preconfigured Firestore user docs by uid. If
 // Err is set it is returned instead. If the uid is not in Users and Err is
 // nil, (nil, nil) is returned — the caller (typically a *Core function)
@@ -156,6 +175,79 @@ func (n *Notifier) Notify(_ context.Context, recipientId, title, message string,
 		Data:        data,
 	})
 	return n.Err
+}
+
+// ScheduleLoanResolver fake — maps loan_schedule_id -> loan_id for the
+// payment_created loan resolution. An unknown schedule resolves to "" (the
+// core treats that as a graceful no-op). Err is returned instead when set.
+type ScheduleLoanResolver struct {
+	LoanIds map[string]string
+	Err     error
+	Calls   []string
+}
+
+func (r *ScheduleLoanResolver) LoanIdForSchedule(_ context.Context, scheduleId string) (string, error) {
+	r.Calls = append(r.Calls, scheduleId)
+	if r.Err != nil {
+		return "", r.Err
+	}
+	return r.LoanIds[scheduleId], nil
+}
+
+// LoanInfoReader fake — maps loan_id -> (company_id, product_id). Records every
+// loanId argument so tests can assert LoanInfo was called with the resolved id.
+type LoanInfo struct {
+	CompanyId string
+	ProductId string
+}
+
+type LoanInfoReader struct {
+	Loans map[string]LoanInfo
+	Err   error
+	Calls []string
+}
+
+func (r *LoanInfoReader) LoanInfo(_ context.Context, loanId string) (string, string, error) {
+	r.Calls = append(r.Calls, loanId)
+	if r.Err != nil {
+		return "", "", r.Err
+	}
+	info := r.Loans[loanId]
+	return info.CompanyId, info.ProductId, nil
+}
+
+// SubmissionFirstPayment fake — maps submission_id -> the id of its
+// earliest-created payment, for the de-dup gate. An unknown submission resolves
+// to "". Err is returned instead when set.
+type SubmissionFirstPayment struct {
+	FirstIds map[string]string
+	Err      error
+	Calls    []string
+}
+
+func (r *SubmissionFirstPayment) FirstPaymentIdForSubmission(_ context.Context, submissionId string) (string, error) {
+	r.Calls = append(r.Calls, submissionId)
+	if r.Err != nil {
+		return "", r.Err
+	}
+	return r.FirstIds[submissionId], nil
+}
+
+// CompanyUsersReader fake — maps company_id -> the user ids to notify,
+// regardless of roles (tests supply the exact recipient set). Records every
+// companyId argument.
+type CompanyUsersReader struct {
+	Users map[string][]string
+	Err   error
+	Calls []string
+}
+
+func (r *CompanyUsersReader) CompanyUserIds(_ context.Context, companyId string, _ []string) ([]string, error) {
+	r.Calls = append(r.Calls, companyId)
+	if r.Err != nil {
+		return nil, r.Err
+	}
+	return r.Users[companyId], nil
 }
 
 // CompanyNameReader fake — returns preconfigured company display names by

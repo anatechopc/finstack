@@ -4,6 +4,18 @@ Log of work done on the loans Cloud Functions (Go backend).
 
 ---
 
+## userChanges — cascade profile rename to user_loan_views.user_full_name (2026-06-17)
+
+Bug: `user_loan_views` denormalizes the borrower name in `user_full_name`, set once at loan creation (`loans_bloc.dart` → `user.completeNameEasternOrder`). When a user renamed their profile, the lender's "Loan clients" list stayed stale (live User detail showed the new name).
+
+Fix: extended the existing `userChanges` adapter+core trigger (`triggers/user_changes.go`) with a second, independent path. `HandleUserChangedCore` now also composes the before/after full name from `first_name`/`last_name`/`middle_name`; on a change it calls a new injected dep `UpdateUserLoanViewNames(ctx, userId, newFullName)`. The mobile-verification path is untouched and runs independently (name-only edit refreshes views, leaves verification alone; mobile-only edit clears verification, leaves views alone; both → both).
+- Name composition replicates Flutter `User.completeNameEasternOrder` exactly: `'$lastName, $firstName${middleName != null ? ' $middleName' : ''}'` → Go `lastName + ", " + firstName (+ " " + middleName if non-empty)`. A null/absent Firestore `middle_name` arrives as `""` from the proto and is omitted (matches what the list renders). Middle name is the FULL name, not an initial.
+- Adapter `UpdateUserLoanViewNames` queries `{prefix}user_loan_views where user_id == userId` (equality-only, served by the automatic single-field index — no composite index/IAM needed) and does a single-field `Set({user_full_name}, MergeAll)` per matching doc. `flattenFields` extended to carry the three name fields.
+- New fake `LoanViewNameUpdater` in `test/fakes/fakes.go`. 5 new/updated core tests in `test/triggers/user_changes_test.go`: name changed → cascade with correct eastern-order name; no middle name → omitted; name unchanged (mobile-only) → no cascade but mobile logic still runs; cascade error propagates; mobile-only change asserts no cascade.
+- `CGO_ENABLED=0 go build ./...` + `go test ./...` green. `go vet` clean for this code (the two pre-existing `loan_changes.go` lock-copy warnings are untouched). No new IAM — `userChanges` already deployed with the runtime SA.
+
+---
+
 ## Firebase Admin: keyless credentials (security incident, 2026-06-11)
 
 `utils/initialize_firebase.go` had a **hardcoded service-account private key** committed in source. Google's secret scanner detected it in the GitHub repo and **auto-disabled** the key (`SERVICE_ACCOUNT_KEY_DISABLE_REASON_EXPOSED`, key id `2a8c7ca0…` on `firebase-adminsdk-bqdg7@loooans-dev-stg`). Because every function/trigger inits Firebase via `InitializeFirebase`, which used `option.WithCredentialsJSON(<that key>)`, all Admin calls began failing with `rpc error: code = Unauthenticated` — surfaced first as a 500 from `requestOtp` ("verify mobile number").
@@ -103,3 +115,14 @@ update["updated_at"] = time.Now().UnixMilli()
 ```
 
 Caught in `verify_otp.go` (PR #48); the convention is consistent everywhere else, e.g. `request_otp.go` writes `time.Now().UnixMilli()` and `expireAt.UnixMilli()`. PR #47 added defensive Timestamp tolerance to the Flutter helpers, but the canonical fix is at the producer.
+
+---
+
+## Borrower Payment Submission — Go side (branch `feature/borrower-payment-submission`, finstack #64)
+
+The borrower submission flow writes `pending` payments that a teller later confirms/rejects; the Go triggers keep both parties notified.
+
+- **New `paymentUpdated` trigger**: fires on `payments/{id}` updates and notifies the **borrower** when their submission transitions `pending → confirmed` or `pending → rejected` (rejection carries `rejection_reason`). No-ops on any other transition (e.g. confirmed→confirmed, backfill writes). Adapter+core split: `PaymentUpdated` adapter wires real Firebase clients, `HandlePaymentUpdatedCore` is pure logic tested with in-memory fakes from `test/fakes/`. Registered in `loooans_cloud_functions.go` `init()` and added to the `deploy_functions.sh` deploy block. **Function counter 12 → 13.**
+- **`paymentCreated` refactored to adapter+core** (was inline). While refactoring, **fixed the pre-existing `loan_id` bug**: it resolved the loan via the payment's schedule, but open-term payments are created with `loan_schedule_id = NO_ID` (backfilled just after), so the schedule lookup returned nothing and lenders weren't notified. Now resolves the loan via `loan_id` on the payment (denormalized by the Flutter side at every creation site) and falls back to the schedule for older docs that lack it.
+- **De-dup per `submission_id`**: Pay-in-full creates one payment per schedule, all sharing a `submission_id`. `paymentCreated` now notifies the lender **once per submission** instead of once per schedule. Payments with no `submission_id` (legacy/single) notify per-payment as before.
+- Same testing/deploy conventions as elsewhere: `CGO_ENABLED=0 go test ./...` locally on macOS; every new function registered in `init()` and added to `deploy_functions.sh`; `go mod tidy` per sub-module when deps change.
