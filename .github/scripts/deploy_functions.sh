@@ -95,6 +95,14 @@ echo "Deploying sendEmail"
 gcloud functions deploy sendEmail_$environment --set-env-vars "$MS_GRAPH_ENV_VARS" --set-secrets "$MS_GRAPH_SECRETS" --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --service-account="$serviceAccount" --entry-point sendEmail &
 pids[$!]="sendEmail"
 
+echo "Deploying addUser"
+gcloud functions deploy addUser_$environment --set-env-vars "$MS_GRAPH_ENV_VARS" --set-secrets "$MS_GRAPH_SECRETS" --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --service-account="$serviceAccount" --entry-point addUser &
+pids[$!]="addUser"
+
+echo "Deploying sendPasswordSetupLink"
+gcloud functions deploy sendPasswordSetupLink_$environment --set-env-vars "$MS_GRAPH_ENV_VARS" --set-secrets "$MS_GRAPH_SECRETS" --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --service-account="$serviceAccount" --entry-point sendPasswordSetupLink &
+pids[$!]="sendPasswordSetupLink"
+
 echo "Deploying UserCreated trigger"
 gcloud functions deploy userCreated_$environment --gen2 --service-account="$serviceAccount" --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=userCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}users/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
 pids[$!]="userCreated"
@@ -136,7 +144,7 @@ gcloud functions deploy userChanges_$environment --gen2 --service-account="$serv
 pids[$!]="userChanges"
 
 echo ""
-echo "All 13 functions deploying in parallel. Waiting for completion..."
+echo "All 15 functions deploying in parallel. Waiting for completion..."
 echo ""
 
 # Wait for all background processes and track failures
@@ -149,7 +157,7 @@ done
 
 echo ""
 if [ ${#failed[@]} -eq 0 ]; then
-  echo "Deployment done. All 13 functions deployed successfully."
+  echo "Deployment done. All 15 functions deployed successfully."
 else
   echo "Deployment finished with errors. Failed functions: ${failed[*]}"
   exit 1
