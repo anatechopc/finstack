@@ -69,17 +69,20 @@ func AddUser(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	app, err := utils.InitializeFirebase(ctx)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Error("error initialize firebase admin", zap.String("error", err.Error()))
+		http.Error(w, "Firebase admin initialization error", http.StatusInternalServerError)
 		return
 	}
 	authClient, err := app.Auth(ctx)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Error("error firebase auth client", zap.String("error", err.Error()))
+		http.Error(w, "Firebase auth client error", http.StatusInternalServerError)
 		return
 	}
 	fs, err := app.Firestore(ctx)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Error("error firestore client", zap.String("error", err.Error()))
+		http.Error(w, "Firestore client error", http.StatusInternalServerError)
 		return
 	}
 	defer fs.Close()
