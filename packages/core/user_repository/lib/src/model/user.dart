@@ -139,6 +139,56 @@ class User extends UserEntity implements BaseModel<UserEntity> {
       ..companyId = companyId;
   }
 
+  /// Creates a user for the admin "Add team member / Add borrower" flow. The
+  /// account is provisioned server-side, so [id] is left as [NO_ID] (the
+  /// backend stamps the real Firebase Auth uid). Email is required because the
+  /// user is invited by email and must pass the email-verification gate.
+  factory User.createInvited({
+    required UserRole role,
+    required String firstName,
+    required String lastName,
+    required String mobileNumber,
+    required String emailAddress,
+    required DateTime birthDate,
+    required Sex sex,
+    required EmploymentDetails employmentDetails,
+    String? companyId,
+    ImageUrl? profilePhotoUrl,
+    ImageUrl? photoWithValidIdUrl,
+    String? middleName,
+    String? businessName,
+    String? facebookProfileUrl,
+  }) {
+    if (emailAddress.trim().isEmpty) {
+      throw Exception('Email address is required for invited users');
+    }
+
+    final now = DateTime.timestamp();
+
+    return User()
+      ..id = NO_ID
+      ..updatedAt = now
+      ..createdAt = now
+      ..lastName = lastName
+      ..firstName = firstName
+      ..middleName = middleName
+      ..birthDate = birthDate
+      ..mobileNumber = mobileNumber
+      ..emailAddress = emailAddress
+      ..userRole = role
+      ..profilePhotoUrl = profilePhotoUrl
+      ..photoWithValidIdUrl = photoWithValidIdUrl
+      ..facebookProfileUrl = facebookProfileUrl
+      ..karma = 0
+      ..aiVerifyRef = null
+      ..verificationStatus = UserVerificationStatus.unverified.value
+      ..mobileVerifiedAt = null
+      ..companyId = companyId
+      ..sex = sex
+      ..employmentDetails = employmentDetails
+      ..businessName = businessName;
+  }
+
   factory User.createPlaceholder({
     required String lastName,
     String? firstName,
