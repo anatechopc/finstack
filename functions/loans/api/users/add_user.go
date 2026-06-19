@@ -1,136 +1,217 @@
 package users
 
 import (
-	"com.loooans.app/types"
-	utils2 "com.loooans.app/utils"
 	"context"
 	"encoding/json"
-	"firebase.google.com/go/v4/auth"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
+
+	"com.loooans.app/utils"
+	"firebase.google.com/go/v4/auth"
+	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
-func AddUser(w http.ResponseWriter, r *http.Request) {
-	log, errLog := utils2.InitializeLogger("add_user")
+// addUserRequest is the wire shape: a requested role plus the client-serialized
+// user (and optional address) entity JSON. The user/address maps are written
+// through to Firestore largely as-is; only logic-critical fields are typed.
+type addUserRequest struct {
+	Role    string         `json:"role"`
+	User    map[string]any `json:"user"`
+	Address map[string]any `json:"address"`
+}
 
-	if errLog != nil {
-		http.Error(w, errLog.Error(), http.StatusInternalServerError)
-		return
-	}
+// AddUserValidator authenticates the inbound HTTP request and returns the
+// caller's uid, or "" when validation failed (in which case the implementation
+// has already written the response).
+type AddUserValidator func(w http.ResponseWriter, r *http.Request) string
 
-	// cors
-	if r.Method == http.MethodOptions {
+// AddUserDepsBuilder constructs AddUserDeps for a single request, returning a
+// cleanup func that the caller defer-runs (typically closing the Firestore
+// client). Returning a non-nil error causes the handler to emit a 500.
+type AddUserDepsBuilder func(ctx context.Context) (AddUserDeps, func(), error)
+
+// AddUserHandler returns a stateless http.HandlerFunc that wires the given
+// validator and deps builder. Extracted so tests can stub auth + Firebase
+// wiring with httptest without spinning up real infrastructure.
+func AddUserHandler(validate AddUserValidator, build AddUserDepsBuilder) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		log, errLog := utils.InitializeLogger("add_user")
+		if errLog != nil {
+			http.Error(w, errLog.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Max-Age", "3600")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "POST")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Max-Age", "3600")
-		w.WriteHeader(http.StatusNoContent)
-		return
+
+		callerUid := validate(w, r)
+		if callerUid == "" {
+			return // validate already wrote the error.
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "Use POST method", http.StatusBadRequest)
+			return
+		}
+
+		body, errBody := io.ReadAll(r.Body)
+		defer r.Body.Close()
+		if errBody != nil {
+			http.Error(w, errBody.Error(), http.StatusBadRequest)
+			return
+		}
+		var req addUserRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		ctx := context.Background()
+		deps, cleanup, errBuild := build(ctx)
+		if errBuild != nil {
+			log.Error("error building deps", zap.String("error", errBuild.Error()))
+			http.Error(w, errBuild.Error(), http.StatusInternalServerError)
+			return
+		}
+		if cleanup != nil {
+			defer cleanup()
+		}
+
+		res, err := HandleAddUserCore(ctx, callerUid, req.Role, req.User, req.Address, deps)
+		if err != nil {
+			log.Error("add_user core error: "+err.Error(), zap.String("callerUid", callerUid))
+			writeAddUserError(w, err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message": "Successfully added user",
+			"data": map[string]any{
+				"uid":        res.UID,
+				"inviteSent": res.InviteSent,
+			},
+		})
 	}
+}
 
-	w.Header().Set("Access-Control-Allow-Credentials", "true")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	// cors done
-
-	if !utils2.ValidateRequest(w, r) {
-		return
-	}
-
-	if r.Method != http.MethodPost {
-		http.Error(w, "Use POST method", http.StatusBadRequest)
-		return
-	}
-
-	body, errBody := io.ReadAll(r.Body)
-
-	defer r.Body.Close()
-
-	if errBody != nil {
-		http.Error(w, errBody.Error(), http.StatusBadRequest)
-		return
-	}
-	//log.Debug("body: " + string(body))
-
-	//var parsedBody map[string]any
-	var parsedBody types.User
-	errJson := json.Unmarshal(body, &parsedBody)
-
-	if errJson != nil {
-		http.Error(w, errJson.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if !utils2.ValidateUser(parsedBody) {
-		http.Error(w, "Enter required user details", http.StatusInternalServerError)
-		return
-	}
-
-	ctx := context.Background()
-	app, err := utils2.InitializeFirebase(ctx)
-
+// buildRealAddUserDeps wires the real Firebase clients (Auth, Firestore) for a
+// single request. The returned cleanup closes the Firestore client.
+func buildRealAddUserDeps(ctx context.Context) (AddUserDeps, func(), error) {
+	app, err := utils.InitializeFirebase(ctx)
 	if err != nil {
+		return AddUserDeps{}, nil, fmt.Errorf("firebase admin initialization error: %w", err)
+	}
+	authClient, err := app.Auth(ctx)
+	if err != nil {
+		return AddUserDeps{}, nil, fmt.Errorf("firebase auth client error: %w", err)
+	}
+	fs, err := app.Firestore(ctx)
+	if err != nil {
+		return AddUserDeps{}, nil, fmt.Errorf("firestore client error: %w", err)
+	}
+
+	prefix := utils.GetCollectionPrefix()
+	log, _ := utils.InitializeLogger("add_user")
+	cleanup := func() { _ = fs.Close() }
+
+	return AddUserDeps{
+		GetUser: func(ctx context.Context, uid string) (map[string]any, error) {
+			doc, dErr := fs.Collection(prefix + "users").Doc(uid).Get(ctx)
+			if status.Code(dErr) == codes.NotFound {
+				return nil, nil
+			}
+			if dErr != nil {
+				return nil, dErr
+			}
+			return doc.Data(), nil
+		},
+		GetCompanyManagementType: func(ctx context.Context, companyId string) (string, error) {
+			if companyId == "" {
+				return "", nil
+			}
+			doc, dErr := fs.Collection(prefix + "companies").Doc(companyId).Get(ctx)
+			if dErr != nil {
+				return "", dErr
+			}
+			mt, _ := doc.Data()["management_type"].(string)
+			return mt, nil
+		},
+		CreateAuthUser: func(ctx context.Context, email, password, displayName string) (string, error) {
+			params := (&auth.UserToCreate{}).Email(email).Password(password)
+			if displayName != "" {
+				params = params.DisplayName(displayName)
+			}
+			rec, cErr := authClient.CreateUser(ctx, params)
+			if cErr != nil {
+				if auth.IsEmailAlreadyExists(cErr) {
+					return "", ErrEmailExists
+				}
+				return "", cErr
+			}
+			return rec.UID, nil
+		},
+		GetAuthUIDByEmail: func(ctx context.Context, email string) (string, error) {
+			rec, gErr := authClient.GetUserByEmail(ctx, email)
+			if gErr != nil {
+				return "", gErr
+			}
+			return rec.UID, nil
+		},
+		DeleteAuthUser: func(ctx context.Context, uid string) error {
+			return authClient.DeleteUser(ctx, uid)
+		},
+		WriteUserAndAddress: func(ctx context.Context, uid string, user, address map[string]any) error {
+			batch := fs.Batch()
+			batch.Set(fs.Collection(prefix+"users").Doc(uid), user)
+			if address != nil {
+				addrRef := fs.Collection(prefix + "address").NewDoc()
+				address["id"] = addrRef.ID
+				batch.Set(addrRef, address)
+			}
+			_, cErr := batch.Commit(ctx)
+			return cErr
+		},
+		SendInvite: func(ctx context.Context, email, displayName string) error {
+			if err := sendPasswordSetupEmail(ctx, authClient, email, displayName); err != nil {
+				log.Error("addUser: invite email failed", zap.String("email", email), zap.String("error", err.Error()))
+				return err
+			}
+			return nil
+		},
+		GeneratePassword: utils.GenerateRandomPassword,
+	}, cleanup, nil
+}
+
+// AddUser provisions a new user on behalf of an authenticated company admin:
+// mints a Firebase Auth account, atomically writes users/{uid} + address, and
+// emails a set-password invite. See HandleAddUserCore for the business logic.
+func AddUser(w http.ResponseWriter, r *http.Request) {
+	AddUserHandler(utils.ValidateRequestV2, buildRealAddUserDeps)(w, r)
+}
+
+// writeAddUserError maps core sentinels onto HTTP status codes.
+func writeAddUserError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrInvalidRole), errors.Is(err, ErrMissingEmail):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, ErrCallerNotFound), errors.Is(err, ErrCallerNotAdmin), errors.Is(err, ErrCallerNoCompany), errors.Is(err, ErrRoleNotAllowed):
+		http.Error(w, err.Error(), http.StatusForbidden)
+	case errors.Is(err, ErrEmailExists):
+		http.Error(w, err.Error(), http.StatusConflict)
+	default:
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	authClient, errAuth := app.Auth(ctx)
-
-	if errAuth != nil {
-		http.Error(w, errAuth.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	log.Info("adding user to auth ")
-
-	tmpUser := (&auth.UserToCreate{}).
-		DisplayName(parsedBody.DisplayName).
-		Email(parsedBody.Email).
-		Password(parsedBody.Password)
-	record, errCreateUser := authClient.CreateUser(ctx, tmpUser)
-
-	if errCreateUser != nil {
-		http.Error(w, errCreateUser.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// send email
-	env := os.Getenv("ENVIRONMENT")
-	subdomain := ""
-
-	switch env {
-	case "development":
-		subdomain = "dev."
-		break
-	case "staging":
-		subdomain = "stg."
-		break
-	}
-
-	emailBody := fmt.Sprintf(`Hi %s!<br><br>Thank you for registering!<br><br>Here is your credentials:<br>Email: %s<br>Password: %s.<br><br>Use your email and password to login into the app. Go to <a href="https://%s.loooans.com/login">Ayooo!</a>`, parsedBody.DisplayName, parsedBody.Email, parsedBody.Password, subdomain)
-	_, errSendEmail := utils2.SendEmail("Thank you", emailBody, []string{record.Email})
-
-	if errSendEmail != nil {
-		log.Error(fmt.Sprintf("Cannot send email: %s", errSendEmail.Error()))
-		http.Error(w, errSendEmail.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	//json.NewEncoder(w).Encode("didSend true")
-
-	something := make(map[string]any)
-	something["message"] = "Successfully added user"
-	something["data"] = map[string]any{
-		"uid":   record.UID,
-		"name":  record.DisplayName,
-		"email": record.Email,
-	}
-
-	errParse := json.NewEncoder(w).Encode(something)
-	if errParse != nil {
-		http.Error(w, errParse.Error(), http.StatusBadRequest)
-		return
 	}
 }

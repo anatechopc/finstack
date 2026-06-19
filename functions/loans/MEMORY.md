@@ -4,6 +4,59 @@ Log of work done on the loans Cloud Functions (Go backend).
 
 ---
 
+## Server-side user provisioning — addUser + sendPasswordSetupLink (2026-06-19)
+
+Phase A of issue #69 (server-side user creation). Two new HTTP Cloud Functions following the adapter+core pattern.
+
+### New endpoints
+
+**`addUser`** — `api/users/add_user.go` (adapter) + `api/users/add_user_core.go` (core)
+
+Admin-only POST. Mints a Firebase Auth account, atomically writes `users/{uid}` + optional `address` doc via a Firestore batch, then best-effort sends a set-password invite email. Returns `{uid, inviteSent}`.
+
+Authorisation matrix (enforced server-side, cannot be bypassed by the client):
+- Caller must be `admin` or `appAdmin`; all other roles get 403.
+- `staffRoles` (`admin`, `loanOfficer`, `teller`, `reviewModerator`) are allowed in **any** company management type.
+- `customer` role is only allowed when the caller's company has `management_type == "selfManaged"` — app-managed companies do not self-onboard borrowers.
+- `appAdmin` role is rejected outright (cannot be provisioned via this endpoint).
+- `company_id`, `user_role`, `id`, and `invited_by_admin` are server-authoritative: the client cannot supply or override them.
+
+Atomic write with compensating rollback: if the Firestore batch fails after the Auth account is created, `DeleteAuthUser` is called to roll back the orphaned account.
+
+**`sendPasswordSetupLink`** — `api/users/send_password_setup_link.go` (adapter) + `api/users/send_password_setup_link_core.go` (core)
+
+Unauthenticated POST. Generates a Firebase `PasswordResetLink` and emails it via MS Graph. Used for admin "Resend invite" and user "Forgot password". Always returns 200 — any error (including "no such user") is swallowed to prevent account-existence enumeration.
+
+### Invite email
+
+`api/users/invite_email.go` — shared helper used by both adapters. Calls `authClient.PasswordResetLink` to generate the link (never stores a plaintext password after first use) and sends a branded HTML email via `utils.SendEmail` (MS Graph).
+
+### Duplicate welcome-email suppression
+
+`triggers/user_created.go` now calls `ShouldSkipWelcomeEmail(fields)` at the top of `UserCreated`. If the newly-created user doc has `invited_by_admin == true`, the generic "Verify your account" email is skipped — admin-provisioned users already receive the set-password invite. Self-registered users are unaffected.
+
+### Random password helper
+
+`utils/generate_password.go` — `GenerateRandomPassword()` returns a 24-character cryptographically-random password using `crypto/rand`. It is only ever used as the throwaway initial password for admin-provisioned accounts; the user immediately replaces it via the set-password link, so it is never shown to anyone.
+
+### IAM requirements
+
+Both `addUser` and `sendPasswordSetupLink` use MS Graph (email) and Firebase Auth — they need the same `--set-env-vars "$MS_GRAPH_ENV_VARS" --set-secrets "$MS_GRAPH_SECRETS"` flags as `sendEmail`, and the runtime SA must have `roles/secretmanager.secretAccessor` for the `ms-graph-client-secret` in Secret Manager. This is already granted on `loooans-dev-stg`; **prod (`loooans-prod`) IAM grant is pending before the first master deploy.**
+
+### Function count
+
+Deploy script bumped: 13 → 15 (`addUser_$environment` + `sendPasswordSetupLink_$environment`).
+
+### Tests
+
+- `test/utils/generate_password_test.go` — length + uniqueness
+- `test/users/add_user_core_test.go` — 10 core tests (happy paths, authz matrix, rollback, best-effort invite, field stamping)
+- `test/users/send_password_setup_link_core_test.go` — 3 tests (known email, empty email no-op, unknown email never leaks)
+- `test/triggers/user_created_skip_test.go` — 3 cases for `ShouldSkipWelcomeEmail`
+- All green via `CGO_ENABLED=0 go test ./...`.
+
+---
+
 ## userChanges — cascade profile rename to user_loan_views.user_full_name (2026-06-17)
 
 Bug: `user_loan_views` denormalizes the borrower name in `user_full_name`, set once at loan creation (`loans_bloc.dart` → `user.completeNameEasternOrder`). When a user renamed their profile, the lender's "Loan clients" list stayed stale (live User detail showed the new name).

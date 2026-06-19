@@ -15,6 +15,17 @@ import (
 	"os"
 )
 
+// ShouldSkipWelcomeEmail reports whether the newly-created user doc was
+// provisioned by an admin (invited_by_admin == true). Such users already
+// receive the set-password invite from the addUser endpoint, so the generic
+// "Verify your account" email is suppressed to avoid a confusing duplicate.
+func ShouldSkipWelcomeEmail(fields map[string]*firestoredata.Value) bool {
+	if v, ok := fields["invited_by_admin"]; ok {
+		return v.GetBooleanValue()
+	}
+	return false
+}
+
 func UserCreated(ctx context.Context, event event.Event) error {
 	log, logErr := utils.InitializeLogger("user_created")
 
@@ -43,6 +54,11 @@ func UserCreated(ctx context.Context, event event.Event) error {
 		uid = vId.GetStringValue()
 	} else {
 		return errors.New(fmt.Sprintf("No email address for user: %s", data.GetValue().GetName()))
+	}
+
+	if ShouldSkipWelcomeEmail(data.GetValue().GetFields()) {
+		log.Debug("user_created: invited_by_admin set, skipping generic welcome email")
+		return nil
 	}
 
 	app, errFirebaseAdmin := utils.InitializeFirebase(ctx)

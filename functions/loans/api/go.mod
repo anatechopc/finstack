@@ -4,10 +4,10 @@ go 1.22
 
 require (
 	cloud.google.com/go/firestore v1.9.0
-	com.loooans.app/types v0.0.0-00010101000000-000000000000
 	com.loooans.app/utils v0.0.0-00010101000000-000000000000
 	firebase.google.com/go/v4 v4.13.0
 	go.uber.org/zap v1.26.0
+	google.golang.org/grpc v1.56.3
 )
 
 require (
@@ -17,6 +17,7 @@ require (
 	cloud.google.com/go/iam v0.13.0 // indirect
 	cloud.google.com/go/longrunning v0.4.1 // indirect
 	cloud.google.com/go/storage v1.30.1 // indirect
+	com.loooans.app/types v0.0.0-00010101000000-000000000000 // indirect
 	github.com/MicahParks/keyfunc v1.9.0 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
@@ -38,7 +39,6 @@ require (
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/appengine/v2 v2.0.2 // indirect
 	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 // indirect
-	google.golang.org/grpc v1.56.3 // indirect
 	google.golang.org/protobuf v1.30.0 // indirect
 )
 
