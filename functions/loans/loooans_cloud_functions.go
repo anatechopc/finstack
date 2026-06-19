@@ -20,7 +20,8 @@ func init() {
 	log.Info("init")
 	//functions.HTTP("CORSEnabledFunction", middleware.CORSEnabledFunction)
 	// ---- cloud functions ---- //
-	//functions.HTTP("addUser", users.AddUser)
+	functions.HTTP("addUser", users.AddUser)
+	functions.HTTP("sendPasswordSetupLink", users.SendPasswordSetupLink)
 	//functions.HTTP("updateUser", users.UpdateUser)
 	functions.HTTP("requestOtp", users.RequestOtp)
 	functions.HTTP("verifyOtp", users.VerifyOtp)
