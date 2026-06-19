@@ -10,13 +10,13 @@ import (
 // Sentinel errors returned by HandleAddUserCore. The HTTP adapter maps these to
 // status codes; any other (transport) error maps to 500.
 var (
-	ErrInvalidRole    = errors.New("invalid or unsupported role")
-	ErrMissingEmail   = errors.New("user payload missing email_address")
-	ErrCallerNotFound = errors.New("caller user record not found")
-	ErrCallerNotAdmin = errors.New("caller is not authorized to add users")
+	ErrInvalidRole     = errors.New("invalid or unsupported role")
+	ErrMissingEmail    = errors.New("user payload missing email_address")
+	ErrCallerNotFound  = errors.New("caller user record not found")
+	ErrCallerNotAdmin  = errors.New("caller is not authorized to add users")
 	ErrCallerNoCompany = errors.New("caller has no company")
-	ErrRoleNotAllowed = errors.New("role not allowed for this company")
-	ErrEmailExists    = errors.New("a user with this email already exists")
+	ErrRoleNotAllowed  = errors.New("role not allowed for this company")
+	ErrEmailExists     = errors.New("a user with this email already exists")
 )
 
 // staffRoles are the company-management roles an admin may assign to a new team

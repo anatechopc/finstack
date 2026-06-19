@@ -91,7 +91,7 @@ func AddUser(w http.ResponseWriter, r *http.Request) {
 
 	deps := AddUserDeps{
 		GetUser: func(ctx context.Context, uid string) (map[string]any, error) {
-			doc, dErr := fs.Collection(prefix+"users").Doc(uid).Get(ctx)
+			doc, dErr := fs.Collection(prefix + "users").Doc(uid).Get(ctx)
 			if status.Code(dErr) == codes.NotFound {
 				return nil, nil
 			}
@@ -104,7 +104,7 @@ func AddUser(w http.ResponseWriter, r *http.Request) {
 			if companyId == "" {
 				return "", nil
 			}
-			doc, dErr := fs.Collection(prefix+"companies").Doc(companyId).Get(ctx)
+			doc, dErr := fs.Collection(prefix + "companies").Doc(companyId).Get(ctx)
 			if dErr != nil {
 				return "", dErr
 			}
