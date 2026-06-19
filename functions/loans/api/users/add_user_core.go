@@ -53,6 +53,11 @@ type AddUserResult struct {
 // Firebase Auth account, atomically writes users/{uid} + address, and sends a
 // best-effort set-password invite. company_id and user_role are made
 // server-authoritative (the client cannot add to another company or escalate).
+//
+// NOTE: it MUTATES the supplied user and address maps in place (stamps id,
+// company_id, user_role, invited_by_admin, employment_details.user_id, and
+// data_id), so callers must pass maps they own (e.g. a freshly parsed request
+// body).
 func HandleAddUserCore(
 	ctx context.Context,
 	callerUid string,
