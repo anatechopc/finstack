@@ -53,6 +53,7 @@ class User extends UserEntity implements BaseModel<UserEntity> {
       ..verificationStatus = UserVerificationStatus.unverified.value
       ..mobileVerifiedAt = null
       ..companyId = companyId
+      ..invitedByAdmin = false
       ..sex = sex
       ..employmentDetails = employmentDetails
       ..businessName = businessName;
@@ -100,6 +101,7 @@ class User extends UserEntity implements BaseModel<UserEntity> {
       ..verificationStatus = UserVerificationStatus.unverified.value
       ..mobileVerifiedAt = null
       ..companyId = companyId
+      ..invitedByAdmin = false
       ..sex = sex
       ..employmentDetails = employmentDetails
       ..businessName = businessName;
@@ -133,6 +135,7 @@ class User extends UserEntity implements BaseModel<UserEntity> {
       ..aiVerifyRef = null
       ..verificationStatus = UserVerificationStatus.unverified.value
       ..mobileVerifiedAt = null
+      ..invitedByAdmin = false
       ..sex = sex
       ..employmentDetails = employmentDetails
       ..businessName = businessName
@@ -184,6 +187,7 @@ class User extends UserEntity implements BaseModel<UserEntity> {
       ..verificationStatus = UserVerificationStatus.unverified.value
       ..mobileVerifiedAt = null
       ..companyId = companyId
+      ..invitedByAdmin = false
       ..sex = sex
       ..employmentDetails = employmentDetails
       ..businessName = businessName;
@@ -213,6 +217,7 @@ class User extends UserEntity implements BaseModel<UserEntity> {
       ..aiVerifyRef = null
       ..verificationStatus = UserVerificationStatus.unverified.value
       ..mobileVerifiedAt = null
+      ..invitedByAdmin = false
       ..sex = Sex.male
       ..employmentDetails = EmploymentDetails.createBlank()
       ..businessName = null;
