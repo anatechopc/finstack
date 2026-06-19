@@ -293,3 +293,92 @@ func (a *ResponderAuthorizer) IsAuthorized(_ context.Context, responderId, compa
 	}
 	return a.Authorized[responderId], nil
 }
+
+// AuthCreate records one auth-account creation request.
+type AuthCreate struct {
+	Email       string
+	Password    string
+	DisplayName string
+}
+
+// AuthAccountManager fake — records created/deleted auth accounts. Create
+// returns NextUID (default "new-uid") unless CreateErr is set; tests set
+// CreateErr to the core's email-exists sentinel to exercise the 409 path.
+// Delete records the uid and returns DeleteErr.
+type AuthAccountManager struct {
+	Created   []AuthCreate
+	Deleted   []string
+	NextUID   string
+	CreateErr error
+	DeleteErr error
+}
+
+func (m *AuthAccountManager) Create(_ context.Context, email, password, displayName string) (string, error) {
+	m.Created = append(m.Created, AuthCreate{Email: email, Password: password, DisplayName: displayName})
+	if m.CreateErr != nil {
+		return "", m.CreateErr
+	}
+	uid := m.NextUID
+	if uid == "" {
+		uid = "new-uid"
+	}
+	return uid, nil
+}
+
+func (m *AuthAccountManager) Delete(_ context.Context, uid string) error {
+	m.Deleted = append(m.Deleted, uid)
+	return m.DeleteErr
+}
+
+// UserAddressWrite records one atomic user+address write.
+type UserAddressWrite struct {
+	UID     string
+	User    map[string]any
+	Address map[string]any
+}
+
+// UserAddressWriter fake — records every write. Err is returned to exercise the
+// compensating-delete path.
+type UserAddressWriter struct {
+	Writes []UserAddressWrite
+	Err    error
+}
+
+func (w *UserAddressWriter) Write(_ context.Context, uid string, user, address map[string]any) error {
+	w.Writes = append(w.Writes, UserAddressWrite{UID: uid, User: user, Address: address})
+	return w.Err
+}
+
+// CompanyManagementReader fake — maps companyId -> management_type
+// ("app"/"selfManaged"). Unknown company resolves to "". Records read calls.
+type CompanyManagementReader struct {
+	Types     map[string]string
+	Err       error
+	ReadCalls []string
+}
+
+func (r *CompanyManagementReader) Read(_ context.Context, companyId string) (string, error) {
+	r.ReadCalls = append(r.ReadCalls, companyId)
+	if r.Err != nil {
+		return "", r.Err
+	}
+	return r.Types[companyId], nil
+}
+
+// InviteCall records one invite send.
+type InviteCall struct {
+	Email       string
+	DisplayName string
+}
+
+// Inviter fake — records every invite. Err is returned to exercise the
+// best-effort path (invite failure must not fail the request).
+type Inviter struct {
+	Invites []InviteCall
+	Err     error
+}
+
+func (i *Inviter) Send(_ context.Context, email, displayName string) error {
+	i.Invites = append(i.Invites, InviteCall{Email: email, DisplayName: displayName})
+	return i.Err
+}
