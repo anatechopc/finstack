@@ -311,6 +311,11 @@ type AuthAccountManager struct {
 	NextUID   string
 	CreateErr error
 	DeleteErr error
+
+	// EmailToUID backs UIDByEmail (recovery lookup). UIDByEmailErr is returned
+	// instead when set.
+	EmailToUID    map[string]string
+	UIDByEmailErr error
 }
 
 func (m *AuthAccountManager) Create(_ context.Context, email, password, displayName string) (string, error) {
@@ -328,6 +333,13 @@ func (m *AuthAccountManager) Create(_ context.Context, email, password, displayN
 func (m *AuthAccountManager) Delete(_ context.Context, uid string) error {
 	m.Deleted = append(m.Deleted, uid)
 	return m.DeleteErr
+}
+
+func (m *AuthAccountManager) UIDByEmail(_ context.Context, email string) (string, error) {
+	if m.UIDByEmailErr != nil {
+		return "", m.UIDByEmailErr
+	}
+	return m.EmailToUID[email], nil
 }
 
 // UserAddressWrite records one atomic user+address write.

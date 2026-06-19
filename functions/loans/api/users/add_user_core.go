@@ -37,7 +37,11 @@ type AddUserDeps struct {
 	// CreateAuthUser returns the new uid, or ErrEmailExists if the email is
 	// already registered. The adapter maps the Admin SDK's
 	// auth.IsEmailAlreadyExists onto ErrEmailExists.
-	CreateAuthUser      func(ctx context.Context, email, password, displayName string) (string, error)
+	CreateAuthUser func(ctx context.Context, email, password, displayName string) (string, error)
+	// GetAuthUIDByEmail returns the Firebase Auth uid for an existing email.
+	// Used to recover from an orphaned Auth account (created by a previous run
+	// that died before the Firestore write).
+	GetAuthUIDByEmail   func(ctx context.Context, email string) (string, error)
 	DeleteAuthUser      func(ctx context.Context, uid string) error
 	WriteUserAndAddress func(ctx context.Context, uid string, user, address map[string]any) error
 	SendInvite          func(ctx context.Context, email, displayName string) error
@@ -106,10 +110,24 @@ func HandleAddUserCore(
 	displayName := composeDisplayName(user)
 	uid, err := deps.CreateAuthUser(ctx, email, deps.GeneratePassword(), displayName)
 	if err != nil {
-		if errors.Is(err, ErrEmailExists) {
+		if !errors.Is(err, ErrEmailExists) {
+			return AddUserResult{}, fmt.Errorf("create auth user: %w", err)
+		}
+		// Email already registered. Distinguish a genuine duplicate (a user doc
+		// exists) from an orphaned Auth account (no doc) left by a prior run that
+		// died before the Firestore write. Adopt the orphan; reject the duplicate.
+		existingUID, lErr := deps.GetAuthUIDByEmail(ctx, email)
+		if lErr != nil {
+			return AddUserResult{}, fmt.Errorf("lookup existing auth user: %w", lErr)
+		}
+		existingDoc, dErr := deps.GetUser(ctx, existingUID)
+		if dErr != nil {
+			return AddUserResult{}, fmt.Errorf("read existing user %q: %w", existingUID, dErr)
+		}
+		if existingDoc != nil {
 			return AddUserResult{}, ErrEmailExists
 		}
-		return AddUserResult{}, fmt.Errorf("create auth user: %w", err)
+		uid = existingUID
 	}
 
 	// Server-authoritative fields. invited_by_admin lets the userCreated trigger

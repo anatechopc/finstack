@@ -125,6 +125,13 @@ func AddUser(w http.ResponseWriter, r *http.Request) {
 			}
 			return rec.UID, nil
 		},
+		GetAuthUIDByEmail: func(ctx context.Context, email string) (string, error) {
+			rec, gErr := authClient.GetUserByEmail(ctx, email)
+			if gErr != nil {
+				return "", gErr
+			}
+			return rec.UID, nil
+		},
 		DeleteAuthUser: func(ctx context.Context, uid string) error {
 			return authClient.DeleteUser(ctx, uid)
 		},

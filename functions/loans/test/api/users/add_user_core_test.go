@@ -31,6 +31,7 @@ func depsWith(mgmt string) (users.AddUserDeps, *fakes.AuthAccountManager, *fakes
 		GetUser:                  callers.Read,
 		GetCompanyManagementType: companies.Read,
 		CreateAuthUser:           auth.Create,
+		GetAuthUIDByEmail:        auth.UIDByEmail,
 		DeleteAuthUser:           auth.Delete,
 		WriteUserAndAddress:      writer.Write,
 		SendInvite:               inviter.Send,
@@ -115,12 +116,82 @@ func TestAddUserCore_MissingEmail_Rejected(t *testing.T) {
 	}
 }
 
-func TestAddUserCore_DuplicateEmail_Conflict(t *testing.T) {
-	deps, auth, _, _ := depsWith("app")
-	auth.CreateErr = users.ErrEmailExists
+func TestAddUserCore_OrphanEmail_Reused(t *testing.T) {
+	// Orphan: the email exists in Auth (CreateAuthUser → ErrEmailExists) but NO
+	// user doc exists for that uid, so the core adopts the orphan uid and
+	// finishes provisioning.
+	auth := &fakes.AuthAccountManager{
+		NextUID:    "uid-new",
+		CreateErr:  users.ErrEmailExists,
+		EmailToUID: map[string]string{"jane@example.com": "orphan-uid"},
+	}
+	writer := &fakes.UserAddressWriter{}
+	inviter := &fakes.Inviter{}
+	callers := &fakes.UserReader{Users: map[string]map[string]any{
+		"admin-1": {"user_role": "admin", "company_id": "co-1"},
+		// No "orphan-uid" entry → GetUser("orphan-uid") returns (nil, nil).
+	}}
+	companies := &fakes.CompanyManagementReader{Types: map[string]string{"co-1": "app"}}
+	deps := users.AddUserDeps{
+		GetUser:                  callers.Read,
+		GetCompanyManagementType: companies.Read,
+		CreateAuthUser:           auth.Create,
+		GetAuthUIDByEmail:        auth.UIDByEmail,
+		DeleteAuthUser:           auth.Delete,
+		WriteUserAndAddress:      writer.Write,
+		SendInvite:               inviter.Send,
+		GeneratePassword:         func() string { return "pw-fixed" },
+	}
+
+	res, err := users.HandleAddUserCore(context.Background(), "admin-1", "teller", baseUserPayload(), nil, deps)
+	if err != nil {
+		t.Fatalf("expected orphan adoption to succeed, got err: %v", err)
+	}
+	if res.UID != "orphan-uid" {
+		t.Fatalf("expected result uid=orphan-uid, got %q", res.UID)
+	}
+	if len(writer.Writes) != 1 {
+		t.Fatalf("expected 1 write, got %d", len(writer.Writes))
+	}
+	if writer.Writes[0].UID != "orphan-uid" {
+		t.Fatalf("expected write uid=orphan-uid, got %q", writer.Writes[0].UID)
+	}
+	if writer.Writes[0].User["id"] != "orphan-uid" {
+		t.Fatalf("expected stamped id=orphan-uid, got %v", writer.Writes[0].User["id"])
+	}
+}
+
+func TestAddUserCore_GenuineDuplicate_Conflict(t *testing.T) {
+	// Genuine duplicate: the email maps to a uid that already HAS a user doc, so
+	// the core must reject with ErrEmailExists and never write.
+	auth := &fakes.AuthAccountManager{
+		NextUID:    "uid-new",
+		CreateErr:  users.ErrEmailExists,
+		EmailToUID: map[string]string{"jane@example.com": "dup-uid"},
+	}
+	writer := &fakes.UserAddressWriter{}
+	callers := &fakes.UserReader{Users: map[string]map[string]any{
+		"admin-1": {"user_role": "admin", "company_id": "co-1"},
+		"dup-uid": {"id": "dup-uid", "email_address": "jane@example.com"},
+	}}
+	companies := &fakes.CompanyManagementReader{Types: map[string]string{"co-1": "app"}}
+	deps := users.AddUserDeps{
+		GetUser:                  callers.Read,
+		GetCompanyManagementType: companies.Read,
+		CreateAuthUser:           auth.Create,
+		GetAuthUIDByEmail:        auth.UIDByEmail,
+		DeleteAuthUser:           auth.Delete,
+		WriteUserAndAddress:      writer.Write,
+		SendInvite:               (&fakes.Inviter{}).Send,
+		GeneratePassword:         func() string { return "pw-fixed" },
+	}
+
 	_, err := users.HandleAddUserCore(context.Background(), "admin-1", "teller", baseUserPayload(), nil, deps)
 	if !errors.Is(err, users.ErrEmailExists) {
-		t.Fatalf("expected ErrEmailExists, got %v", err)
+		t.Fatalf("expected ErrEmailExists for genuine duplicate, got %v", err)
+	}
+	if len(writer.Writes) != 0 {
+		t.Fatalf("must not write for a genuine duplicate, got %d", len(writer.Writes))
 	}
 }
 
