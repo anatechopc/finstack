@@ -68,6 +68,20 @@
           }
         },
         {
+          "source": "/api/users/add",
+          "run": {
+            "serviceId": "adduser-development",
+            "region": "asia-east1"
+          }
+        },
+        {
+          "source": "/api/users/password/setup-link",
+          "run": {
+            "serviceId": "sendpasswordsetuplink-development",
+            "region": "asia-east1"
+          }
+        },
+        {
           "source": "**",
           "destination": "/index.html"
         }
@@ -104,6 +118,20 @@
           }
         },
         {
+          "source": "/api/users/add",
+          "run": {
+            "serviceId": "adduser-staging",
+            "region": "asia-east1"
+          }
+        },
+        {
+          "source": "/api/users/password/setup-link",
+          "run": {
+            "serviceId": "sendpasswordsetuplink-staging",
+            "region": "asia-east1"
+          }
+        },
+        {
           "source": "**",
           "destination": "/index.html"
         }
@@ -136,6 +164,20 @@
           "source": "/api/users/verify/otp",
           "run": {
             "serviceId": "verifyotp-production",
+            "region": "asia-east1"
+          }
+        },
+        {
+          "source": "/api/users/add",
+          "run": {
+            "serviceId": "adduser-production",
+            "region": "asia-east1"
+          }
+        },
+        {
+          "source": "/api/users/password/setup-link",
+          "run": {
+            "serviceId": "sendpasswordsetuplink-production",
             "region": "asia-east1"
           }
         },
