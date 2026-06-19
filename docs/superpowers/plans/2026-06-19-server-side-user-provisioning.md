@@ -1546,6 +1546,74 @@ git add packages/core/user_repository/lib/src/model/user.dart packages/core/user
 git commit -m "feat(user_repository): add User.createInvited factory"
 ```
 
+## Task C3b: Surface `invited_by_admin` on `UserEntity` (review #13 tidy)
+
+The Go `addUser` endpoint (Phase A) stamps a permanent `invited_by_admin: true` field on admin-created user docs so the `userCreated` trigger skips its generic welcome email. Today the Dart `UserEntity` doesn't declare it, so `json_serializable` silently ignores the key — harmless, but it means the field is an unknown/untracked column. Make it a known, round-tripping field (and useful provenance: "this user was admin-invited").
+
+**Files:**
+- Modify: `packages/core/user_repository/lib/src/model/user_entity.dart`
+- Regenerate: `packages/core/user_repository/lib/src/model/user_entity.g.dart`
+- Test: `packages/core/user_repository/test/user_invited_by_admin_test.dart`
+
+- [ ] **Step 1: Write the failing round-trip test**
+
+Create `packages/core/user_repository/test/user_invited_by_admin_test.dart`:
+```dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:user_repository/src/model/user_entity.dart';
+
+void main() {
+  test('invitedByAdmin round-trips from JSON', () {
+    final entity = UserEntity.fromJson(_baseJson()..['invited_by_admin'] = true);
+    expect(entity.invitedByAdmin, isTrue);
+    expect(entity.toJson()['invited_by_admin'], isTrue);
+  });
+
+  test('invitedByAdmin defaults to false when the key is absent', () {
+    final entity = UserEntity.fromJson(_baseJson());
+    expect(entity.invitedByAdmin, isFalse);
+  });
+}
+
+// Minimal valid user JSON for the required UserEntity fields. Fill in the exact
+// required keys by copying an existing UserEntity fixture/serialization in the
+// package's tests (id, first_name, last_name, email_address, user_role,
+// mobile_number, birth_date, sex, verificationStatus, created_at, updated_at,
+// employment_details, etc.).
+Map<String, dynamic> _baseJson() => { /* ...required keys... */ };
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `cd packages/core/user_repository && fvm flutter test test/user_invited_by_admin_test.dart`
+Expected: FAIL — `invitedByAdmin` getter not defined.
+
+- [ ] **Step 3: Add the field to `user_entity.dart`**
+
+Add a field to `UserEntity` mirroring the existing `@JsonKey`/`late`/default style (place it near `companyId`):
+```dart
+  @JsonKey(name: 'invited_by_admin', defaultValue: false)
+  late bool invitedByAdmin;
+```
+Initialize it in any non-`json_serializable` constructors/`copy`/`toUser`/`fromUser` mappers in the file if present (search the file for where the other scalar fields like `companyId` are assigned, and add `invitedByAdmin` alongside so manual mappers stay complete). If `User` (the domain model) also needs to carry it, add a matching field there and in the `toEntity()`/`toUser()` mappers; if `User` doesn't need it for app logic, leaving it entity-only is fine.
+
+- [ ] **Step 4: Regenerate the serializer**
+
+Run: `cd packages/core/user_repository && fvm dart run build_runner build --delete-conflicting-outputs`
+(or the repo helper `packages/build_models.sh`). Confirm `user_entity.g.dart` now reads/writes `json['invited_by_admin']`.
+
+- [ ] **Step 5: Run the test + analyze**
+
+Run: `cd packages/core/user_repository && fvm flutter test test/user_invited_by_admin_test.dart && fvm flutter analyze`
+Expected: PASS, analyzer clean.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add packages/core/user_repository/lib/src/model/user_entity.dart packages/core/user_repository/lib/src/model/user_entity.g.dart packages/core/user_repository/test/user_invited_by_admin_test.dart
+git commit -m "feat(user_repository): surface invited_by_admin on UserEntity"
+```
+
 ## Task C4: RegistrationBloc — server-backed invited-user handler + test seam
 
 **Files:**
