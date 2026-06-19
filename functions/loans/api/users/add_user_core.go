@@ -14,6 +14,7 @@ var (
 	ErrMissingEmail   = errors.New("user payload missing email_address")
 	ErrCallerNotFound = errors.New("caller user record not found")
 	ErrCallerNotAdmin = errors.New("caller is not authorized to add users")
+	ErrCallerNoCompany = errors.New("caller has no company")
 	ErrRoleNotAllowed = errors.New("role not allowed for this company")
 	ErrEmailExists    = errors.New("a user with this email already exists")
 )
@@ -88,13 +89,18 @@ func HandleAddUserCore(
 		return AddUserResult{}, ErrCallerNotAdmin
 	}
 	companyId, _ := caller["company_id"].(string)
-
-	mgmtType, err := deps.GetCompanyManagementType(ctx, companyId)
-	if err != nil {
-		return AddUserResult{}, fmt.Errorf("read company %q: %w", companyId, err)
+	if companyId == "" {
+		return AddUserResult{}, ErrCallerNoCompany
 	}
-	if role == "customer" && mgmtType != "selfManaged" {
-		return AddUserResult{}, ErrRoleNotAllowed
+
+	if role == "customer" {
+		mgmtType, err := deps.GetCompanyManagementType(ctx, companyId)
+		if err != nil {
+			return AddUserResult{}, fmt.Errorf("read company %q: %w", companyId, err)
+		}
+		if mgmtType != "selfManaged" {
+			return AddUserResult{}, ErrRoleNotAllowed
+		}
 	}
 
 	displayName := composeDisplayName(user)
@@ -113,6 +119,9 @@ func HandleAddUserCore(
 	user["company_id"] = companyId
 	user["user_role"] = role
 	user["invited_by_admin"] = true
+	// Force unverified: the email+mobile verification gate must not be bypassable
+	// via the client payload.
+	user["verificationStatus"] = 0
 	// Fix the embedded employment backref to the real uid (the client built it
 	// before a uid existed).
 	if emp, ok := user["employment_details"].(map[string]any); ok {

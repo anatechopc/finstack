@@ -55,7 +55,13 @@ func ValidateRequestV2(w http.ResponseWriter, r *http.Request) string {
 		return ""
 	}
 
-	idToken := strings.Split(authorization, " ")[1]
+	parts := strings.Split(authorization, " ")
+	if len(parts) < 2 || parts[1] == "" {
+		log.Error("malformed Authorization header")
+		http.Error(w, "Malformed Authorization header", http.StatusUnauthorized)
+		return ""
+	}
+	idToken := parts[1]
 	//log.Debug("idToken")
 	//log.Debug(idToken)
 

@@ -171,3 +171,104 @@ func TestAddUserCore_StampsEmploymentUserId(t *testing.T) {
 		t.Fatalf("expected employment_details.user_id stamped to uid-new, got %+v", emp)
 	}
 }
+
+func TestAddUserCore_CallerNoCompany_Rejected(t *testing.T) {
+	auth := &fakes.AuthAccountManager{NextUID: "uid-new"}
+	writer := &fakes.UserAddressWriter{}
+	companies := &fakes.CompanyManagementReader{Types: map[string]string{}}
+	callers := &fakes.UserReader{Users: map[string]map[string]any{
+		"admin-1": {"user_role": "admin"}, // no company_id
+	}}
+	deps := users.AddUserDeps{
+		GetUser:                  callers.Read,
+		GetCompanyManagementType: companies.Read,
+		CreateAuthUser:           auth.Create,
+		DeleteAuthUser:           auth.Delete,
+		WriteUserAndAddress:      writer.Write,
+		SendInvite:               (&fakes.Inviter{}).Send,
+		GeneratePassword:         func() string { return "pw-fixed" },
+	}
+
+	_, err := users.HandleAddUserCore(context.Background(), "admin-1", "admin", baseUserPayload(), nil, deps)
+	if !errors.Is(err, users.ErrCallerNoCompany) {
+		t.Fatalf("expected ErrCallerNoCompany, got %v", err)
+	}
+	if len(auth.Created) != 0 {
+		t.Fatalf("must not create auth account when caller has no company")
+	}
+	if len(writer.Writes) != 0 {
+		t.Fatalf("must not write when caller has no company")
+	}
+}
+
+func TestAddUserCore_StaffRole_SkipsCompanyRead(t *testing.T) {
+	auth := &fakes.AuthAccountManager{NextUID: "uid-new"}
+	writer := &fakes.UserAddressWriter{}
+	inviter := &fakes.Inviter{}
+	callers := &fakes.UserReader{Users: map[string]map[string]any{
+		"admin-1": {"user_role": "admin", "company_id": "co-1"},
+	}}
+	companies := &fakes.CompanyManagementReader{Types: map[string]string{"co-1": "app"}}
+	deps := users.AddUserDeps{
+		GetUser:                  callers.Read,
+		GetCompanyManagementType: companies.Read,
+		CreateAuthUser:           auth.Create,
+		DeleteAuthUser:           auth.Delete,
+		WriteUserAndAddress:      writer.Write,
+		SendInvite:               inviter.Send,
+		GeneratePassword:         func() string { return "pw-fixed" },
+	}
+
+	_, err := users.HandleAddUserCore(context.Background(), "admin-1", "teller", baseUserPayload(), nil, deps)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(companies.ReadCalls) != 0 {
+		t.Fatalf("expected company NOT to be read for staff role, got %d read(s): %v", len(companies.ReadCalls), companies.ReadCalls)
+	}
+}
+
+func TestAddUserCore_StampsVerificationStatus(t *testing.T) {
+	deps, _, writer, _ := depsWith("app")
+
+	_, err := users.HandleAddUserCore(context.Background(), "admin-1", "teller", baseUserPayload(), nil, deps)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(writer.Writes) == 0 {
+		t.Fatalf("expected at least one write")
+	}
+	got := writer.Writes[0].User["verificationStatus"]
+	if got != 0 {
+		t.Fatalf("expected verificationStatus==0, got %v", got)
+	}
+}
+
+func TestAddUserCore_WriteAndRollbackBothFail_ReturnsError(t *testing.T) {
+	auth := &fakes.AuthAccountManager{
+		NextUID:   "uid-new",
+		DeleteErr: errors.New("auth delete failed"),
+	}
+	writer := &fakes.UserAddressWriter{Err: errors.New("firestore down")}
+	callers := &fakes.UserReader{Users: map[string]map[string]any{
+		"admin-1": {"user_role": "admin", "company_id": "co-1"},
+	}}
+	companies := &fakes.CompanyManagementReader{Types: map[string]string{"co-1": "app"}}
+	deps := users.AddUserDeps{
+		GetUser:                  callers.Read,
+		GetCompanyManagementType: companies.Read,
+		CreateAuthUser:           auth.Create,
+		DeleteAuthUser:           auth.Delete,
+		WriteUserAndAddress:      writer.Write,
+		SendInvite:               (&fakes.Inviter{}).Send,
+		GeneratePassword:         func() string { return "pw-fixed" },
+	}
+
+	_, err := users.HandleAddUserCore(context.Background(), "admin-1", "teller", baseUserPayload(), nil, deps)
+	if err == nil {
+		t.Fatalf("expected error when both write and rollback fail")
+	}
+	if len(auth.Deleted) == 0 || auth.Deleted[0] != "uid-new" {
+		t.Fatalf("expected delete attempted for uid-new, got %v", auth.Deleted)
+	}
+}

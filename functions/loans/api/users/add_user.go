@@ -112,7 +112,10 @@ func AddUser(w http.ResponseWriter, r *http.Request) {
 			return mt, nil
 		},
 		CreateAuthUser: func(ctx context.Context, email, password, displayName string) (string, error) {
-			params := (&auth.UserToCreate{}).Email(email).Password(password).DisplayName(displayName)
+			params := (&auth.UserToCreate{}).Email(email).Password(password)
+			if displayName != "" {
+				params = params.DisplayName(displayName)
+			}
 			rec, cErr := authClient.CreateUser(ctx, params)
 			if cErr != nil {
 				if auth.IsEmailAlreadyExists(cErr) {
@@ -137,7 +140,11 @@ func AddUser(w http.ResponseWriter, r *http.Request) {
 			return cErr
 		},
 		SendInvite: func(ctx context.Context, email, displayName string) error {
-			return sendPasswordSetupEmail(ctx, authClient, email, displayName)
+			if err := sendPasswordSetupEmail(ctx, authClient, email, displayName); err != nil {
+				log.Error("addUser: invite email failed", zap.String("email", email), zap.String("error", err.Error()))
+				return err
+			}
+			return nil
 		},
 		GeneratePassword: utils.GenerateRandomPassword,
 	}
@@ -164,7 +171,7 @@ func writeAddUserError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidRole), errors.Is(err, ErrMissingEmail):
 		http.Error(w, err.Error(), http.StatusBadRequest)
-	case errors.Is(err, ErrCallerNotFound), errors.Is(err, ErrCallerNotAdmin), errors.Is(err, ErrRoleNotAllowed):
+	case errors.Is(err, ErrCallerNotFound), errors.Is(err, ErrCallerNotAdmin), errors.Is(err, ErrCallerNoCompany), errors.Is(err, ErrRoleNotAllowed):
 		http.Error(w, err.Error(), http.StatusForbidden)
 	case errors.Is(err, ErrEmailExists):
 		http.Error(w, err.Error(), http.StatusConflict)
