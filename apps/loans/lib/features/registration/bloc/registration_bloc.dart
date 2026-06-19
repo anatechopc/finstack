@@ -40,10 +40,11 @@ class RegistrationBloc extends Bloc<RegistrationEvent, RegistrationState> {
   final AddressRepository _addressRepository;
   final log = Logger('register_bloc');
 
-  void registerUser(Map<String, dynamic> data) {
+  void registerUser(Map<String, dynamic> data, {bool adminCreating = false}) {
     add(
       SubmitUserRegistrationEvent(
         fields: data,
+        adminCreating: adminCreating,
       ),
     );
   }
@@ -80,10 +81,18 @@ class RegistrationBloc extends Bloc<RegistrationEvent, RegistrationState> {
 
       final email = data['email_address'] as String;
       final password = data['password'] as String;
-      final uid = await _authenticationRepository.createUserCredential(
-        email: email,
-        password: password,
-      );
+      // An admin adding a user must NOT be signed out: create the account on a
+      // secondary app. A person self-registering should be signed in, so keep
+      // the normal (anonymous-link) credential creation.
+      final uid = event.adminCreating
+          ? await _authenticationRepository.createUserCredentialIsolated(
+              email: email,
+              password: password,
+            )
+          : await _authenticationRepository.createUserCredential(
+              email: email,
+              password: password,
+            );
 
       final photosFolder = 'users/$uid';
 

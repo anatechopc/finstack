@@ -253,6 +253,7 @@ class _AddUserWidgetState extends State<AddUserWidget> {
         defaultInputColor: AppColors.black,
         isUserCompanyManaged:
             AuthenticationService.instance.allowAddClients,
+        isAdminCreating: true,
       );
     } else {
       return Column(

@@ -22,12 +22,18 @@ class RegisterScreenFormUsersWidget extends StatelessWidget {
     this.showTermsAndConditions = true,
     this.defaultInputColor = AppColors.green2,
     this.isUserCompanyManaged = false,
+    this.isAdminCreating = false,
     this.showAsDialog = false,
   });
 
   final bool disableWidthConstraints;
   final bool showTermsAndConditions;
   final bool isUserCompanyManaged;
+
+  /// True when this form is used by an admin to add a user (vs a person
+  /// self-registering). Passed through so the new account isn't signed into
+  /// the admin's session.
+  final bool isAdminCreating;
   final bool showAsDialog;
 
   final _formKey = GlobalKey<FormBuilderState>();
@@ -114,6 +120,7 @@ class RegisterScreenFormUsersWidget extends StatelessWidget {
                       if (!isUserCompanyManaged) {
                         context.read<RegistrationBloc>().registerUser(
                               _formKey.currentState!.value,
+                              adminCreating: isAdminCreating,
                             );
                       } else {
                         context.read<RegistrationBloc>().registerManagedUser(

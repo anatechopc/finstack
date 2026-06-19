@@ -3,12 +3,12 @@ import 'package:authentication_repository/src/authentication_result.dart';
 import 'package:authentication_repository/src/authentication_status.dart';
 import 'package:authentication_repository/src/data/authentication_database.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:loooans_helpers/logging_helpers.dart';
 
 /// Handles all authentication repository functions
 class AuthenticationRepository {
-  ///
-  /// [auth] FirebaseAuth instance from the main app.
+  /// Uses the main app's FirebaseAuth instance.
   AuthenticationRepository();
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -203,6 +203,46 @@ class AuthenticationRepository {
     }
 
     return uid;
+  }
+
+  /// Creates an email/password user account WITHOUT touching the current
+  /// session. Used when an admin adds a user: [createUserCredential] would sign
+  /// the new user into the primary app (replacing the admin), so this creates
+  /// them on a throwaway secondary Firebase app instead and returns the new uid.
+  Future<String> createUserCredentialIsolated({
+    required String email,
+    required String password,
+  }) async {
+    // A uniquely-named secondary app keeps repeated calls (and any leftover
+    // app from a failed run) from colliding.
+    final appName = 'userCreation-${_auth.app.name}-$email';
+    FirebaseApp secondaryApp;
+    try {
+      secondaryApp = Firebase.app(appName);
+    } on FirebaseException {
+      secondaryApp = await Firebase.initializeApp(
+        name: appName,
+        options: Firebase.app().options,
+      );
+    }
+
+    try {
+      final secondaryAuth = FirebaseAuth.instanceFor(app: secondaryApp);
+      final credential = await secondaryAuth.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      final uid = credential.user?.uid;
+      if (uid == null) {
+        throw AuthenticationException(
+          message: 'cannot create user credential',
+        );
+      }
+      await secondaryAuth.signOut();
+      return uid;
+    } finally {
+      await secondaryApp.delete();
+    }
   }
 
   /// [createAnonymousUser]
