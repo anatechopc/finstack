@@ -9,7 +9,7 @@ void main() {
         lastName: 'Doe',
         mobileNumber: '+639170000000',
         emailAddress: 'jane@example.com',
-        birthDate: DateTime(1990, 1, 1),
+        birthDate: DateTime(1990, 6, 15),
         sex: Sex.female,
         employmentDetails: EmploymentDetails.createBlank(),
         companyId: 'co-1',
