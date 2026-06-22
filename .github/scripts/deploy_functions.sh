@@ -104,7 +104,7 @@ gcloud functions deploy sendPasswordSetupLink_$environment --set-env-vars "$MS_G
 pids[$!]="sendPasswordSetupLink"
 
 echo "Deploying UserCreated trigger"
-gcloud functions deploy userCreated_$environment --gen2 --service-account="$serviceAccount" --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=userCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}users/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+gcloud functions deploy userCreated_$environment --gen2 --service-account="$serviceAccount" --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=userCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}users/{uid}" --set-env-vars "$MS_GRAPH_ENV_VARS" --set-secrets "$MS_GRAPH_SECRETS" --project=$project &
 pids[$!]="userCreated"
 
 echo "Deploying LoanChanges trigger"
