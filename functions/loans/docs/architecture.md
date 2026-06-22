@@ -22,7 +22,7 @@ loooans_cloud_functions/
 | **`api/`** | HTTP endpoint handlers. Each sets CORS headers and validates Firebase JWT tokens. | `requestOtp`, `sendEmail` |
 | **`triggers/`** | Firestore-triggered CloudEvent handlers. Unmarshal protobuf `DocumentEventData`, extract fields, perform side effects. | `userCreated`, `loanChanges`, `paymentCreated` |
 | **`utils/`** | Shared utilities: Firebase init, zap logger, email (Microsoft Graph), JWT validation, environment config. | `InitializeLogger`, `ValidateRequestV2`, `GetEnvironment` |
-| **`types/`** | Shared data types. | `User`, `Mail`, `FirebaseOptions`, `CustomTokenClaims` |
+| **`types/`** | Shared data types. | `User`, `Mail`, `FirebaseOptions` |
 | **`job/`** | Scheduled/background jobs (currently disabled). | — |
 
 ## Function Registration
