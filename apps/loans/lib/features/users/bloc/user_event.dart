@@ -16,17 +16,6 @@ final class SelectUserEvent extends UserEvent {
       ];
 }
 
-final class AddUserEvent extends UserEvent {
-
-  const AddUserEvent({required this.fields});
-  final Map<String, dynamic> fields;
-
-  @override
-  List<Object?> get props => [
-        fields,
-      ];
-}
-
 final class UpdateUserEvent extends UserEvent {
 
   const UpdateUserEvent({

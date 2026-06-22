@@ -399,7 +399,6 @@ class AppWidgets {
     bool withExtendedUserDetailInputs = false,
     bool? allowAddOns,
     bool scrollable = false,
-    bool forCompanyUser = false,
     bool isTeamMember = false,
   }) =>
       DialogWidgets.showAddUserWidget(
@@ -409,7 +408,6 @@ class AppWidgets {
         withExtendedUserDetailInputs: withExtendedUserDetailInputs,
         allowAddOns: allowAddOns,
         scrollable: scrollable,
-        forCompanyUser: forCompanyUser,
         isTeamMember: isTeamMember,
       );
 

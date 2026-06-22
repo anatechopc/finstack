@@ -8,10 +8,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:loooans/features/users/model/user_address.dart';
 import 'package:loooans/services/address_builder.dart';
 import 'package:loooans/services/authentication_service.dart';
-import 'package:loooans/utils/extensions.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:loooans_helpers/logging_helpers.dart';
-import 'package:loooans_helpers/string_helpers.dart';
 import 'package:storage_repository/storage_repository.dart';
 import 'package:user_loan_view_repository/user_loan_view_repository.dart';
 import 'package:user_repository/user_repository.dart';
@@ -28,7 +26,6 @@ class UserBloc extends Bloc<UserEvent, UserState> {
         storageRepository = context.read<StorageRepository>(),
         super(const UserState()) {
     on(_handleSelectUserEvent);
-    on(_handleAddUserEvent);
     on(_handleUpdateUserEvent);
   }
 
@@ -172,10 +169,6 @@ class UserBloc extends Bloc<UserEvent, UserState> {
     emit(const UserState.unselected());
   }
 
-  void addUser(Map<String, dynamic> fields) {
-    add(AddUserEvent(fields: fields));
-  }
-
   void updateUser(
     Map<String, dynamic> fields, {
     required User user,
@@ -211,77 +204,6 @@ class UserBloc extends Bloc<UserEvent, UserState> {
       emit(UserState.error('Cannot select user: $err'));
     } catch (err) {
       log.severe('Select user error', err);
-    }
-  }
-
-  Future<void> _handleAddUserEvent(
-    AddUserEvent event,
-    Emitter<UserState> emit,
-  ) async {
-    try {
-      emit(const UserState.loading(isLoading: true));
-      final fields = event.fields;
-      final lastNameObject = fields['last_name'];
-      var lastName = '';
-      var createUser = true;
-      User? createdUser;
-
-      if (lastNameObject is User) {
-        lastName = lastNameObject.lastName;
-
-        if (!lastNameObject.isPlaceholder) {
-          createUser = false;
-          createdUser = lastNameObject;
-        }
-      } else {
-        lastName = lastNameObject as String;
-      }
-
-      if (createUser) {
-        log.finest('userRole: ${fields['user_role']}');
-        final userRole = fields['user_role'] as UserRole? ?? UserRole.customer;
-
-        final tempUser = User.createManagedCustomer(
-          firstName: fields['first_name'] as String,
-          lastName: lastName,
-          middleName: fields['middle_name'] as String?,
-          mobileNumber: fields['mobile_number'] as String,
-          emailAddress: fields['email_address'] as String? ?? '',
-          profilePhotoUrl: null,
-          photoWithValidIdUrl: null,
-          birthDate: fields['birth_date'] as DateTime,
-          sex: fields['sex'] as Sex,
-          employmentDetails: EmploymentDetails.createBlank(),
-          businessName: fields['business_name'] as String?,
-          companyId: authService.company.id,
-        )..userRole = userRole;
-
-        if (userRole == UserRole.customer) {
-          createdUser = await userRepository.add(data: tempUser).then((user) {
-            final employmentDetails = user.employmentDetails
-              ..id = StringHelper.generateId(length: 12)
-              ..userId = user.id
-              ..employmentStatus =
-                  fields['employment_status'] as EmploymentStatus
-              ..employerName = fields['employer_name'] as String?
-              ..salaryDays =
-                  (fields['salary_days'] as String?)?.toIntList() ?? [];
-
-            return userRepository.update(
-              data: user..employmentDetails = employmentDetails,
-            );
-          });
-        } else {
-          createdUser = await userRepository.add(data: tempUser);
-        }
-      }
-
-      emit(const UserState.loading());
-      emit(UserState.success('Successfully created user', user: createdUser));
-    } catch (err) {
-      log.severe(r'AddUser error: ${err.toString()}', err);
-      emit(const UserState.loading());
-      emit(const UserState.error('Something went wrong while adding user.'));
     }
   }
 

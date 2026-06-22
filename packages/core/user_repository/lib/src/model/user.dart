@@ -107,41 +107,6 @@ class User extends UserEntity implements BaseModel<UserEntity> {
       ..businessName = businessName;
   }
 
-  /// creates a new user model for a company managed customer
-  factory User.createManagedCustomer({
-    required String firstName,
-    required String lastName,
-    required String mobileNumber,
-    required ImageUrl? profilePhotoUrl, required ImageUrl? photoWithValidIdUrl, required DateTime birthDate, required Sex sex, required EmploymentDetails employmentDetails, required String companyId, String? emailAddress,
-    String? middleName,
-    String? businessName,
-  }) {
-    final now = DateTime.timestamp();
-
-    return User()
-      ..id = NO_ID
-      ..updatedAt = now
-      ..createdAt = now
-      ..lastName = lastName
-      ..firstName = firstName
-      ..middleName = middleName
-      ..birthDate = birthDate
-      ..mobileNumber = mobileNumber
-      ..emailAddress = emailAddress ?? ''
-      ..userRole = UserRole.customer
-      ..profilePhotoUrl = profilePhotoUrl
-      ..photoWithValidIdUrl = photoWithValidIdUrl
-      ..karma = 0
-      ..aiVerifyRef = null
-      ..verificationStatus = UserVerificationStatus.unverified.value
-      ..mobileVerifiedAt = null
-      ..invitedByAdmin = false
-      ..sex = sex
-      ..employmentDetails = employmentDetails
-      ..businessName = businessName
-      ..companyId = companyId;
-  }
-
   /// Creates a user for the admin "Add team member / Add borrower" flow. The
   /// account is provisioned server-side, so [id] is left as [NO_ID] (the
   /// backend stamps the real Firebase Auth uid). Email is required because the
