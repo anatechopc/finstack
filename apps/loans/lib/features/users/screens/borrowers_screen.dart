@@ -16,7 +16,6 @@ import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 import 'package:two_dimensional_scrollables/two_dimensional_scrollables.dart';
-import 'package:user_repository/user_repository.dart';
 
 class BorrowerScreen extends StatefulWidget {
   const BorrowerScreen({
@@ -188,10 +187,8 @@ class _BorrowerScreenState extends State<BorrowerScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (AuthenticationService.instance.allowAddClients &&
-                ![
-                  UserRole.customer,
-                  UserRole.reviewModerator,
-                ].contains(AuthenticationService.instance.user.userRole)) ...[
+                (AuthenticationService.instance.user.isAdmin() ||
+                    AuthenticationService.instance.user.isAppAdmin())) ...[
               AppWidgets.defaultOutlinedButton(
                 foregroundColor: AppColors.white,
                 child: const Text('Add Borrower'),

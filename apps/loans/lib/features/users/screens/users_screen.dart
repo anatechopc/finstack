@@ -43,9 +43,11 @@ class _UsersScreenState extends State<UsersScreen> {
         getScreenSize(context: context).index <= ScreenSize.medium.index;
 
     return BlocListener<UserBloc, UserState>(
-      listenWhen: (prev, next) =>
-          next.status == UserStatus.success ||
-          next.status == UserStatus.error,
+      listenWhen: (prev, curr) =>
+          (curr.status == UserStatus.success &&
+              curr.message == UserBloc.resendInviteSuccessMessage) ||
+          (curr.status == UserStatus.error &&
+              curr.message == UserBloc.resendInviteErrorMessage),
       listener: (context, state) {
         final message = state.message;
         if (message == null) {
@@ -193,16 +195,16 @@ class _UsersScreenState extends State<UsersScreen> {
   }
 
   /// Whether the current viewer can resend an invite to [user]: the viewer must
-  /// be a team manager (not a customer or review-only moderator) and the target
-  /// user must have an email address to send the setup link to.
+  /// be an admin (matching the backend's add-user gate), the target user must
+  /// have been admin-invited, and must have an email address to send the setup
+  /// link to.
   bool _canResendInvite(User user) {
-    final viewerRole = AuthenticationService.instance.user.userRole;
-    final isTeamManager = ![
-      UserRole.customer,
-      UserRole.reviewModerator,
-    ].contains(viewerRole);
+    final viewer = AuthenticationService.instance.user;
+    final canManage = viewer.isAdmin() || viewer.isAppAdmin();
 
-    return isTeamManager && user.emailAddress.trim().isNotEmpty;
+    return canManage &&
+        user.invitedByAdmin &&
+        user.emailAddress.trim().isNotEmpty;
   }
 
   Widget header(
@@ -227,10 +229,8 @@ class _UsersScreenState extends State<UsersScreen> {
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (![
-              UserRole.customer,
-              UserRole.reviewModerator,
-            ].contains(AuthenticationService.instance.user.userRole)) ...[
+            if (AuthenticationService.instance.user.isAdmin() ||
+                AuthenticationService.instance.user.isAppAdmin()) ...[
               AppWidgets.defaultOutlinedButton(
                 foregroundColor: AppColors.white,
                 child: const Text('Add team member'),

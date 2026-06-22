@@ -50,6 +50,14 @@ class UserBloc extends Bloc<UserEvent, UserState> {
     on(_handleResendInviteEvent);
   }
 
+  /// SnackBar message emitted when a resend-invite succeeds. The UsersScreen
+  /// listener filters on this so it only reacts to resend outcomes (UserBloc is
+  /// app-scoped and emits success/error for unrelated flows too).
+  static const resendInviteSuccessMessage = 'Invite re-sent.';
+
+  /// SnackBar message emitted when a resend-invite fails.
+  static const resendInviteErrorMessage = 'Could not resend the invite.';
+
   final log = Logger('user_bloc');
 
   final AuthenticationService authService;
@@ -207,11 +215,11 @@ class UserBloc extends Bloc<UserEvent, UserState> {
       emit(const UserState.loading(isLoading: true));
       await userRepository.sendPasswordSetupLink(email: event.email);
       emit(const UserState.loading());
-      emit(const UserState.success('Invite re-sent.'));
+      emit(const UserState.success(UserBloc.resendInviteSuccessMessage));
     } catch (err) {
       log.severe('ResendInvite error: $err', err);
       emit(const UserState.loading());
-      emit(const UserState.error('Could not resend the invite.'));
+      emit(const UserState.error(UserBloc.resendInviteErrorMessage));
     }
   }
 

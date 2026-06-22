@@ -221,7 +221,9 @@ class LayoutWidgets {
               width: 16,
             ),
           if (AuthenticationService.instance.allowAddClients &&
-              showAddBorrowerButton)
+              showAddBorrowerButton &&
+              (AuthenticationService.instance.user.isAdmin() ||
+                  AuthenticationService.instance.user.isAppAdmin()))
             ButtonWidgets.defaultFilledButton(
               child: const Text('Add borrower'),
               backgroundColor: AppColors.white,

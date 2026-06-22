@@ -277,6 +277,6 @@ class LoginScreen extends StatelessWidget {
           ],
         );
       },
-    );
+    ).whenComplete(controller.dispose);
   }
 }
