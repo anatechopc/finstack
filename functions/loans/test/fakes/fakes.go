@@ -116,6 +116,18 @@ func (r *AuthEmailReader) Read(_ context.Context, uid string) (string, error) {
 	return r.Emails[uid], nil
 }
 
+// WelcomeEmailSender fake — records every welcome email sent (recipient). Err
+// is returned if set.
+type WelcomeEmailSender struct {
+	Sent []string
+	Err  error
+}
+
+func (s *WelcomeEmailSender) Send(_ context.Context, email string) error {
+	s.Sent = append(s.Sent, email)
+	return s.Err
+}
+
 // OtpWriter fake — records every RTDB write the Core performs. Tests can
 // assert the entry shape (id, userId, otp, expire_at, reason, etc.) and
 // that mobile-objective writes include phone/message/sms_status.
