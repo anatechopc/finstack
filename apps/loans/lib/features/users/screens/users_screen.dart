@@ -42,6 +42,27 @@ class _UsersScreenState extends State<UsersScreen> {
     final isCompactOrMedium =
         getScreenSize(context: context).index <= ScreenSize.medium.index;
 
+    return BlocListener<UserBloc, UserState>(
+      listenWhen: (prev, next) =>
+          next.status == UserStatus.success ||
+          next.status == UserStatus.error,
+      listener: (context, state) {
+        final message = state.message;
+        if (message == null) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      },
+      child: _body(context, isCompactOrMedium: isCompactOrMedium),
+    );
+  }
+
+  Widget _body(
+    BuildContext context, {
+    required bool isCompactOrMedium,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -119,22 +140,39 @@ class _UsersScreenState extends State<UsersScreen> {
                             ),
                           ],
                         ),
-                        Column(
+                        Row(
                           mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
-                            Text(
-                              item.emailAddress,
+                            Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  item.emailAddress,
+                                ),
+                                Text(
+                                  item.createdAt
+                                      .toDefaultDateFormatWithDayExtended(),
+                                  style: TextStyle(
+                                    color:
+                                        AppColors.white.withValues(alpha: 0.6),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
                             ),
-                            Text(
-                              item.createdAt
-                                  .toDefaultDateFormatWithDayExtended(),
-                              style: TextStyle(
-                                color: AppColors.white.withValues(alpha: 0.6),
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
+                            if (_canResendInvite(item)) ...[
+                              const Gap(8),
+                              IconButton(
+                                tooltip: 'Resend invite',
+                                color: AppColors.white,
+                                icon: const Icon(Icons.mark_email_unread),
+                                onPressed: () => context
+                                    .read<UserBloc>()
+                                    .resendInvite(item.emailAddress),
                               ),
-                            ),
+                            ],
                           ],
                         ),
                       ],
@@ -152,6 +190,19 @@ class _UsersScreenState extends State<UsersScreen> {
         ),
       ],
     );
+  }
+
+  /// Whether the current viewer can resend an invite to [user]: the viewer must
+  /// be a team manager (not a customer or review-only moderator) and the target
+  /// user must have an email address to send the setup link to.
+  bool _canResendInvite(User user) {
+    final viewerRole = AuthenticationService.instance.user.userRole;
+    final isTeamManager = ![
+      UserRole.customer,
+      UserRole.reviewModerator,
+    ].contains(viewerRole);
+
+    return isTeamManager && user.emailAddress.trim().isNotEmpty;
   }
 
   Widget header(

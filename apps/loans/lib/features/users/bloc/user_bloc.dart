@@ -27,14 +27,35 @@ class UserBloc extends Bloc<UserEvent, UserState> {
         super(const UserState()) {
     on(_handleSelectUserEvent);
     on(_handleUpdateUserEvent);
+    on(_handleResendInviteEvent);
+  }
+
+  /// Test seam mirroring RegistrationBloc.withDependencies: lets unit tests
+  /// inject mocked repositories. [addressRepository] is optional because the
+  /// real [AddressRepository] is a `final` class (so it can't be mocked) and
+  /// the resend-invite path never touches it — only the select/update handlers
+  /// do, and those aren't exercised in the resend-invite tests.
+  /// [userLoanViewRepository] is typed as the base interface so it can be
+  /// mocked; the bloc never calls a non-base method on it.
+  UserBloc.withDependencies({
+    required this.userRepository,
+    required this.userLoanViewRepository,
+    required this.storageRepository,
+    this.addressRepository,
+    AuthenticationService? authService,
+  })  : authService = authService ?? AuthenticationService.instance,
+        super(const UserState()) {
+    on(_handleSelectUserEvent);
+    on(_handleUpdateUserEvent);
+    on(_handleResendInviteEvent);
   }
 
   final log = Logger('user_bloc');
 
   final AuthenticationService authService;
   final UserRepository userRepository;
-  final AddressRepository addressRepository;
-  final UserLoanViewRepository userLoanViewRepository;
+  final AddressRepository? addressRepository;
+  final BaseRepository<UserLoanView> userLoanViewRepository;
   final StorageRepository storageRepository;
 
   User? _selectedUser;
@@ -53,7 +74,7 @@ class UserBloc extends Bloc<UserEvent, UserState> {
       userRepository.dataStream.asyncMap((users) async {
         return Future.wait(
           users.map((user) async {
-            final address = await addressRepository
+            final address = await addressRepository!
                 .getByDataType(
               id: user.id,
               type: DataType.user,
@@ -176,6 +197,24 @@ class UserBloc extends Bloc<UserEvent, UserState> {
     add(UpdateUserEvent(fields: fields, user: user));
   }
 
+  void resendInvite(String email) => add(ResendInviteEvent(email: email));
+
+  Future<void> _handleResendInviteEvent(
+    ResendInviteEvent event,
+    Emitter<UserState> emit,
+  ) async {
+    try {
+      emit(const UserState.loading(isLoading: true));
+      await userRepository.sendPasswordSetupLink(email: event.email);
+      emit(const UserState.loading());
+      emit(const UserState.success('Invite re-sent.'));
+    } catch (err) {
+      log.severe('ResendInvite error: $err', err);
+      emit(const UserState.loading());
+      emit(const UserState.error('Could not resend the invite.'));
+    }
+  }
+
   Future<void> _handleSelectUserEvent(
     SelectUserEvent event,
     Emitter<UserState> emit,
@@ -185,7 +224,7 @@ class UserBloc extends Bloc<UserEvent, UserState> {
       final userId = event.userId;
       final results = await Future.wait([
         userRepository.get(id: userId),
-        addressRepository
+        addressRepository!
             .getByDataType(
           id: userId,
           type: DataType.user,
@@ -261,7 +300,7 @@ class UserBloc extends Bloc<UserEvent, UserState> {
           Future.microtask(() {
             final addr = authService.address;
             AddressBuilder.updateFromFields(addr, fields);
-            return addressRepository.update(data: addr);
+            return addressRepository!.update(data: addr);
           }),
       ]);
 

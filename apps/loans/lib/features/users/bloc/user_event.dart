@@ -31,3 +31,14 @@ final class UpdateUserEvent extends UserEvent {
         user,
       ];
 }
+
+final class ResendInviteEvent extends UserEvent {
+
+  const ResendInviteEvent({required this.email});
+  final String email;
+
+  @override
+  List<Object?> get props => [
+        email,
+      ];
+}
