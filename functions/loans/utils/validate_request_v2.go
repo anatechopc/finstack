@@ -1,25 +1,23 @@
 package utils
 
 import (
-	"com.loooans.app/types"
 	"context"
 	"fmt"
-	"github.com/golang-jwt/jwt/v4"
-	"go.uber.org/zap"
 	"net/http"
 	"strings"
+
+	"go.uber.org/zap"
 )
 
-// ValidateRequest
+// ValidateRequestV2
 //
 // Checks the request if it is valid and authorized
 // It searches for the Authorization header and checks
 // the value, gets the JWT string from the value and
 // checks if the JWT is valid thru firebase auth
 //
-// returns the UID of the requester
-const customTokenAud = "https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit"
-
+// returns the UID of the requester, or "" (having already written the
+// appropriate HTTP error) if the request is unauthorized.
 func ValidateRequestV2(w http.ResponseWriter, r *http.Request) string {
 	var log *zap.Logger
 
@@ -62,51 +60,13 @@ func ValidateRequestV2(w http.ResponseWriter, r *http.Request) string {
 		return ""
 	}
 	idToken := parts[1]
-	//log.Debug("idToken")
-	//log.Debug(idToken)
-
-	var uid string
 
 	token, errToken := authClient.VerifyIDToken(ctx, idToken)
 	if errToken != nil {
-		parser := jwt.NewParser(jwt.WithoutClaimsValidation())
-		tok, _, errTok := parser.ParseUnverified(idToken, &types.CustomTokenClaims{})
-
-		if errTok != nil {
-			log.Error("token parse error: ", zap.String("error", errTok.Error()))
-			http.Error(w, errTok.Error(), http.StatusUnauthorized)
-			return ""
-		}
-
-		if claims, ok := tok.Claims.(*types.CustomTokenClaims); ok {
-			// check aud claims
-			if !claims.VerifyAudience(customTokenAud, true) {
-				log.Error("Invalid audience")
-				http.Error(w, "Invalid audience", http.StatusUnauthorized)
-				return ""
-			}
-
-			//if !claims.VerifyExpiresAt(time.Now(), true) {
-			//	log.Error("Token expired")
-			//	http.Error(w, "Token expired", http.StatusBadRequest)
-			//	return ""
-			//}
-
-			if claims.UID == "" {
-				log.Error("uid not found")
-				http.Error(w, "uid not found", http.StatusUnauthorized)
-				return ""
-			}
-
-			uid = claims.UID
-		} else {
-			log.Error("claims parse error")
-			http.Error(w, errToken.Error(), http.StatusUnauthorized)
-			return ""
-		}
-	} else {
-		uid = token.UID
+		log.Error("invalid id token", zap.String("error", errToken.Error()))
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return ""
 	}
 
-	return uid
+	return token.UID
 }
