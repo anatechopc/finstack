@@ -216,6 +216,8 @@ class LayoutWidgets {
             ),
           if (AuthenticationService.instance.allowAddClients &&
               showAddBorrowerButton &&
+              (AuthenticationService.instance.user.isAdmin() ||
+                  AuthenticationService.instance.user.isAppAdmin()) &&
               (showAdvertiseButton || showAddCapitalButton))
             const SizedBox(
               width: 16,
