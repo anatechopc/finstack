@@ -182,12 +182,12 @@ class _UsersScreenState extends State<UsersScreen> {
             ].contains(AuthenticationService.instance.user.userRole)) ...[
               AppWidgets.defaultOutlinedButton(
                 foregroundColor: AppColors.white,
-                child: const Text('Add User'),
+                child: const Text('Add team member'),
                 onPressed: () {
                   AppWidgets.showAddUserWidget(
                     context,
-                    forCompanyUser: true,
                     withExtendedUserDetailInputs: true,
+                    isTeamMember: true,
                   );
                 },
               ),

@@ -400,6 +400,7 @@ class AppWidgets {
     bool? allowAddOns,
     bool scrollable = false,
     bool forCompanyUser = false,
+    bool isTeamMember = false,
   }) =>
       DialogWidgets.showAddUserWidget(
         context,
@@ -409,6 +410,7 @@ class AppWidgets {
         allowAddOns: allowAddOns,
         scrollable: scrollable,
         forCompanyUser: forCompanyUser,
+        isTeamMember: isTeamMember,
       );
 
   // --- Profile Widgets ---

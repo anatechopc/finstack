@@ -187,10 +187,11 @@ class _BorrowerScreenState extends State<BorrowerScreen> {
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (![
-              UserRole.customer,
-              UserRole.reviewModerator,
-            ].contains(AuthenticationService.instance.user.userRole)) ...[
+            if (AuthenticationService.instance.allowAddClients &&
+                ![
+                  UserRole.customer,
+                  UserRole.reviewModerator,
+                ].contains(AuthenticationService.instance.user.userRole)) ...[
               AppWidgets.defaultOutlinedButton(
                 foregroundColor: AppColors.white,
                 child: const Text('Add Borrower'),

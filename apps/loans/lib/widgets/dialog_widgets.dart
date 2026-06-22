@@ -238,6 +238,7 @@ class DialogWidgets {
     bool? allowAddOns,
     bool scrollable = false,
     bool forCompanyUser = false,
+    bool isTeamMember = false,
   }) {
     return showDialog(
       context: context,
@@ -249,6 +250,7 @@ class DialogWidgets {
             withLoanApplication: withLoanApplication,
             withExtendedUserDetailInputs: withExtendedUserDetailInputs,
             allowAddOns: allowAddOns,
+            isTeamMember: isTeamMember,
           ) : RegisterScreenFormProvidersWidget(
             registerCompanyManagedUser: true,
             defaultInputColor: AppColors.lightBlack,
