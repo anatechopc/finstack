@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"net/url"
+	"time"
 
+	"cloud.google.com/go/firestore"
 	"com.loooans.app/utils"
 	"firebase.google.com/go/v4/auth"
 )
@@ -47,22 +50,62 @@ func kindForRole(role string) emailKind {
 	}
 }
 
-// sendPasswordSetupEmail generates a Firebase password-reset link for email and
-// sends a branded message via Microsoft Graph. The role selects the audience
-// copy: a borrower gets the loan/marketplace invite, a staff member gets the
-// team-onboarding invite, and an empty role (forgot-password / resend) gets the
-// neutral reset copy. displayName may be empty (the link endpoint passes "").
+// buildSetPasswordLink returns the branded self-hosted set/reset-password URL
+// for the given subdomain ("dev."/"stg."/"") and raw token. Points at our own
+// hosted page (no Firebase action handler).
+func buildSetPasswordLink(subdomain, rawToken string) string {
+	return fmt.Sprintf("https://%sloooans.com/set-password?token=%s", subdomain, url.QueryEscape(rawToken))
+}
+
+// newSetPasswordTokenDoc builds the Firestore doc persisted when a set-password
+// link is issued. The field names MUST match the consumer in set_password.go
+// (buildRealSetPasswordDeps → ConsumeToken queries "token_hash" and reads
+// "used_at"/"expires_at"/"uid"/"email"); changing a key here silently breaks the
+// consume path.
+func newSetPasswordTokenDoc(tokenHash, uid, email string, now time.Time) map[string]any {
+	return map[string]any{
+		"token_hash": tokenHash,
+		"uid":        uid,
+		"email":      email,
+		"created_at": now.UnixMilli(),
+		"expires_at": now.Add(setPasswordTokenTTL).UnixMilli(),
+		"used_at":    nil,
+	}
+}
+
+// sendPasswordSetupEmail mints + stores a one-time set-password token and emails
+// a branded link to our own self-hosted /set-password page (no Firebase action
+// handler). The role selects the audience copy: a borrower gets the
+// loan/marketplace invite, a staff member gets the team-onboarding invite, and
+// an empty role (forgot-password / resend) gets the neutral reset copy.
+// displayName may be empty (the link endpoint passes "").
 //
-// PasswordResetLink errors when no account exists for the email; callers in the
-// forgot-password path swallow that error to avoid leaking account existence.
-func sendPasswordSetupEmail(ctx context.Context, authClient *auth.Client, email, displayName, role string) error {
-	link, err := authClient.PasswordResetLink(ctx, email)
+// GetUserByEmail errors when no account exists for the email; callers in the
+// forgot-password / resend path swallow that error to avoid leaking account
+// existence. AddUser never hits that branch — it just created the user.
+func sendPasswordSetupEmail(
+	ctx context.Context,
+	authClient *auth.Client,
+	fs *firestore.Client,
+	prefix, subdomain, email, displayName, role string,
+) error {
+	rec, err := authClient.GetUserByEmail(ctx, email)
 	if err != nil {
-		return fmt.Errorf("generate password reset link: %w", err)
+		return fmt.Errorf("lookup user for set-password email: %w", err)
 	}
 
-	subject, body := inviteContent(kindForRole(role), displayName, link)
+	raw, hash, err := GenerateSetPasswordToken()
+	if err != nil {
+		return fmt.Errorf("generate set-password token: %w", err)
+	}
 
+	doc := newSetPasswordTokenDoc(hash, rec.UID, email, time.Now().UTC())
+	if _, _, err := fs.Collection(prefix+"password_setup_tokens").Add(ctx, doc); err != nil {
+		return fmt.Errorf("store set-password token: %w", err)
+	}
+
+	link := buildSetPasswordLink(subdomain, raw)
+	subject, body := inviteContent(kindForRole(role), displayName, link)
 	if _, err := utils.SendEmail(subject, body, []string{email}); err != nil {
 		return fmt.Errorf("send invite email: %w", err)
 	}
