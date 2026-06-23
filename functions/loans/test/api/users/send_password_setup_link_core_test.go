@@ -12,7 +12,7 @@ import (
 func TestSendPasswordSetupLinkCore_KnownEmail_Sends(t *testing.T) {
 	inviter := &fakes.Inviter{}
 	deps := users.SendPasswordSetupLinkDeps{SendInvite: func(ctx context.Context, email string) error {
-		return inviter.Send(ctx, email, "")
+		return inviter.Send(ctx, email, "", "")
 	}}
 	if err := users.HandleSendPasswordSetupLinkCore(context.Background(), "jane@example.com", deps); err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -25,7 +25,7 @@ func TestSendPasswordSetupLinkCore_KnownEmail_Sends(t *testing.T) {
 func TestSendPasswordSetupLinkCore_EmptyEmail_NoOp(t *testing.T) {
 	inviter := &fakes.Inviter{}
 	deps := users.SendPasswordSetupLinkDeps{SendInvite: func(ctx context.Context, email string) error {
-		return inviter.Send(ctx, email, "")
+		return inviter.Send(ctx, email, "", "")
 	}}
 	if err := users.HandleSendPasswordSetupLinkCore(context.Background(), "  ", deps); err != nil {
 		t.Fatalf("unexpected err: %v", err)

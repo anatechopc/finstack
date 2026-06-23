@@ -381,6 +381,7 @@ func (r *CompanyManagementReader) Read(_ context.Context, companyId string) (str
 type InviteCall struct {
 	Email       string
 	DisplayName string
+	Role        string
 }
 
 // Inviter fake — records every invite. Err is returned to exercise the
@@ -390,7 +391,7 @@ type Inviter struct {
 	Err     error
 }
 
-func (i *Inviter) Send(_ context.Context, email, displayName string) error {
-	i.Invites = append(i.Invites, InviteCall{Email: email, DisplayName: displayName})
+func (i *Inviter) Send(_ context.Context, email, displayName, role string) error {
+	i.Invites = append(i.Invites, InviteCall{Email: email, DisplayName: displayName, Role: role})
 	return i.Err
 }

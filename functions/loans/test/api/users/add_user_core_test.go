@@ -64,6 +64,11 @@ func TestAddUserCore_StaffInAppCompany_Succeeds(t *testing.T) {
 	if len(inviter.Invites) != 1 || inviter.Invites[0].Email != "jane@example.com" {
 		t.Fatalf("invite not sent: %+v", inviter.Invites)
 	}
+	// The requested role flows to the invite so the audience-tailored copy
+	// (staff vs borrower) can be chosen.
+	if inviter.Invites[0].Role != "teller" {
+		t.Fatalf("invite role = %q, want teller", inviter.Invites[0].Role)
+	}
 }
 
 func TestAddUserCore_BorrowerInSelfManaged_Succeeds(t *testing.T) {
