@@ -126,4 +126,36 @@ class UserNetworkService {
     return body['verified'] as bool;
   }
 
+  /// Sets the account password using a one-time [token] delivered via the
+  /// branded set-password / password-reset email.
+  ///
+  /// Unauthenticated on purpose — the [token] is the credential. On success the
+  /// backend also marks the email verified. Returns the account's email so the
+  /// caller can auto-sign-in by reusing the existing login flow.
+  Future<String> setPassword({
+    required String token,
+    required String newPassword,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$LOOOANS_BASE_API_URL/users/set-password'),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'token': token,
+        'newPassword': newPassword,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw HttpException(
+        'Set password failed: ${response.statusCode} ${response.body}',
+      );
+    }
+
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+    return data['data']['email'] as String;
+  }
+
 }

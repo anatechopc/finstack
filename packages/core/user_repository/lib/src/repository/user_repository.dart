@@ -136,6 +136,18 @@ class UserRepository implements BaseRepository<User> {
     );
   }
 
+  /// Sets the account password using a one-time [token] from the branded
+  /// set-password email. Returns the account's email for auto-sign-in.
+  Future<String> setPassword({
+    required String token,
+    required String newPassword,
+  }) {
+    return _networkService.setPassword(
+      token: token,
+      newPassword: newPassword,
+    );
+  }
+
   Future<void> addDevice({
     required String userId,
     required Device device,
