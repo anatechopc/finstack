@@ -1,3 +1,4 @@
+import 'package:authentication_repository/authentication_repository.dart';
 import 'package:collection/collection.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -6,6 +7,8 @@ import 'package:go_router/go_router.dart';
 import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/app/routing/route_utils.dart';
 import 'package:loooans/app/view/page_not_found.dart';
+import 'package:loooans/features/auth_action/cubit/auth_action_cubit.dart';
+import 'package:loooans/features/auth_action/screen/auth_action_screen.dart';
 import 'package:loooans/features/authentication/bloc/authentication_bloc.dart';
 import 'package:loooans/features/authentication/screen/email_verification_screen.dart';
 import 'package:loooans/features/authentication/screen/login_screen.dart';
@@ -135,6 +138,20 @@ RouterConfig<Object> buildAppRoutes() {
         path: Paths.login,
         builder: (context, state) {
           return LoginScreen();
+        },
+      ),
+      GoRoute(
+        path: Paths.authAction,
+        builder: (context, state) {
+          final qp = state.uri.queryParameters;
+          return BlocProvider(
+            create: (context) =>
+                AuthActionCubit(context.read<AuthenticationRepository>()),
+            child: AuthActionScreen(
+              mode: qp['mode'],
+              oobCode: qp['oobCode'],
+            ),
+          );
         },
       ),
       GoRoute(
