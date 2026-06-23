@@ -187,7 +187,7 @@ func SetPassword(w http.ResponseWriter, r *http.Request) {
 // and unusable tokens are 400; everything else is a 500.
 func writeSetPasswordError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, ErrMissingNewPassword), errors.Is(err, ErrInvalidSetPasswordToken):
+	case errors.Is(err, ErrMissingNewPassword), errors.Is(err, ErrWeakPassword), errors.Is(err, ErrInvalidSetPasswordToken):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
 		http.Error(w, err.Error(), http.StatusInternalServerError)

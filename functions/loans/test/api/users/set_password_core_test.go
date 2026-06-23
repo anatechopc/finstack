@@ -32,6 +32,20 @@ func TestSetPasswordCore_MissingPassword_Rejected(t *testing.T) {
 	}
 }
 
+func TestSetPasswordCore_WeakPassword_RejectedWithoutConsuming(t *testing.T) {
+	consumer := &fakes.SetPasswordTokenConsumer{UID: "uid-1", Email: "jane@example.com"}
+	setter := &fakes.PasswordSetter{}
+
+	_, err := users.HandleSetPasswordCore(context.Background(), "tok", "short", setPasswordDeps(consumer, setter))
+	if !errors.Is(err, users.ErrWeakPassword) {
+		t.Fatalf("expected ErrWeakPassword, got %v", err)
+	}
+	// A too-short password must NOT burn the one-time token.
+	if len(consumer.Calls) != 0 || len(setter.Sets) != 0 {
+		t.Fatalf("must not consume token / set password for weak password: consume=%v set=%v", consumer.Calls, setter.Sets)
+	}
+}
+
 func TestSetPasswordCore_EmptyToken_Invalid(t *testing.T) {
 	consumer := &fakes.SetPasswordTokenConsumer{UID: "uid-1", Email: "jane@example.com"}
 	setter := &fakes.PasswordSetter{}

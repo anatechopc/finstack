@@ -15,7 +15,15 @@ var (
 	// never reveals which it was.
 	ErrInvalidSetPasswordToken = errors.New("invalid, expired, or already-used token")
 	ErrMissingNewPassword      = errors.New("new password is required")
+	// ErrWeakPassword is returned when the password is shorter than the app's
+	// minimum. The frontend enforces the full policy (length + complexity); this
+	// is a backend safety net so a too-short password yields a clean 400 instead
+	// of bubbling up the Admin SDK error as a 500.
+	ErrWeakPassword = errors.New("new password is too short")
 )
+
+// minNewPasswordLength mirrors the app's minimum (registration form requires 8).
+const minNewPasswordLength = 8
 
 // SetPasswordDeps wires the collaborators the core needs, so the business logic
 // is unit-testable without Firebase. The real implementations are wired in the
@@ -40,6 +48,11 @@ type SetPasswordResult struct {
 func HandleSetPasswordCore(ctx context.Context, token, newPassword string, deps SetPasswordDeps) (SetPasswordResult, error) {
 	if strings.TrimSpace(newPassword) == "" {
 		return SetPasswordResult{}, ErrMissingNewPassword
+	}
+	// Reject a too-short password BEFORE consuming the token, so a weak attempt
+	// doesn't burn the one-time link.
+	if len(newPassword) < minNewPasswordLength {
+		return SetPasswordResult{}, ErrWeakPassword
 	}
 	if strings.TrimSpace(token) == "" {
 		return SetPasswordResult{}, ErrInvalidSetPasswordToken
