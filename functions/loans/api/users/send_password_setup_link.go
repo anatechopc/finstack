@@ -93,7 +93,9 @@ func buildRealSendPasswordSetupLinkDeps(ctx context.Context) (SendPasswordSetupL
 	}
 	return SendPasswordSetupLinkDeps{
 		SendInvite: func(ctx context.Context, email string) error {
-			return sendPasswordSetupEmail(ctx, authClient, email, "")
+			// Empty role → neutral reset copy (this endpoint backs both
+			// forgot-password and resend-invite; it has no role context).
+			return sendPasswordSetupEmail(ctx, authClient, email, "", "")
 		},
 	}, func() {}, nil
 }

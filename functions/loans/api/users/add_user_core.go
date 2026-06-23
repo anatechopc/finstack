@@ -44,8 +44,10 @@ type AddUserDeps struct {
 	GetAuthUIDByEmail   func(ctx context.Context, email string) (string, error)
 	DeleteAuthUser      func(ctx context.Context, uid string) error
 	WriteUserAndAddress func(ctx context.Context, uid string, user, address map[string]any) error
-	SendInvite          func(ctx context.Context, email, displayName string) error
-	GeneratePassword    func() string
+	// SendInvite emails the set-password invite. role selects the audience copy
+	// (borrower vs staff); see sendPasswordSetupEmail.
+	SendInvite       func(ctx context.Context, email, displayName, role string) error
+	GeneratePassword func() string
 }
 
 // AddUserResult is returned to the adapter to render the HTTP response.
@@ -157,7 +159,7 @@ func HandleAddUserCore(
 	}
 
 	inviteSent := true
-	if err := deps.SendInvite(ctx, email, displayName); err != nil {
+	if err := deps.SendInvite(ctx, email, displayName, role); err != nil {
 		inviteSent = false
 	}
 
