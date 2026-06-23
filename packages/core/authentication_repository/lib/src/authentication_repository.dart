@@ -94,6 +94,31 @@ class AuthenticationRepository {
     }
   }
 
+  /// Validates a Firebase password-reset oobCode and returns the email it's for.
+  Future<String> verifyPasswordResetCode(String code) async {
+    try {
+      return await _auth.verifyPasswordResetCode(code);
+    } on FirebaseAuthException catch (e) {
+      throw AuthenticationException(
+        message: e.message ?? 'Invalid or expired link',
+      );
+    }
+  }
+
+  /// Sets a new password for the account tied to the oobCode.
+  Future<void> confirmPasswordReset({
+    required String code,
+    required String newPassword,
+  }) async {
+    try {
+      await _auth.confirmPasswordReset(code: code, newPassword: newPassword);
+    } on FirebaseAuthException catch (e) {
+      throw AuthenticationException(
+        message: e.message ?? 'Could not set password',
+      );
+    }
+  }
+
   Future<void> updateUserPassword({
     required String currentPassword,
     required String newPassword,
