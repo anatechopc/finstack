@@ -82,6 +82,13 @@
           }
         },
         {
+          "source": "/api/users/set-password",
+          "run": {
+            "serviceId": "setpassword-development",
+            "region": "asia-east1"
+          }
+        },
+        {
           "source": "**",
           "destination": "/index.html"
         }
@@ -132,6 +139,13 @@
           }
         },
         {
+          "source": "/api/users/set-password",
+          "run": {
+            "serviceId": "setpassword-staging",
+            "region": "asia-east1"
+          }
+        },
+        {
           "source": "**",
           "destination": "/index.html"
         }
@@ -178,6 +192,13 @@
           "source": "/api/users/password/setup-link",
           "run": {
             "serviceId": "sendpasswordsetuplink-production",
+            "region": "asia-east1"
+          }
+        },
+        {
+          "source": "/api/users/set-password",
+          "run": {
+            "serviceId": "setpassword-production",
             "region": "asia-east1"
           }
         },
