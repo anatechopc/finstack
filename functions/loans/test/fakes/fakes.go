@@ -395,3 +395,40 @@ func (i *Inviter) Send(_ context.Context, email, displayName, role string) error
 	i.Invites = append(i.Invites, InviteCall{Email: email, DisplayName: displayName, Role: role})
 	return i.Err
 }
+
+// SetPasswordTokenConsumer fake — records every consume (the token hash passed
+// in) and returns a configurable (UID, Email, Err). Tests set Err to the core's
+// ErrInvalidSetPasswordToken sentinel to exercise the unusable-token path, or to
+// a transport error to exercise the 500 path.
+type SetPasswordTokenConsumer struct {
+	UID   string
+	Email string
+	Err   error
+	Calls []string
+}
+
+func (c *SetPasswordTokenConsumer) Consume(_ context.Context, tokenHash string) (string, string, error) {
+	c.Calls = append(c.Calls, tokenHash)
+	if c.Err != nil {
+		return "", "", c.Err
+	}
+	return c.UID, c.Email, nil
+}
+
+// PasswordSet records one set-password request.
+type PasswordSet struct {
+	UID         string
+	NewPassword string
+}
+
+// PasswordSetter fake — records every set-password call (uid + new password) and
+// returns a configurable Err so tests can assert error propagation.
+type PasswordSetter struct {
+	Sets []PasswordSet
+	Err  error
+}
+
+func (s *PasswordSetter) Set(_ context.Context, uid, newPassword string) error {
+	s.Sets = append(s.Sets, PasswordSet{UID: uid, NewPassword: newPassword})
+	return s.Err
+}
