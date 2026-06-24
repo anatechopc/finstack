@@ -69,8 +69,10 @@ func SetPasswordHandler(build SetPasswordDepsBuilder) http.HandlerFunc {
 		ctx := context.Background()
 		deps, cleanup, errBuild := build(ctx)
 		if errBuild != nil {
+			// Log the real cause for operators, but keep the body generic — the
+			// caller is unauthenticated and must not see internal wiring errors.
 			log.Error("error building deps: " + errBuild.Error())
-			http.Error(w, errBuild.Error(), http.StatusInternalServerError)
+			http.Error(w, "Internal error", http.StatusInternalServerError)
 			return
 		}
 		if cleanup != nil {
@@ -125,7 +127,11 @@ func buildRealSetPasswordDeps(ctx context.Context) (SetPasswordDeps, func(), err
 				q := fs.Collection(prefix+"password_setup_tokens").
 					Where("token_hash", "==", tokenHash).
 					Limit(1)
-				snap, iErr := tx.Documents(q).Next()
+				// Capture the iterator and Stop() it so the underlying RPC
+				// stream is released (repo convention; see triggers/*.go).
+				it := tx.Documents(q)
+				defer it.Stop()
+				snap, iErr := it.Next()
 				if iErr == iterator.Done {
 					return ErrInvalidSetPasswordToken
 				}
@@ -133,20 +139,16 @@ func buildRealSetPasswordDeps(ctx context.Context) (SetPasswordDeps, func(), err
 					return iErr
 				}
 
-				data := snap.Data()
-				// Already consumed → reject. used_at is nil/absent until consumed.
-				if usedAt, ok := data["used_at"]; ok && usedAt != nil {
-					return ErrInvalidSetPasswordToken
-				}
-				// Expired → reject. expires_at is int64 millis since epoch.
+				// Evaluate the doc BEFORE any write. A bad/expired/used/malformed
+				// doc returns an error here, so tx.Set (the used_at burn) never
+				// runs — the one-time link survives. nowMillis is computed once
+				// and reused for both the expiry check and the used_at stamp.
 				nowMillis := time.Now().UTC().UnixMilli()
-				expiresAt, _ := toInt64(data["expires_at"])
-				if expiresAt <= nowMillis {
-					return ErrInvalidSetPasswordToken
+				u, e, vErr := evaluateSetPasswordToken(snap.Data(), nowMillis)
+				if vErr != nil {
+					return vErr // bad/expired/used/malformed → do NOT mark used
 				}
-
-				uid, _ = data["uid"].(string)
-				email, _ = data["email"].(string)
+				uid, email = u, e
 
 				// Mark used atomically; firestore.MergeAll leaves the other
 				// fields untouched. The transaction commit is the point at which
@@ -188,10 +190,40 @@ func SetPassword(w http.ResponseWriter, r *http.Request) {
 func writeSetPasswordError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrMissingNewPassword), errors.Is(err, ErrWeakPassword), errors.Is(err, ErrInvalidSetPasswordToken):
+		// These sentinels are safe, client-actionable reasons.
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// Any other (transport) error is logged by the caller; keep the body
+		// generic so the unauthenticated client never sees internal details.
+		http.Error(w, "Internal error", http.StatusInternalServerError)
 	}
+}
+
+// evaluateSetPasswordToken decides whether a token doc is usable and extracts
+// its uid/email. Pure (no Firestore) so the consume decision logic is unit-
+// testable. A non-nil error means the token must NOT be consumed (so a bad,
+// expired, used, or malformed doc never burns the one-time link).
+func evaluateSetPasswordToken(data map[string]any, nowMillis int64) (uid, email string, err error) {
+	// Already consumed → reject. used_at is nil/absent until consumed.
+	if usedAt, ok := data["used_at"]; ok && usedAt != nil {
+		return "", "", ErrInvalidSetPasswordToken
+	}
+	// Expired OR malformed/missing expiry → reject (fails closed). Checking the
+	// ok flag guards against expires_at being stored as a Firestore Timestamp
+	// instead of int64 millis (the date-convention footgun) — that would
+	// otherwise silently reject every token as "expired".
+	expiresAt, ok := toInt64(data["expires_at"])
+	if !ok || expiresAt <= nowMillis {
+		return "", "", ErrInvalidSetPasswordToken
+	}
+	// A malformed doc with no uid/email must fail closed — never call
+	// UpdateUser with an empty uid (which would 500 AND burn the token).
+	uid, _ = data["uid"].(string)
+	email, _ = data["email"].(string)
+	if uid == "" || email == "" {
+		return "", "", ErrInvalidSetPasswordToken
+	}
+	return uid, email, nil
 }
 
 // toInt64 coerces a Firestore numeric field (which the SDK may return as int64
