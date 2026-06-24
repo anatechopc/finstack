@@ -176,7 +176,7 @@ func PaymentCreated(ctx context.Context, ev event.Event) error {
 
 	deps := PaymentCreatedDeps{
 		LoanIdForSchedule: func(ctx context.Context, scheduleId string) (string, error) {
-			doc, err := fs.Collection(collectionPrefix+"loan_schedules").Doc(scheduleId).Get(ctx)
+			doc, err := fs.Collection(collectionPrefix + "loan_schedules").Doc(scheduleId).Get(ctx)
 			if err != nil {
 				return "", fmt.Errorf("failed to get loan_schedule %s: %w", scheduleId, err)
 			}
@@ -186,7 +186,7 @@ func PaymentCreated(ctx context.Context, ev event.Event) error {
 			return "", nil
 		},
 		LoanInfo: func(ctx context.Context, loanId string) (string, string, error) {
-			doc, err := fs.Collection(collectionPrefix+"loans").Doc(loanId).Get(ctx)
+			doc, err := fs.Collection(collectionPrefix + "loans").Doc(loanId).Get(ctx)
 			if err != nil {
 				return "", "", fmt.Errorf("failed to get loan %s: %w", loanId, err)
 			}
@@ -199,7 +199,7 @@ func PaymentCreated(ctx context.Context, ev event.Event) error {
 			// so no composite submission_id+created_at index is required). The
 			// earliest payment is computed in code; a submission holds at most
 			// one payment per schedule, so the result set is small.
-			iter := fs.Collection(collectionPrefix + "payments").
+			iter := fs.Collection(collectionPrefix+"payments").
 				Where("submission_id", "==", submissionId).
 				Documents(ctx)
 			defer iter.Stop()
@@ -216,7 +216,7 @@ func PaymentCreated(ctx context.Context, ev event.Event) error {
 					return "", fmt.Errorf("failed to query submission %s: %w", submissionId, err)
 				}
 				id, _ := doc.Data()["id"].(string)
-				createdAt := paymentCreatedAtMillis(doc.Data()["created_at"])
+				createdAt, _ := utils.ToInt64(doc.Data()["created_at"])
 				if !found || createdAt < firstCreatedAt ||
 					(createdAt == firstCreatedAt && id < firstId) {
 					found = true
@@ -252,19 +252,4 @@ func extractPaymentCreate(data *firestoredata.DocumentEventData) (string, map[st
 	}
 	paymentId, _ := fields["id"].(string)
 	return paymentId, fields
-}
-
-// paymentCreatedAtMillis coerces a Firestore numeric created_at (stored as int
-// millis since epoch) to int64, tolerating int64/float64/int representations.
-func paymentCreatedAtMillis(v any) int64 {
-	switch n := v.(type) {
-	case int64:
-		return n
-	case float64:
-		return int64(n)
-	case int:
-		return int64(n)
-	default:
-		return 0
-	}
 }

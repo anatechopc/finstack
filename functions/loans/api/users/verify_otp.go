@@ -68,15 +68,8 @@ func VerifyOtpCore(ctx context.Context, token, receivedOtp string, deps VerifyOt
 		return false, ErrOtpNotFound
 	}
 
-	var expireAtMs int64
-	switch v := otpData["expire_at"].(type) {
-	case float64:
-		expireAtMs = int64(v)
-	case int64:
-		expireAtMs = v
-	case int:
-		expireAtMs = int64(v)
-	default:
+	expireAtMs, ok := utils2.ToInt64(otpData["expire_at"])
+	if !ok {
 		return false, ErrOtpNotFound
 	}
 	if deps.Now().UTC().UnixMilli() > expireAtMs {
