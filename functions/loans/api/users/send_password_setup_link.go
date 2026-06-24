@@ -80,8 +80,9 @@ func SendPasswordSetupLinkHandler(build SendPasswordSetupLinkDepsBuilder) http.H
 	}
 }
 
-// buildRealSendPasswordSetupLinkDeps wires the real Firebase Auth client for a
-// single request. Cleanup is a no-op (the Auth client needs no explicit close).
+// buildRealSendPasswordSetupLinkDeps wires the real Firebase clients (Auth,
+// Firestore) for a single request. The returned cleanup closes the Firestore
+// client (it now mints + stores a set-password token).
 func buildRealSendPasswordSetupLinkDeps(ctx context.Context) (SendPasswordSetupLinkDeps, func(), error) {
 	app, err := utils.InitializeFirebase(ctx)
 	if err != nil {
@@ -91,13 +92,18 @@ func buildRealSendPasswordSetupLinkDeps(ctx context.Context) (SendPasswordSetupL
 	if err != nil {
 		return SendPasswordSetupLinkDeps{}, nil, err
 	}
+	fs, err := app.Firestore(ctx)
+	if err != nil {
+		return SendPasswordSetupLinkDeps{}, nil, err
+	}
+	prefix := utils.GetCollectionPrefix()
 	return SendPasswordSetupLinkDeps{
 		SendInvite: func(ctx context.Context, email string) error {
 			// Empty role → neutral reset copy (this endpoint backs both
 			// forgot-password and resend-invite; it has no role context).
-			return sendPasswordSetupEmail(ctx, authClient, email, "", "")
+			return sendPasswordSetupEmail(ctx, authClient, fs, prefix, utils.GetSubdomain(), email, "", "")
 		},
-	}, func() {}, nil
+	}, func() { _ = fs.Close() }, nil
 }
 
 // SendPasswordSetupLink emails a set-password / reset link for the given email.

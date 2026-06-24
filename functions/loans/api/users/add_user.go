@@ -185,7 +185,7 @@ func buildRealAddUserDeps(ctx context.Context) (AddUserDeps, func(), error) {
 			return cErr
 		},
 		SendInvite: func(ctx context.Context, email, displayName, role string) error {
-			if err := sendPasswordSetupEmail(ctx, authClient, email, displayName, role); err != nil {
+			if err := sendPasswordSetupEmail(ctx, authClient, fs, prefix, utils.GetSubdomain(), email, displayName, role); err != nil {
 				log.Error("addUser: invite email failed", zap.String("email", email), zap.String("error", err.Error()))
 				return err
 			}
