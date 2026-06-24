@@ -171,7 +171,8 @@ type emailContent struct {
 // renderEmail wraps the per-audience copy in one branded, table-based HTML
 // shell with inline styles (robust across email clients, incl. Gmail). The
 // caller-supplied greeting is pre-escaped; lead/bullets/labels are static
-// trusted copy; link comes from the Firebase Admin SDK.
+// trusted copy; link is the server-built self-hosted /set-password URL
+// (buildSetPasswordLink — a url.QueryEscape'd random token, not user input).
 func renderEmail(c emailContent) string {
 	bullets := ""
 	if len(c.bullets) > 0 {

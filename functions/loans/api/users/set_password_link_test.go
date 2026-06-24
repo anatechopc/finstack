@@ -1,6 +1,7 @@
 package users
 
 import (
+	"errors"
 	"sort"
 	"strings"
 	"testing"
@@ -94,5 +95,33 @@ func TestNewSetPasswordTokenDoc_LocksConsumerFields(t *testing.T) {
 	}
 	if expiresAt-createdAt != setPasswordTokenTTL.Milliseconds() {
 		t.Errorf("expires_at - created_at = %d, want %d (setPasswordTokenTTL)", expiresAt-createdAt, setPasswordTokenTTL.Milliseconds())
+	}
+}
+
+// TestSetPasswordTokenDoc_RoundTripsThroughConsumer is the belt-and-suspenders
+// contract test: a doc minted by the producer (newSetPasswordTokenDoc) must be
+// ACCEPTED by the consumer (evaluateSetPasswordToken) while fresh, and rejected
+// once expired. Unlike TestNewSetPasswordTokenDoc_LocksConsumerFields (which
+// only locks the field NAMES), this catches a TYPE drift — e.g. if the producer
+// ever stored expires_at as a time.Time instead of int64 millis, the name-lock
+// test would still pass but every real consume would silently 400. Feeding the
+// real producer output through the real consumer guards that.
+func TestSetPasswordTokenDoc_RoundTripsThroughConsumer(t *testing.T) {
+	now := time.UnixMilli(1700000000000).UTC()
+	doc := newSetPasswordTokenDoc("hash-abc", "uid-1", "jane@example.com", now)
+
+	// Fresh token, evaluated 1ms after creation (well within the TTL) → usable.
+	uid, email, err := evaluateSetPasswordToken(doc, now.UnixMilli()+1)
+	if err != nil {
+		t.Fatalf("fresh producer doc rejected by consumer: %v", err)
+	}
+	if uid != "uid-1" || email != "jane@example.com" {
+		t.Fatalf("round-trip uid/email = (%q, %q), want (uid-1, jane@example.com)", uid, email)
+	}
+
+	// One millisecond past expiry → rejected as the opaque sentinel.
+	_, _, err = evaluateSetPasswordToken(doc, now.Add(setPasswordTokenTTL).UnixMilli()+1)
+	if !errors.Is(err, ErrInvalidSetPasswordToken) {
+		t.Fatalf("expired producer doc: err = %v, want ErrInvalidSetPasswordToken", err)
 	}
 }
