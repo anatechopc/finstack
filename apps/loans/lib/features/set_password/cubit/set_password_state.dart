@@ -16,8 +16,6 @@ final class SetPasswordState {
     this.errorMessage,
   });
 
-  const SetPasswordState.ready() : this._();
-
   const SetPasswordState.submitting()
       : this._(status: SetPasswordStatus.submitting);
 

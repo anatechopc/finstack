@@ -45,6 +45,11 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
   // ignore: use_late_for_private_fields_and_variables
   String? _submittedPassword;
 
+  /// True once we've dispatched an auto-sign-in from this screen. Gates the
+  /// AuthenticationBloc listener so we only react to auth transitions WE
+  /// caused (not unrelated app-scoped auth state changes).
+  bool _loginDispatched = false;
+
   bool get _hasToken => widget.token != null && widget.token!.isNotEmpty;
 
   @override
@@ -63,12 +68,20 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
         BlocListener<SetPasswordCubit, SetPasswordState>(
           listenWhen: (prev, curr) => curr.status == SetPasswordStatus.done,
           listener: (context, state) {
-            // Reuse the existing login flow for sign-in (session loading,
-            // verify-gate, etc.) instead of reimplementing it.
-            context.read<AuthenticationBloc>().login(
-                  email: state.email!,
-                  password: _submittedPassword!,
-                );
+            final password = _submittedPassword;
+            final email = state.email;
+            // Password is set. If we have the email, auto-sign-in via the
+            // existing login flow; otherwise (malformed 200 / no email) send
+            // them to sign in manually rather than getting stuck.
+            if (email != null && email.isNotEmpty && password != null) {
+              _loginDispatched = true;
+              context.read<AuthenticationBloc>().login(
+                    email: email,
+                    password: password,
+                  );
+            } else {
+              _goToSignIn(context, 'Your password is set. Please sign in.');
+            }
           },
         ),
         BlocListener<SetPasswordCubit, SetPasswordState>(
@@ -83,6 +96,7 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
         ),
         BlocListener<AuthenticationBloc, AuthenticationState>(
           listener: (context, state) {
+            if (!_loginDispatched) return; // ignore auth states we didn't cause
             if (state.status == AuthenticationStateStatus.verify) {
               // Send to the verification hub — it shows both email and mobile
               // status and routes to the appropriate leaf when the user taps
@@ -95,11 +109,9 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
                 GoRouter.of(context).go(Paths.dashboard);
               }
             } else if (state.status == AuthenticationStateStatus.error) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(state.message ?? 'Login failed'),
-                ),
-              );
+              // Auto-sign-in failed but the password IS set — route to sign in
+              // instead of leaving the user on the "Signing you in…" spinner.
+              _goToSignIn(context, 'Your password was set. Please sign in.');
             }
           },
         ),
@@ -153,6 +165,13 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
         },
       ),
     );
+  }
+
+  void _goToSignIn(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+    GoRouter.of(context).go(Paths.login);
   }
 
   Widget _shell({required Widget child}) {

@@ -32,10 +32,13 @@ class SetPasswordCubit extends Cubit<SetPasswordState> {
         token: token,
         newPassword: newPassword,
       );
+      // email may be '' if the 200 body lacked it — the screen handles that.
       emit(SetPasswordState.done(email: email));
-    } catch (err) {
-      if (err.toString().contains('400')) {
-        log.warning('set password rejected (invalid/expired token): $err');
+    } on SetPasswordException catch (e) {
+      // 400 == bad/expired/used token (the form already enforces password
+      // strength client-side, so a 400 here is the token).
+      if (e.statusCode == 400) {
+        log.warning('set password rejected (invalid/expired token): $e');
         emit(
           const SetPasswordState.invalidToken(
             errorMessage:
@@ -43,13 +46,21 @@ class SetPasswordCubit extends Cubit<SetPasswordState> {
           ),
         );
       } else {
-        log.severe('set password error: $err', err);
+        log.severe('set password failed: $e');
         emit(
           const SetPasswordState.error(
             errorMessage: 'Could not set your password. Please try again.',
           ),
         );
       }
+    } catch (err) {
+      // Network/transport error — the password was not set; retryable.
+      log.severe('set password error: $err', err);
+      emit(
+        const SetPasswordState.error(
+          errorMessage: 'Could not set your password. Please try again.',
+        ),
+      );
     }
   }
 }

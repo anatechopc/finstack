@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:loooans/features/set_password/cubit/set_password_cubit.dart';
@@ -41,13 +39,29 @@ void main() {
     );
 
     blocTest<SetPasswordCubit, SetPasswordState>(
-      'emits submitting then invalidToken on a 400-ish error',
+      'emits submitting then done(empty email) when the 200 body lacks email',
       setUp: () {
         when(
           () => repository.setPassword(token: token, newPassword: password),
-        ).thenThrow(
-          const HttpException('Set password failed: 400 invalid token'),
-        );
+        ).thenAnswer((_) async => '');
+      },
+      build: build,
+      act: (cubit) => cubit.submit(token: token, newPassword: password),
+      expect: () => [
+        isA<SetPasswordState>()
+            .having((s) => s.status, 'status', SetPasswordStatus.submitting),
+        isA<SetPasswordState>()
+            .having((s) => s.status, 'status', SetPasswordStatus.done)
+            .having((s) => s.email, 'email', ''),
+      ],
+    );
+
+    blocTest<SetPasswordCubit, SetPasswordState>(
+      'emits submitting then invalidToken on a 400 SetPasswordException',
+      setUp: () {
+        when(
+          () => repository.setPassword(token: token, newPassword: password),
+        ).thenThrow(SetPasswordException(400, 'invalid or expired token'));
       },
       build: build,
       act: (cubit) => cubit.submit(token: token, newPassword: password),
@@ -61,11 +75,30 @@ void main() {
     );
 
     blocTest<SetPasswordCubit, SetPasswordState>(
-      'emits submitting then error on a non-400 error',
+      'emits submitting then error on a non-400 SetPasswordException '
+      '(NOT invalidToken)',
       setUp: () {
         when(
           () => repository.setPassword(token: token, newPassword: password),
-        ).thenThrow(Exception('network down'));
+        ).thenThrow(SetPasswordException(500, 'internal server error'));
+      },
+      build: build,
+      act: (cubit) => cubit.submit(token: token, newPassword: password),
+      expect: () => [
+        isA<SetPasswordState>()
+            .having((s) => s.status, 'status', SetPasswordStatus.submitting),
+        isA<SetPasswordState>()
+            .having((s) => s.status, 'status', SetPasswordStatus.error)
+            .having((s) => s.errorMessage, 'errorMessage', isNotNull),
+      ],
+    );
+
+    blocTest<SetPasswordCubit, SetPasswordState>(
+      'emits submitting then error on a generic transport exception',
+      setUp: () {
+        when(
+          () => repository.setPassword(token: token, newPassword: password),
+        ).thenThrow(Exception('network'));
       },
       build: build,
       act: (cubit) => cubit.submit(token: token, newPassword: password),
