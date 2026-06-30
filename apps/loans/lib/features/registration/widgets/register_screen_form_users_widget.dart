@@ -213,12 +213,14 @@ class RegisterScreenFormUsersWidget extends StatelessWidget {
               ? AppColors.white
               : defaultInputColor,
         ),
-        AppWidgets.defaultFormBuilderTextField(
-          name: 'business_name',
-          label: 'Business name(optional)',
-          borderColor: defaultInputColor,
-          helperText: 'Optional but highly encouraged to fill up',
-        ),
+        // Business name is borrower-oriented; staff invites don't need it.
+        if (!isTeamMemberMode)
+          AppWidgets.defaultFormBuilderTextField(
+            name: 'business_name',
+            label: 'Business name(optional)',
+            borderColor: defaultInputColor,
+            helperText: 'Optional but highly encouraged to fill up',
+          ),
       ]
           .mapIndexed((index, widget) {
             return [

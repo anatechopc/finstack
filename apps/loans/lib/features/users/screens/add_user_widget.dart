@@ -22,6 +22,20 @@ import 'package:loooans/utils/debounce.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 
+/// The dialog title for [AddUserWidget], derived from its mode.
+///
+/// - Loan-application flow ([extendedDetailsOnly] is false) → "Add loan".
+/// - Extended-details flow → "Add team member" for staff invites
+///   ([isTeamMember] true), otherwise "Add borrower".
+@visibleForTesting
+String addUserWidgetTitle({
+  required bool extendedDetailsOnly,
+  required bool isTeamMember,
+}) {
+  if (!extendedDetailsOnly) return 'Add loan';
+  return isTeamMember ? 'Add team member' : 'Add borrower';
+}
+
 class AddUserWidget extends StatefulWidget {
   const AddUserWidget({
     super.key,
@@ -183,9 +197,10 @@ class _AddUserWidgetState extends State<AddUserWidget> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            !onlyExtendedUserDetailsInput
-                ? 'Add loan'
-                : 'Add borrower',
+            addUserWidgetTitle(
+              extendedDetailsOnly: onlyExtendedUserDetailsInput,
+              isTeamMember: widget.isTeamMember,
+            ),
             style: const TextStyle(
               fontSize: 24,
               color: AppColors.black,
