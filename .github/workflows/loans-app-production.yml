@@ -198,8 +198,19 @@ jobs:
       - name: Build Web
         run: flutter build web -t lib/main_production.dart --release --dart-define=ENVIRONMENT=production --output build/web/production
 
+      # Run the Firebase deploy tooling on Node 24 (Node 20 is deprecated).
+      - name: Set up Node for Firebase tooling
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
+        env:
+          # Disable Node 20+ Happy-Eyeballs (autoSelectFamily) IPv6/IPv4 racing,
+          # the cause of "Premature close" on keep-alive connections to googleapis.
+          # firebase-tools recovers every call except the non-idempotent release
+          # POST, which then false-400s ("is the current active version").
+          NODE_OPTIONS: --no-network-family-autoselection
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LOOOANS_PROD }}
