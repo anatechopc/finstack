@@ -18,10 +18,23 @@ import 'package:loooans/features/users/widget/add_user/borrower_details_section.
 import 'package:loooans/features/users/widget/add_user/choose_loan_section.dart';
 import 'package:loooans/features/users/widget/add_user/loan_form_fields_section.dart';
 import 'package:loooans/features/users/widget/add_user/loan_review_section.dart';
-import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/utils/debounce.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
+
+/// The dialog title for [AddUserWidget], derived from its mode.
+///
+/// - Loan-application flow ([extendedDetailsOnly] is false) → "Add loan".
+/// - Extended-details flow → "Add team member" for staff invites
+///   ([isTeamMember] true), otherwise "Add borrower".
+@visibleForTesting
+String addUserWidgetTitle({
+  required bool extendedDetailsOnly,
+  required bool isTeamMember,
+}) {
+  if (!extendedDetailsOnly) return 'Add loan';
+  return isTeamMember ? 'Add team member' : 'Add borrower';
+}
 
 class AddUserWidget extends StatefulWidget {
   const AddUserWidget({
@@ -29,11 +42,13 @@ class AddUserWidget extends StatefulWidget {
     this.withLoanApplication = false,
     this.withExtendedUserDetailInputs = false,
     this.allowAddOns,
+    this.isTeamMember = false,
   });
 
   final bool withLoanApplication;
   final bool withExtendedUserDetailInputs;
   final bool? allowAddOns;
+  final bool isTeamMember;
 
   @override
   State<AddUserWidget> createState() => _AddUserWidgetState();
@@ -182,9 +197,10 @@ class _AddUserWidgetState extends State<AddUserWidget> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            !onlyExtendedUserDetailsInput
-                ? 'Add loan'
-                : 'Add borrower',
+            addUserWidgetTitle(
+              extendedDetailsOnly: onlyExtendedUserDetailsInput,
+              isTeamMember: widget.isTeamMember,
+            ),
             style: const TextStyle(
               fontSize: 24,
               color: AppColors.black,
@@ -251,8 +267,8 @@ class _AddUserWidgetState extends State<AddUserWidget> {
       return RegisterScreenFormUsersWidget(
         disableWidthConstraints: true,
         defaultInputColor: AppColors.black,
-        isUserCompanyManaged:
-            AuthenticationService.instance.allowAddClients,
+        isAdminCreating: true,
+        isTeamMemberMode: widget.isTeamMember,
       );
     } else {
       return Column(

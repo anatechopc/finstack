@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/app/true_false_cubit.dart';
 import 'package:loooans/features/authentication/bloc/authentication_bloc.dart';
+import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
@@ -28,7 +29,17 @@ class LoginScreen extends StatelessWidget {
           // a card.
           GoRouter.of(context).go(Paths.verify);
         } else if (state.status == AuthenticationStateStatus.success) {
-          if (!SettingsService.instance.appUseClassicUI) {
+          // A success without a logged-in user is a non-login flow (e.g. the
+          // "Forgot password" reset-link request). Surface its message inline
+          // and stay on the login screen instead of navigating into the app.
+          if (!AuthenticationService.instance.isLoggedIn) {
+            final message = state.message;
+            if (message != null) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(message)),
+              );
+            }
+          } else if (!SettingsService.instance.appUseClassicUI) {
             GoRouter.of(context).go(Paths.index);
           } else {
             GoRouter.of(context).go(Paths.dashboard);
@@ -214,9 +225,15 @@ class LoginScreen extends StatelessWidget {
                     color: AppColors.blue,
                   ),
                   recognizer: TapGestureRecognizer()
-                    ..onTap = () {
-                      debugPrint('Forgot password');
-                      // context.read<AuthenticationBloc>().requestOtp();
+                    ..onTap = () async {
+                      final email = await _showForgotPasswordDialog(context);
+                      if (email != null &&
+                          email.trim().isNotEmpty &&
+                          context.mounted) {
+                        context
+                            .read<AuthenticationBloc>()
+                            .forgotPassword(email.trim());
+                      }
                     },
                 ),
               ),
@@ -225,5 +242,41 @@ class LoginScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// Prompts for an email address to send a password set/reset link to.
+  /// Returns the entered email, or null if the dialog was dismissed.
+  Future<String?> _showForgotPasswordDialog(BuildContext context) {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Forgot password'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.emailAddress,
+            decoration: const InputDecoration(
+              labelText: 'Email address',
+              hintText: 'you@example.com',
+            ),
+            onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
+          ),
+          actions: [
+            AppWidgets.defaultOutlinedButton(
+              child: const Text('Cancel'),
+              onPressed: () => Navigator.of(dialogContext).pop(),
+            ),
+            AppWidgets.defaultFilledButton(
+              backgroundColor: AppColors.blue,
+              foregroundColor: AppColors.black,
+              child: const Text('Send'),
+              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+            ),
+          ],
+        );
+      },
+    ).whenComplete(controller.dispose);
   }
 }

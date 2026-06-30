@@ -11,12 +11,13 @@ class SubmitUserRegistrationEvent extends RegistrationEvent {
   final Map<String, dynamic> fields;
 }
 
-class SubmitManagedUserRegistrationEvent extends RegistrationEvent {
-
-  SubmitManagedUserRegistrationEvent({
-    required this.fields,
-  });
+class SubmitInvitedUserEvent extends RegistrationEvent {
+  SubmitInvitedUserEvent({required this.fields, required this.role});
   final Map<String, dynamic> fields;
+
+  /// The role assigned to the invited user: a staff role for "Add team member"
+  /// or [UserRole.customer] for "Add borrower". The server re-validates it.
+  final UserRole role;
 }
 
 class SubmitProviderRegistrationEvent extends RegistrationEvent {

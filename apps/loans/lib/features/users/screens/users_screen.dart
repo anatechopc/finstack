@@ -42,6 +42,29 @@ class _UsersScreenState extends State<UsersScreen> {
     final isCompactOrMedium =
         getScreenSize(context: context).index <= ScreenSize.medium.index;
 
+    return BlocListener<UserBloc, UserState>(
+      listenWhen: (prev, curr) =>
+          (curr.status == UserStatus.success &&
+              curr.message == UserBloc.resendInviteSuccessMessage) ||
+          (curr.status == UserStatus.error &&
+              curr.message == UserBloc.resendInviteErrorMessage),
+      listener: (context, state) {
+        final message = state.message;
+        if (message == null) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      },
+      child: _body(context, isCompactOrMedium: isCompactOrMedium),
+    );
+  }
+
+  Widget _body(
+    BuildContext context, {
+    required bool isCompactOrMedium,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -119,22 +142,39 @@ class _UsersScreenState extends State<UsersScreen> {
                             ),
                           ],
                         ),
-                        Column(
+                        Row(
                           mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
-                            Text(
-                              item.emailAddress,
+                            Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  item.emailAddress,
+                                ),
+                                Text(
+                                  item.createdAt
+                                      .toDefaultDateFormatWithDayExtended(),
+                                  style: TextStyle(
+                                    color:
+                                        AppColors.white.withValues(alpha: 0.6),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
                             ),
-                            Text(
-                              item.createdAt
-                                  .toDefaultDateFormatWithDayExtended(),
-                              style: TextStyle(
-                                color: AppColors.white.withValues(alpha: 0.6),
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
+                            if (_canResendInvite(item)) ...[
+                              const Gap(8),
+                              IconButton(
+                                tooltip: 'Resend invite',
+                                color: AppColors.white,
+                                icon: const Icon(Icons.mark_email_unread),
+                                onPressed: () => context
+                                    .read<UserBloc>()
+                                    .resendInvite(item.emailAddress),
                               ),
-                            ),
+                            ],
                           ],
                         ),
                       ],
@@ -152,6 +192,19 @@ class _UsersScreenState extends State<UsersScreen> {
         ),
       ],
     );
+  }
+
+  /// Whether the current viewer can resend an invite to [user]: the viewer must
+  /// be an admin (matching the backend's add-user gate), the target user must
+  /// have been admin-invited, and must have an email address to send the setup
+  /// link to.
+  bool _canResendInvite(User user) {
+    final viewer = AuthenticationService.instance.user;
+    final canManage = viewer.isAdmin() || viewer.isAppAdmin();
+
+    return canManage &&
+        user.invitedByAdmin &&
+        user.emailAddress.trim().isNotEmpty;
   }
 
   Widget header(
@@ -176,18 +229,16 @@ class _UsersScreenState extends State<UsersScreen> {
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (![
-              UserRole.customer,
-              UserRole.reviewModerator,
-            ].contains(AuthenticationService.instance.user.userRole)) ...[
+            if (AuthenticationService.instance.user.isAdmin() ||
+                AuthenticationService.instance.user.isAppAdmin()) ...[
               AppWidgets.defaultOutlinedButton(
                 foregroundColor: AppColors.white,
-                child: const Text('Add User'),
+                child: const Text('Add team member'),
                 onPressed: () {
                   AppWidgets.showAddUserWidget(
                     context,
-                    forCompanyUser: true,
                     withExtendedUserDetailInputs: true,
+                    isTeamMember: true,
                   );
                 },
               ),

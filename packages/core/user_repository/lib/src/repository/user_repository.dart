@@ -88,18 +88,25 @@ class UserRepository implements BaseRepository<User> {
         .then((value) => value.toUser());
   }
 
-  Future<String> createUserAccess({
-    required String displayName,
-    required String email,
-    required String password,
+  /// Provisions a user server-side. Returns the server-minted uid and whether
+  /// the invite email was sent. See [UserNetworkService.createUser].
+  Future<({String uid, bool inviteSent})> createUser({
+    required String role,
+    required Map<String, dynamic> user,
     required String idToken,
-  }) async {
-    return _networkService.createUserAccess(
-      displayName: displayName,
-      email: email,
-      password: password,
+    Map<String, dynamic>? address,
+  }) {
+    return _networkService.createUser(
+      role: role,
+      user: user,
       idToken: idToken,
+      address: address,
     );
+  }
+
+  /// Requests a set-password / reset link email for [email].
+  Future<void> sendPasswordSetupLink({required String email}) {
+    return _networkService.sendPasswordSetupLink(email: email);
   }
 
   Future<RequestOtpResponse> requestOtp({
@@ -133,6 +140,18 @@ class UserRepository implements BaseRepository<User> {
       idToken: idToken,
       token: token,
       otp: otp,
+    );
+  }
+
+  /// Sets the account password using a one-time [token] from the branded
+  /// set-password email. Returns the account's email for auto-sign-in.
+  Future<String> setPassword({
+    required String token,
+    required String newPassword,
+  }) {
+    return _networkService.setPassword(
+      token: token,
+      newPassword: newPassword,
     );
   }
 

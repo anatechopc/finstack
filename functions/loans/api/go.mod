@@ -7,6 +7,7 @@ require (
 	com.loooans.app/utils v0.0.0-00010101000000-000000000000
 	firebase.google.com/go/v4 v4.13.0
 	go.uber.org/zap v1.26.0
+	google.golang.org/api v0.114.0
 	google.golang.org/grpc v1.56.3
 )
 
@@ -35,7 +36,6 @@ require (
 	golang.org/x/text v0.13.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
-	google.golang.org/api v0.114.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/appengine/v2 v2.0.2 // indirect
 	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 // indirect

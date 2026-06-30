@@ -16,17 +16,6 @@ final class SelectUserEvent extends UserEvent {
       ];
 }
 
-final class AddUserEvent extends UserEvent {
-
-  const AddUserEvent({required this.fields});
-  final Map<String, dynamic> fields;
-
-  @override
-  List<Object?> get props => [
-        fields,
-      ];
-}
-
 final class UpdateUserEvent extends UserEvent {
 
   const UpdateUserEvent({
@@ -40,5 +29,16 @@ final class UpdateUserEvent extends UserEvent {
   List<Object?> get props => [
         fields,
         user,
+      ];
+}
+
+final class ResendInviteEvent extends UserEvent {
+
+  const ResendInviteEvent({required this.email});
+  final String email;
+
+  @override
+  List<Object?> get props => [
+        email,
       ];
 }

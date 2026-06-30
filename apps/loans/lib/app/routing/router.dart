@@ -24,6 +24,8 @@ import 'package:loooans/features/registration/screens/register_screen.dart';
 import 'package:loooans/features/registration/screens/registration_complete_screen.dart';
 import 'package:loooans/features/reports/bloc/reports_bloc.dart';
 import 'package:loooans/features/reports/screen/dashboard_screen.dart';
+import 'package:loooans/features/set_password/cubit/set_password_cubit.dart';
+import 'package:loooans/features/set_password/screen/set_password_screen.dart';
 import 'package:loooans/features/users/screens/loan_client_detail.dart';
 import 'package:loooans/features/users/screens/update_profile_screen.dart';
 import 'package:loooans/features/users/screens/users_screen.dart';
@@ -135,6 +137,17 @@ RouterConfig<Object> buildAppRoutes() {
         path: Paths.login,
         builder: (context, state) {
           return LoginScreen();
+        },
+      ),
+      GoRoute(
+        path: Paths.setPassword,
+        builder: (context, state) {
+          final token = state.uri.queryParameters['token'];
+
+          return BlocProvider(
+            create: (context) => SetPasswordCubit(context.read<UserRepository>()),
+            child: SetPasswordScreen(token: token),
+          );
         },
       ),
       GoRoute(
