@@ -34,3 +34,9 @@ class SignOutEvent extends AuthenticationEvent {
   SignOutEvent({ this.silent = false,});
   final bool silent;
 }
+
+class ForgotPasswordEvent extends AuthenticationEvent {
+
+  ForgotPasswordEvent({required this.email});
+  final String email;
+}

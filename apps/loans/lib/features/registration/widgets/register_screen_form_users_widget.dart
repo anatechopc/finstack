@@ -21,13 +21,21 @@ class RegisterScreenFormUsersWidget extends StatelessWidget {
     this.disableWidthConstraints = false,
     this.showTermsAndConditions = true,
     this.defaultInputColor = AppColors.green2,
-    this.isUserCompanyManaged = false,
+    this.isAdminCreating = false,
+    this.isTeamMemberMode = false,
     this.showAsDialog = false,
   });
 
   final bool disableWidthConstraints;
   final bool showTermsAndConditions;
-  final bool isUserCompanyManaged;
+
+  /// True when an admin adds a user (vs a person self-registering). Admin-added
+  /// users are provisioned server-side, so no password/KYC is collected here.
+  final bool isAdminCreating;
+
+  /// True for "Add team member" (shows the staff role picker). False for
+  /// "Add borrower" (role fixed to customer) and for self-registration.
+  final bool isTeamMemberMode;
   final bool showAsDialog;
 
   final _formKey = GlobalKey<FormBuilderState>();
@@ -111,13 +119,18 @@ class RegisterScreenFormUsersWidget extends StatelessWidget {
                   backgroundColor: AppColors.blue,
                   onPressed: () {
                     if (_formKey.currentState?.saveAndValidate() ?? false) {
-                      if (!isUserCompanyManaged) {
-                        context.read<RegistrationBloc>().registerUser(
-                              _formKey.currentState!.value,
+                      final values = _formKey.currentState!.value;
+                      if (!isAdminCreating) {
+                        context.read<RegistrationBloc>().registerUser(values);
+                      } else if (isTeamMemberMode) {
+                        context.read<RegistrationBloc>().registerInvitedUser(
+                              values,
+                              role: values['user_role'] as UserRole,
                             );
                       } else {
-                        context.read<RegistrationBloc>().registerManagedUser(
-                              _formKey.currentState!.value,
+                        context.read<RegistrationBloc>().registerInvitedUser(
+                              values,
+                              role: UserRole.customer,
                             );
                       }
                     }
@@ -200,12 +213,14 @@ class RegisterScreenFormUsersWidget extends StatelessWidget {
               ? AppColors.white
               : defaultInputColor,
         ),
-        AppWidgets.defaultFormBuilderTextField(
-          name: 'business_name',
-          label: 'Business name(optional)',
-          borderColor: defaultInputColor,
-          helperText: 'Optional but highly encouraged to fill up',
-        ),
+        // Business name is borrower-oriented; staff invites don't need it.
+        if (!isTeamMemberMode)
+          AppWidgets.defaultFormBuilderTextField(
+            name: 'business_name',
+            label: 'Business name(optional)',
+            borderColor: defaultInputColor,
+            helperText: 'Optional but highly encouraged to fill up',
+          ),
       ]
           .mapIndexed((index, widget) {
             return [
@@ -222,28 +237,31 @@ class RegisterScreenFormUsersWidget extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (isTeamMemberMode)
+          AppWidgets.defaultFormBuilderDropdown(
+            name: 'user_role',
+            label: 'Role',
+            items: UserRole.companyManagedRoles
+                .map((r) => DropdownMenuItem(value: r, child: Text(r.label)))
+                .toList(),
+            validator: FormBuilderValidators.required(),
+            borderColor: defaultInputColor,
+            dropdownColor: defaultInputColor == AppColors.black
+                ? AppColors.white
+                : defaultInputColor,
+          ),
         AppWidgets.defaultFormBuilderTextField(
           name: 'email_address',
           label: 'Email address',
           borderColor: defaultInputColor,
           validator: FormBuilderValidators.compose([
-            if (!isUserCompanyManaged)
-              FormBuilderValidators.email(
-                errorText: 'Please enter a valid email address',
-              ),
-            // for managed, require and check validity only if not empty
-            (val) {
-              if (val != null && val.isNotEmpty) {
-                if (!val.isEmailValid()) {
-                  return 'Please enter a valid email address';
-                }
-              }
-
-              return null;
-            }
+            FormBuilderValidators.required(errorText: 'Email is required'),
+            FormBuilderValidators.email(
+              errorText: 'Please enter a valid email address',
+            ),
           ]),
         ),
-        if (!isUserCompanyManaged) ...[
+        if (!isAdminCreating) ...[
           BlocProvider(
             create: (context) => TrueFalseCubit(),
             lazy: false,
@@ -296,10 +314,10 @@ class RegisterScreenFormUsersWidget extends StatelessWidget {
           label: 'Profile picture',
           svgLogoPath: 'svg/profile_picture_upload.svg',
           validator:
-              !isUserCompanyManaged ? FormBuilderValidators.required() : null,
+              !isAdminCreating ? FormBuilderValidators.required() : null,
           color: defaultInputColor,
         ),
-        if (!isUserCompanyManaged)
+        if (!isAdminCreating)
           AppWidgets.defaultButtonMediaChooser(
             context,
             name: 'selfie_valid_id',

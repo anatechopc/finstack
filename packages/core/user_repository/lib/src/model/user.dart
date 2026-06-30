@@ -53,6 +53,7 @@ class User extends UserEntity implements BaseModel<UserEntity> {
       ..verificationStatus = UserVerificationStatus.unverified.value
       ..mobileVerifiedAt = null
       ..companyId = companyId
+      ..invitedByAdmin = false
       ..sex = sex
       ..employmentDetails = employmentDetails
       ..businessName = businessName;
@@ -100,20 +101,36 @@ class User extends UserEntity implements BaseModel<UserEntity> {
       ..verificationStatus = UserVerificationStatus.unverified.value
       ..mobileVerifiedAt = null
       ..companyId = companyId
+      ..invitedByAdmin = false
       ..sex = sex
       ..employmentDetails = employmentDetails
       ..businessName = businessName;
   }
 
-  /// creates a new user model for a company managed customer
-  factory User.createManagedCustomer({
+  /// Creates a user for the admin "Add team member / Add borrower" flow. The
+  /// account is provisioned server-side, so [id] is left as [NO_ID] (the
+  /// backend stamps the real Firebase Auth uid). Email is required because the
+  /// user is invited by email and must pass the email-verification gate.
+  factory User.createInvited({
+    required UserRole role,
     required String firstName,
     required String lastName,
     required String mobileNumber,
-    required ImageUrl? profilePhotoUrl, required ImageUrl? photoWithValidIdUrl, required DateTime birthDate, required Sex sex, required EmploymentDetails employmentDetails, required String companyId, String? emailAddress,
+    required String emailAddress,
+    required DateTime birthDate,
+    required Sex sex,
+    required EmploymentDetails employmentDetails,
+    String? companyId,
+    ImageUrl? profilePhotoUrl,
+    ImageUrl? photoWithValidIdUrl,
     String? middleName,
     String? businessName,
+    String? facebookProfileUrl,
   }) {
+    if (emailAddress.trim().isEmpty) {
+      throw Exception('Email address is required for invited users');
+    }
+
     final now = DateTime.timestamp();
 
     return User()
@@ -125,18 +142,20 @@ class User extends UserEntity implements BaseModel<UserEntity> {
       ..middleName = middleName
       ..birthDate = birthDate
       ..mobileNumber = mobileNumber
-      ..emailAddress = emailAddress ?? ''
-      ..userRole = UserRole.customer
+      ..emailAddress = emailAddress
+      ..userRole = role
       ..profilePhotoUrl = profilePhotoUrl
       ..photoWithValidIdUrl = photoWithValidIdUrl
+      ..facebookProfileUrl = facebookProfileUrl
       ..karma = 0
       ..aiVerifyRef = null
       ..verificationStatus = UserVerificationStatus.unverified.value
       ..mobileVerifiedAt = null
+      ..companyId = companyId
+      ..invitedByAdmin = false
       ..sex = sex
       ..employmentDetails = employmentDetails
-      ..businessName = businessName
-      ..companyId = companyId;
+      ..businessName = businessName;
   }
 
   factory User.createPlaceholder({
@@ -163,6 +182,7 @@ class User extends UserEntity implements BaseModel<UserEntity> {
       ..aiVerifyRef = null
       ..verificationStatus = UserVerificationStatus.unverified.value
       ..mobileVerifiedAt = null
+      ..invitedByAdmin = false
       ..sex = Sex.male
       ..employmentDetails = EmploymentDetails.createBlank()
       ..businessName = null;

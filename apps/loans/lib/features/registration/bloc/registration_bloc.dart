@@ -29,15 +29,38 @@ class RegistrationBloc extends Bloc<RegistrationEvent, RegistrationState> {
         super(RegisterInitial()) {
     on(_handleSubmitUserRegistrationEvent);
     on(_handleSubmitProviderRegistrationEvent);
-    on(_handleSubmitManagedUserRegistrationEvent);
+    on(_handleSubmitInvitedUser);
+  }
+
+  RegistrationBloc.withDependencies({
+    required AuthenticationRepository authenticationRepository,
+    required UserRepository userRepository,
+    required StorageRepository storageRepository,
+    required BaseRepository<Company> companyRepository,
+    required BaseRepository<Address> addressRepository,
+    AuthenticationService? authService,
+  })  : authService = authService ?? AuthenticationService.instance,
+        _authenticationRepository = authenticationRepository,
+        _userRepository = userRepository,
+        _storageRepository = storageRepository,
+        _companyRepository = companyRepository,
+        _addressRepository = addressRepository,
+        super(RegisterInitial()) {
+    on(_handleSubmitUserRegistrationEvent);
+    on(_handleSubmitProviderRegistrationEvent);
+    on(_handleSubmitInvitedUser);
   }
 
   final AuthenticationService authService;
   final AuthenticationRepository _authenticationRepository;
   final UserRepository _userRepository;
   final StorageRepository _storageRepository;
-  final CompanyRepository _companyRepository;
-  final AddressRepository _addressRepository;
+  // Typed as the base interface (not the concrete final repositories) so the
+  // bloc stays unit-testable: AddressRepository/CompanyRepository are `final`
+  // and can't be mocked, but the bloc only ever uses BaseRepository methods on
+  // them. The default constructor still passes the concrete instances.
+  final BaseRepository<Company> _companyRepository;
+  final BaseRepository<Address> _addressRepository;
   final log = Logger('register_bloc');
 
   void registerUser(Map<String, dynamic> data) {
@@ -48,12 +71,8 @@ class RegistrationBloc extends Bloc<RegistrationEvent, RegistrationState> {
     );
   }
 
-  void registerManagedUser(Map<String, dynamic> data) {
-    add(
-      SubmitManagedUserRegistrationEvent(
-        fields: data,
-      ),
-    );
+  void registerInvitedUser(Map<String, dynamic> data, {required UserRole role}) {
+    add(SubmitInvitedUserEvent(fields: data, role: role));
   }
 
   void registerProvider(Map<String, dynamic> data) {
@@ -148,107 +167,88 @@ class RegistrationBloc extends Bloc<RegistrationEvent, RegistrationState> {
     }
   }
 
-  Future<void> _handleSubmitManagedUserRegistrationEvent(
-    SubmitManagedUserRegistrationEvent event,
+  Future<void> _handleSubmitInvitedUser(
+    SubmitInvitedUserEvent event,
     Emitter<RegistrationState> emit,
   ) async {
     try {
       emit(RegistrationLoadingState(isLoading: true));
       final data = event.fields;
 
-      final tempUser = User.createManagedCustomer(
+      // Photos are optional for admin-added users. No uid exists yet, so upload
+      // under a temporary folder; the URLs are embedded in the entity.
+      final folder = 'users/invites/${StringHelper.generateId(length: 16)}';
+      final tempProfile = data['profile_picture'] as Map<String, dynamic>?;
+      final tempSelfie = data['selfie_valid_id'] as Map<String, dynamic>?;
+
+      ImageUrl? profilePhotoUrl;
+      if (tempProfile != null) {
+        profilePhotoUrl = await _storageRepository.upload(
+          data: tempProfile['bytes'] as Uint8List,
+          folder: folder,
+          fileName:
+              'profile_pic_${DateTime.timestamp().toIso8601String()}_${tempProfile['name'] as String}',
+          includeOriginal: true,
+        );
+      }
+
+      ImageUrl? photoWithValidIdUrl;
+      if (tempSelfie != null) {
+        photoWithValidIdUrl = await _storageRepository.upload(
+          data: tempSelfie['bytes'] as Uint8List,
+          folder: folder,
+          fileName:
+              'selfie_valid_id_${DateTime.timestamp().toIso8601String()}_${tempSelfie['name'] as String}',
+          includeOriginal: true,
+        );
+      }
+
+      final tempUser = User.createInvited(
+        role: event.role,
         firstName: data['first_name'] as String,
         lastName: data['last_name'] as String,
         middleName: data['middle_name'] as String?,
         mobileNumber: data['mobile_number'] as String,
-        emailAddress: data['email_address'] as String?,
-        profilePhotoUrl: null,
-        photoWithValidIdUrl: null,
+        emailAddress: data['email_address'] as String,
         birthDate: data['birth_date'] as DateTime,
         sex: data['sex'] as Sex,
-        employmentDetails: EmploymentDetails.createBlank(),
-        businessName: data['business_name'] as String?,
         companyId: authService.company.id,
-      );
-
-      final user = await _userRepository.add(data: tempUser).then((user) async {
-        final tempProfilePhotoData =
-            data['profile_picture'] as Map<String, dynamic>?;
-        final tempSelfieValidIdData =
-            data['selfie_valid_id'] as Map<String, dynamic>?;
-
-        final photosFolder = 'users/${user.id}';
-
-        ImageUrl? profilePhotoUrl;
-
-        if (tempProfilePhotoData != null) {
-          profilePhotoUrl = await _storageRepository.upload(
-            data: tempProfilePhotoData['bytes'] as Uint8List,
-            folder: photosFolder,
-            fileName:
-                'profile_pic_${DateTime.timestamp().toIso8601String()}_${tempProfilePhotoData['name'] as String}',
-            includeOriginal: true,
-          );
-        }
-
-        ImageUrl? photoWithValidIdUrl;
-
-        if (tempSelfieValidIdData != null) {
-          photoWithValidIdUrl = await _storageRepository.upload(
-            data: tempSelfieValidIdData['bytes'] as Uint8List,
-            folder: photosFolder,
-            fileName:
-                'selfie_valid_id_${DateTime.timestamp().toIso8601String()}_${tempSelfieValidIdData['name'] as String}',
-            includeOriginal: true,
-          );
-        }
-
-        final salaryDays = (data['salary_days'] as String?)?.toIntList();
-
-        if (salaryDays != null) {
-          if (salaryDays.first == salaryDays.last) {
-            salaryDays
-              ..clear()
-              ..add(salaryDays.first);
-          } else {
-            salaryDays.sort((d1, d2) {
-              if (d1 > d2) {
-                return d2;
-              } else {
-                return d1;
-              }
-            });
-          }
-        }
-
-        final employmentDetails = user.employmentDetails
+        profilePhotoUrl: profilePhotoUrl,
+        photoWithValidIdUrl: photoWithValidIdUrl,
+        businessName: data['business_name'] as String?,
+        facebookProfileUrl: data['facebook_profile'] as String?,
+        employmentDetails: EmploymentDetails.createBlank()
           ..id = StringHelper.generateId(length: 12)
-          ..userId = user.id
           ..employmentStatus = data['employment_status'] as EmploymentStatus
           ..employerName = data['employer_name'] as String?
-          ..salaryDays = salaryDays ?? [];
-
-        return _userRepository.update(
-          data: user
-            ..profilePhotoUrl = profilePhotoUrl
-            ..photoWithValidIdUrl = photoWithValidIdUrl
-            ..employmentDetails = employmentDetails,
-        );
-      });
+          ..salaryDays = (data['salary_days'] as String?)?.toIntList() ?? [],
+      );
 
       final tempAddress = AddressBuilder.buildFromFields(
         data,
-        dataId: user.id,
+        dataId: NO_ID,
         dataType: DataType.user,
       );
-      final _ = await _addressRepository.add(data: tempAddress);
+
+      final result = await _userRepository.createUser(
+        role: event.role.name,
+        user: tempUser.toEntity().toJson(),
+        address: tempAddress.toEntity().toJson(),
+        idToken: authService.idToken,
+      );
+
       emit(RegistrationLoadingState());
-      emit(RegistrationSuccessState(message: 'Successfully registered user'));
+      emit(
+        RegistrationSuccessState(
+          message: result.inviteSent
+              ? 'User created — an invite email was sent.'
+              : 'User created, but the invite email failed. Use "Resend invite".',
+        ),
+      );
     } catch (err) {
-      log.severe('SubmitManagedUserRegistrationEvent: $err', err);
+      log.severe('SubmitInvitedUserEvent: $err', err);
       emit(RegistrationLoadingState());
-      emit(RegistrationErrorState(
-          message: 'Cannot proceed to registration: $err',),);
+      emit(RegistrationErrorState(message: 'Cannot add user: $err'));
     }
   }
 

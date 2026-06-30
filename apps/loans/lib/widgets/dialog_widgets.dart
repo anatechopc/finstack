@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:loooans/features/loans/screens/additional_loan_detail_screen.dart';
-import 'package:loooans/features/registration/widgets/register_screen_form_providers_widget.dart';
 import 'package:loooans/features/users/screens/add_user_widget.dart';
 import 'package:loooans/features/users/screens/loan_client_detail.dart';
 import 'package:loooans/utils/screen_helpers.dart';
@@ -237,7 +236,7 @@ class DialogWidgets {
     bool withExtendedUserDetailInputs = false,
     bool? allowAddOns,
     bool scrollable = false,
-    bool forCompanyUser = false,
+    bool isTeamMember = false,
   }) {
     return showDialog(
       context: context,
@@ -245,14 +244,11 @@ class DialogWidgets {
         return AlertDialog(
           backgroundColor: backgroundColor,
           scrollable: scrollable,
-          content: !forCompanyUser ? AddUserWidget(
+          content: AddUserWidget(
             withLoanApplication: withLoanApplication,
             withExtendedUserDetailInputs: withExtendedUserDetailInputs,
             allowAddOns: allowAddOns,
-          ) : RegisterScreenFormProvidersWidget(
-            registerCompanyManagedUser: true,
-            defaultInputColor: AppColors.lightBlack,
-            showAsDialog: true,
+            isTeamMember: isTeamMember,
           ),
         );
       },

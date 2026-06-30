@@ -129,6 +129,13 @@ class UserEntity implements BaseEntity {
   @JsonKey(name: 'company_id')
   String? companyId;
 
+  /// True when the account was provisioned by a company admin via the
+  /// addUser Cloud Function. The userCreated trigger checks this flag to
+  /// suppress the generic "Verify your account" welcome email (admin-invited
+  /// users receive the set-password invite instead).
+  @JsonKey(name: 'invited_by_admin', defaultValue: false)
+  late bool invitedByAdmin;
+
   /// Mandatory, but defaults to [Sex.other] for older/incomplete user
   /// documents that have no (or an unrecognized) `sex`, so login never crashes
   /// while keeping the field non-nullable. New users set it via registration.
@@ -170,6 +177,7 @@ class UserEntity implements BaseEntity {
       ..verificationStatus = verificationStatus
       ..mobileVerifiedAt = mobileVerifiedAt
       ..companyId = companyId
+      ..invitedByAdmin = invitedByAdmin
       ..sex = sex
       ..employmentDetails = employmentDetails
       ..businessName = businessName;
@@ -196,6 +204,7 @@ class UserEntity implements BaseEntity {
         verificationStatus,
         mobileVerifiedAt,
         companyId,
+        invitedByAdmin,
         sex,
         employmentDetails,
         businessName,

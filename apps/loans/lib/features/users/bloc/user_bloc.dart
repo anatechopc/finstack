@@ -8,10 +8,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:loooans/features/users/model/user_address.dart';
 import 'package:loooans/services/address_builder.dart';
 import 'package:loooans/services/authentication_service.dart';
-import 'package:loooans/utils/extensions.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:loooans_helpers/logging_helpers.dart';
-import 'package:loooans_helpers/string_helpers.dart';
 import 'package:storage_repository/storage_repository.dart';
 import 'package:user_loan_view_repository/user_loan_view_repository.dart';
 import 'package:user_repository/user_repository.dart';
@@ -28,16 +26,44 @@ class UserBloc extends Bloc<UserEvent, UserState> {
         storageRepository = context.read<StorageRepository>(),
         super(const UserState()) {
     on(_handleSelectUserEvent);
-    on(_handleAddUserEvent);
     on(_handleUpdateUserEvent);
+    on(_handleResendInviteEvent);
   }
+
+  /// Test seam mirroring RegistrationBloc.withDependencies: lets unit tests
+  /// inject mocked repositories. [addressRepository] is optional because the
+  /// real [AddressRepository] is a `final` class (so it can't be mocked) and
+  /// the resend-invite path never touches it — only the select/update handlers
+  /// do, and those aren't exercised in the resend-invite tests.
+  /// [userLoanViewRepository] is typed as the base interface so it can be
+  /// mocked; the bloc never calls a non-base method on it.
+  UserBloc.withDependencies({
+    required this.userRepository,
+    required this.userLoanViewRepository,
+    required this.storageRepository,
+    this.addressRepository,
+    AuthenticationService? authService,
+  })  : authService = authService ?? AuthenticationService.instance,
+        super(const UserState()) {
+    on(_handleSelectUserEvent);
+    on(_handleUpdateUserEvent);
+    on(_handleResendInviteEvent);
+  }
+
+  /// SnackBar message emitted when a resend-invite succeeds. The UsersScreen
+  /// listener filters on this so it only reacts to resend outcomes (UserBloc is
+  /// app-scoped and emits success/error for unrelated flows too).
+  static const resendInviteSuccessMessage = 'Invite re-sent.';
+
+  /// SnackBar message emitted when a resend-invite fails.
+  static const resendInviteErrorMessage = 'Could not resend the invite.';
 
   final log = Logger('user_bloc');
 
   final AuthenticationService authService;
   final UserRepository userRepository;
-  final AddressRepository addressRepository;
-  final UserLoanViewRepository userLoanViewRepository;
+  final AddressRepository? addressRepository;
+  final BaseRepository<UserLoanView> userLoanViewRepository;
   final StorageRepository storageRepository;
 
   User? _selectedUser;
@@ -56,7 +82,7 @@ class UserBloc extends Bloc<UserEvent, UserState> {
       userRepository.dataStream.asyncMap((users) async {
         return Future.wait(
           users.map((user) async {
-            final address = await addressRepository
+            final address = await addressRepository!
                 .getByDataType(
               id: user.id,
               type: DataType.user,
@@ -172,15 +198,29 @@ class UserBloc extends Bloc<UserEvent, UserState> {
     emit(const UserState.unselected());
   }
 
-  void addUser(Map<String, dynamic> fields) {
-    add(AddUserEvent(fields: fields));
-  }
-
   void updateUser(
     Map<String, dynamic> fields, {
     required User user,
   }) {
     add(UpdateUserEvent(fields: fields, user: user));
+  }
+
+  void resendInvite(String email) => add(ResendInviteEvent(email: email));
+
+  Future<void> _handleResendInviteEvent(
+    ResendInviteEvent event,
+    Emitter<UserState> emit,
+  ) async {
+    try {
+      emit(const UserState.loading(isLoading: true));
+      await userRepository.sendPasswordSetupLink(email: event.email);
+      emit(const UserState.loading());
+      emit(const UserState.success(UserBloc.resendInviteSuccessMessage));
+    } catch (err) {
+      log.severe('ResendInvite error: $err', err);
+      emit(const UserState.loading());
+      emit(const UserState.error(UserBloc.resendInviteErrorMessage));
+    }
   }
 
   Future<void> _handleSelectUserEvent(
@@ -192,7 +232,7 @@ class UserBloc extends Bloc<UserEvent, UserState> {
       final userId = event.userId;
       final results = await Future.wait([
         userRepository.get(id: userId),
-        addressRepository
+        addressRepository!
             .getByDataType(
           id: userId,
           type: DataType.user,
@@ -211,77 +251,6 @@ class UserBloc extends Bloc<UserEvent, UserState> {
       emit(UserState.error('Cannot select user: $err'));
     } catch (err) {
       log.severe('Select user error', err);
-    }
-  }
-
-  Future<void> _handleAddUserEvent(
-    AddUserEvent event,
-    Emitter<UserState> emit,
-  ) async {
-    try {
-      emit(const UserState.loading(isLoading: true));
-      final fields = event.fields;
-      final lastNameObject = fields['last_name'];
-      var lastName = '';
-      var createUser = true;
-      User? createdUser;
-
-      if (lastNameObject is User) {
-        lastName = lastNameObject.lastName;
-
-        if (!lastNameObject.isPlaceholder) {
-          createUser = false;
-          createdUser = lastNameObject;
-        }
-      } else {
-        lastName = lastNameObject as String;
-      }
-
-      if (createUser) {
-        log.finest('userRole: ${fields['user_role']}');
-        final userRole = fields['user_role'] as UserRole? ?? UserRole.customer;
-
-        final tempUser = User.createManagedCustomer(
-          firstName: fields['first_name'] as String,
-          lastName: lastName,
-          middleName: fields['middle_name'] as String?,
-          mobileNumber: fields['mobile_number'] as String,
-          emailAddress: fields['email_address'] as String? ?? '',
-          profilePhotoUrl: null,
-          photoWithValidIdUrl: null,
-          birthDate: fields['birth_date'] as DateTime,
-          sex: fields['sex'] as Sex,
-          employmentDetails: EmploymentDetails.createBlank(),
-          businessName: fields['business_name'] as String?,
-          companyId: authService.company.id,
-        )..userRole = userRole;
-
-        if (userRole == UserRole.customer) {
-          createdUser = await userRepository.add(data: tempUser).then((user) {
-            final employmentDetails = user.employmentDetails
-              ..id = StringHelper.generateId(length: 12)
-              ..userId = user.id
-              ..employmentStatus =
-                  fields['employment_status'] as EmploymentStatus
-              ..employerName = fields['employer_name'] as String?
-              ..salaryDays =
-                  (fields['salary_days'] as String?)?.toIntList() ?? [];
-
-            return userRepository.update(
-              data: user..employmentDetails = employmentDetails,
-            );
-          });
-        } else {
-          createdUser = await userRepository.add(data: tempUser);
-        }
-      }
-
-      emit(const UserState.loading());
-      emit(UserState.success('Successfully created user', user: createdUser));
-    } catch (err) {
-      log.severe(r'AddUser error: ${err.toString()}', err);
-      emit(const UserState.loading());
-      emit(const UserState.error('Something went wrong while adding user.'));
     }
   }
 
@@ -339,7 +308,7 @@ class UserBloc extends Bloc<UserEvent, UserState> {
           Future.microtask(() {
             final addr = authService.address;
             AddressBuilder.updateFromFields(addr, fields);
-            return addressRepository.update(data: addr);
+            return addressRepository!.update(data: addr);
           }),
       ]);
 

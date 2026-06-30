@@ -214,12 +214,18 @@ class LayoutWidgets {
                 debugPrint('advertise product');
               },
             ),
-          if (showAddBorrowerButton &&
+          if (AuthenticationService.instance.allowAddClients &&
+              showAddBorrowerButton &&
+              (AuthenticationService.instance.user.isAdmin() ||
+                  AuthenticationService.instance.user.isAppAdmin()) &&
               (showAdvertiseButton || showAddCapitalButton))
             const SizedBox(
               width: 16,
             ),
-          if (showAddBorrowerButton)
+          if (AuthenticationService.instance.allowAddClients &&
+              showAddBorrowerButton &&
+              (AuthenticationService.instance.user.isAdmin() ||
+                  AuthenticationService.instance.user.isAppAdmin()))
             ButtonWidgets.defaultFilledButton(
               child: const Text('Add borrower'),
               backgroundColor: AppColors.white,

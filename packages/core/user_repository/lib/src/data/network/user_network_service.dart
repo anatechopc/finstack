@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:loooans_helpers/loooans_helpers.dart';
 import 'package:user_repository/src/model/request_otp_response.dart';
@@ -19,42 +18,57 @@ class SetPasswordException implements Exception {
 
 /// user network services
 class UserNetworkService {
-  /// Calls the addUser api service to add
-  /// user to firebase auth.
-  Future<String> createUserAccess({
-    required String displayName,
-    required String email,
-    required String password,
+  /// Creates a user server-side (Firebase Auth account + Firestore doc) via the
+  /// addUser Cloud Function. [user] and [address] are the client-serialized
+  /// entity JSON maps. Returns the server-minted uid and whether the invite
+  /// email was sent.
+  Future<({String uid, bool inviteSent})> createUser({
+    required String role,
+    required Map<String, dynamic> user,
     required String idToken,
+    Map<String, dynamic>? address,
   }) async {
-    try {
-      final response = await http.post(
-        Uri.parse('$LOOOANS_BASE_API_URL/users/add'),
-        headers: {
-          'Authorization': 'Bearer $idToken',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'displayName': displayName,
-          'email': email,
-          'password': password,
-        }),
+    final response = await http.post(
+      Uri.parse('$LOOOANS_BASE_API_URL/users/add'),
+      headers: {
+        'Authorization': 'Bearer $idToken',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'role': role,
+        'user': user,
+        if (address != null) 'address': address,
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final payload = data['data'] as Map<String, dynamic>;
+      return (
+        uid: payload['uid'] as String,
+        inviteSent: payload['inviteSent'] as bool? ?? false,
       );
+    }
 
-      debugPrint('response status code: ${response.statusCode}');
-      debugPrint('response body: ${response.body}');
+    throw HttpException(
+      'Create user failed: ${response.statusCode} ${response.body}',
+    );
+  }
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
+  /// Requests a set-password / reset link email for [email]. Backs both the
+  /// admin "Resend invite" action and the login "Forgot password" link. The
+  /// endpoint always succeeds and never reveals whether the account exists.
+  Future<void> sendPasswordSetupLink({required String email}) async {
+    final response = await http.post(
+      Uri.parse('$LOOOANS_BASE_API_URL/users/password/setup-link'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'email': email}),
+    );
 
-        return data['data']['uid'] as String;
-      }
-
+    if (response.statusCode > HttpStatus.noContent) {
       throw HttpException(
-        'Something went wrong while creating user access: ${response.reasonPhrase}',
+        'Send password setup link failed: ${response.statusCode} ${response.body}',
       );
-    } catch (err) {
-      rethrow;
     }
   }
 

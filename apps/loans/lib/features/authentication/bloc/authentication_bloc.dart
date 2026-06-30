@@ -30,15 +30,43 @@ class AuthenticationBloc
     on(_handleRequestOtpEvent);
     on(_handleVerifyOtpEvent);
     on(_handleSignOutEvent);
+    on(_handleForgotPasswordEvent);
+  }
+
+  /// Test seam mirroring RegistrationBloc.withDependencies: lets unit tests
+  /// inject mocked repositories. Of these, only [userRepository] is exercised
+  /// by the forgot-password path. [companyRepository], [addressRepository] and
+  /// [settingsRepository] are optional because they are `final` classes (so
+  /// they can't be mocked) and are only used by the login/session-loading
+  /// handlers, which the forgot-password tests never trigger.
+  AuthenticationBloc.withDependencies({
+    required AuthenticationRepository authenticationRepository,
+    required UserRepository userRepository,
+    CompanyRepository? companyRepository,
+    AddressRepository? addressRepository,
+    SettingsRepository? settingsRepository,
+    AuthenticationService? authService,
+  })  : authService = authService ?? AuthenticationService.instance,
+        _authenticationRepository = authenticationRepository,
+        _userRepository = userRepository,
+        _companyRepository = companyRepository,
+        _addressRepository = addressRepository,
+        _settingsRepository = settingsRepository,
+        super(const AuthenticationState()) {
+    on(_handleLoginEvent);
+    on(_handleRequestOtpEvent);
+    on(_handleVerifyOtpEvent);
+    on(_handleSignOutEvent);
+    on(_handleForgotPasswordEvent);
   }
 
   final log = Logger('authentication_bloc');
   final AuthenticationService authService;
   final AuthenticationRepository _authenticationRepository;
   final UserRepository _userRepository;
-  final CompanyRepository _companyRepository;
-  final AddressRepository _addressRepository;
-  final SettingsRepository _settingsRepository;
+  final CompanyRepository? _companyRepository;
+  final AddressRepository? _addressRepository;
+  final SettingsRepository? _settingsRepository;
   StreamSubscription<Future<String>>? _idTokenChange;
   String? _otpToken;
 
@@ -66,6 +94,8 @@ class AuthenticationBloc
   void verifyOtp(String otp) {
     add(VerifyOtpEvent(otp: otp));
   }
+
+  void forgotPassword(String email) => add(ForgotPasswordEvent(email: email));
 
   void sigOut({
     bool silent = false,
@@ -99,9 +129,9 @@ class AuthenticationBloc
         await SessionLoader.loadSession(
           user: user,
           userRepository: _userRepository,
-          companyRepository: _companyRepository,
-          addressRepository: _addressRepository,
-          settingsRepository: _settingsRepository,
+          companyRepository: _companyRepository!,
+          addressRepository: _addressRepository!,
+          settingsRepository: _settingsRepository!,
         );
       } else {
         await initializeAnonymousUser();
@@ -149,9 +179,9 @@ class AuthenticationBloc
       await SessionLoader.loadSession(
         user: user,
         userRepository: _userRepository,
-        companyRepository: _companyRepository,
-        addressRepository: _addressRepository,
-        settingsRepository: _settingsRepository,
+        companyRepository: _companyRepository!,
+        addressRepository: _addressRepository!,
+        settingsRepository: _settingsRepository!,
       );
       _listenTokenChanges();
       NotificationService.instance.startListening(forUser: user.id);
@@ -266,6 +296,27 @@ class AuthenticationBloc
         emit(AuthenticationState.error(
             message: 'Cannot logout: $err',),);
       }
+    }
+  }
+
+  Future<void> _handleForgotPasswordEvent(
+    ForgotPasswordEvent event,
+    Emitter<AuthenticationState> emit,
+  ) async {
+    try {
+      emit(const AuthenticationState.loading(isLoading: true));
+      await _userRepository.sendPasswordSetupLink(email: event.email);
+      emit(const AuthenticationState.loading());
+      emit(const AuthenticationState.success(
+        message: 'If an account exists for that email, we sent a reset link.',
+      ),);
+    } catch (err) {
+      log.severe('ForgotPassword error: $err', err);
+      emit(const AuthenticationState.loading());
+      // Neutral message — never reveal whether the account exists.
+      emit(const AuthenticationState.success(
+        message: 'If an account exists for that email, we sent a reset link.',
+      ),);
     }
   }
 }
