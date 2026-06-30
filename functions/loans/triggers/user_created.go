@@ -1,18 +1,14 @@
 package triggers
 
 import (
-	"bytes"
-	"com.loooans.app/utils"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+
+	"com.loooans.app/utils"
 	"github.com/cloudevents/sdk-go/v2/event"
 	"github.com/golang/protobuf/proto"
 	"github.com/googleapis/google-cloudevents-go/cloud/firestoredata"
-	"go.uber.org/zap"
-	"net/http"
-	"os"
 )
 
 // ShouldSkipWelcomeEmail reports whether the newly-created user doc was
@@ -26,6 +22,44 @@ func ShouldSkipWelcomeEmail(fields map[string]*firestoredata.Value) bool {
 	return false
 }
 
+// UserCreatedDeps are the collaborators the core needs, injected so the
+// welcome-email decision is unit-testable without Firebase.
+type UserCreatedDeps struct {
+	// GetUserEmail returns the Firebase Auth email for uid.
+	GetUserEmail func(ctx context.Context, uid string) (string, error)
+	// SendWelcomeEmail sends the "new_user" welcome/verify email to the address.
+	SendWelcomeEmail func(ctx context.Context, email string) error
+}
+
+// HandleUserCreatedCore sends the welcome email for a newly-created user,
+// unless the user was provisioned by an admin (which sends its own invite).
+func HandleUserCreatedCore(ctx context.Context, uid string, skipWelcome bool, deps UserCreatedDeps) error {
+	if skipWelcome {
+		return nil
+	}
+	if uid == "" {
+		return errors.New("user_created: missing uid")
+	}
+	email, err := deps.GetUserEmail(ctx, uid)
+	if err != nil {
+		return fmt.Errorf("user_created: get email for %q: %w", uid, err)
+	}
+	if email == "" {
+		// No address to send to — nothing actionable.
+		return nil
+	}
+	return deps.SendWelcomeEmail(ctx, email)
+}
+
+// UserCreated is the CloudEvent adapter. It wires real Firebase Auth + the
+// in-process SendEmailActions into the core. Triggered by document.v1.created
+// on users/{uid}.
+//
+// The welcome email is sent in-process (Firebase Auth lookup + MS Graph send),
+// not via a self-call to the sendEmail HTTP endpoint with a minted custom
+// token. That self-call was the only caller relying on the ParseUnverified
+// fallback in ValidateRequestV2 (issue #71); removing it lets that insecure
+// fallback be deleted.
 func UserCreated(ctx context.Context, event event.Event) error {
 	log, logErr := utils.InitializeLogger("user_created")
 
@@ -53,12 +87,7 @@ func UserCreated(ctx context.Context, event event.Event) error {
 	if vId, ok := data.GetValue().GetFields()["id"]; ok {
 		uid = vId.GetStringValue()
 	} else {
-		return errors.New(fmt.Sprintf("No email address for user: %s", data.GetValue().GetName()))
-	}
-
-	if ShouldSkipWelcomeEmail(data.GetValue().GetFields()) {
-		log.Debug("user_created: invited_by_admin set, skipping generic welcome email")
-		return nil
+		return fmt.Errorf("no id for user: %s", data.GetValue().GetName())
 	}
 
 	app, errFirebaseAdmin := utils.InitializeFirebase(ctx)
@@ -73,58 +102,18 @@ func UserCreated(ctx context.Context, event event.Event) error {
 		return errAuthClient
 	}
 
-	token, errToken := authClient.CustomToken(ctx, uid)
-
-	if errToken != nil {
-		return errToken
+	deps := UserCreatedDeps{
+		GetUserEmail: func(ctx context.Context, uid string) (string, error) {
+			u, gErr := authClient.GetUser(ctx, uid)
+			if gErr != nil {
+				return "", gErr
+			}
+			return u.Email, nil
+		},
+		SendWelcomeEmail: func(_ context.Context, email string) error {
+			return utils.SendEmailActions("new_user", []string{email})
+		},
 	}
 
-	// send email http here
-	env := os.Getenv("ENVIRONMENT")
-	subdomain := ""
-
-	switch env {
-	case "development":
-		subdomain = "dev."
-		break
-	case "staging":
-		subdomain = "stg."
-		break
-	}
-	body := map[string]any{
-		"action": "new_user",
-	}
-	bodyBytes, _ := json.Marshal(body)
-	req, errReq := http.NewRequest(http.MethodPost, fmt.Sprintf("https://%sloooans.com/api/utils/sendEmail", subdomain), bytes.NewReader(bodyBytes))
-
-	if errReq != nil {
-		log.Error("new request error")
-		return errReq
-	}
-
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	res, errRes := client.Do(req)
-
-	if errRes != nil {
-		log.Error("client.Do error")
-		return errRes
-	}
-
-	defer res.Body.Close()
-
-	log.Debug(fmt.Sprintf("status_code: %d", res.StatusCode))
-	var resData string
-	errParse := json.NewDecoder(res.Body).Decode(&resData)
-
-	if errParse != nil {
-		log.Error("Response data parse error", zap.String("error", errParse.Error()))
-		return errParse
-	}
-
-	log.Debug(fmt.Sprintf("response: %s", resData))
-
-	return nil
+	return HandleUserCreatedCore(ctx, uid, ShouldSkipWelcomeEmail(data.GetValue().GetFields()), deps)
 }
