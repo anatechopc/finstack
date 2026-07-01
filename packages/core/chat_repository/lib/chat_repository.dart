@@ -12,3 +12,6 @@ export 'src/model/message.dart';
 export 'src/model/read_state.dart';
 export 'src/model/team_read_state.dart';
 export 'src/logic/chat_read_model.dart';
+export 'src/data/database/typing_service.dart';
+export 'src/repository/chat_room_repository.dart';
+export 'src/repository/message_repository.dart';
