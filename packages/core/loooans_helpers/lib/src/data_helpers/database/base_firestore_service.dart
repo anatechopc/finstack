@@ -7,41 +7,42 @@ import 'package:loooans_helpers/loooans_helpers.dart';
 /// Base class for all firestore access
 abstract class BaseFirestoreService<T extends BaseEntity>
     extends BaseDatabaseService<T> {
-  /// A flag which switches to a stream when calling
-  /// load() function.
+  BaseFirestoreService({FirebaseFirestore? firestore})
+      : fs = firestore ?? FirebaseFirestore.instance;
+
+  /// A flag which switches to a stream when calling load().
   bool switchStream = false;
 
   StreamController<List<T>> controller = StreamController.broadcast();
 
   Stream<List<T>> get dataStream => controller.stream;
-  /// the last document snapshot the query was getting
-  /// to be used in pagination.
+
+  /// the last document snapshot the query was getting (pagination).
   DocumentSnapshot? lastDocumentSnapshot;
-  final fs = FirebaseFirestore.instance;
 
-  CollectionReference get root {
-    var rootPath = 'dev_$collectionName';
+  /// Firestore instance; overridable for tests via the constructor.
+  final FirebaseFirestore fs;
 
+  /// env-based collection prefix: `dev_`, `stg_`, or '' (production).
+  String get collectionPrefix {
     if (const String.fromEnvironment('ENVIRONMENT') ==
         Environments.staging.name) {
-      rootPath = 'stg_$collectionName';
+      return 'stg_';
     } else if (const String.fromEnvironment('ENVIRONMENT') ==
         Environments.production.name) {
-      rootPath = collectionName;
+      return '';
     }
-
-    return fs.collection(rootPath);
+    return 'dev_';
   }
+
+  CollectionReference get root => fs.collection('$collectionPrefix$collectionName');
 
   /// name of the collection or table
   String get collectionName;
 
   @override
-  Future<T> get({required String id, bool isCache = false,});
+  Future<T> get({required String id, bool isCache = false});
 
-  /// loads the next data to stream
-  /// If there's no data yeet, it'll load the
-  /// first data
   void loadNext({
     List<QueryStatement>? statements,
     int? limit = defaultDataLimit,
