@@ -11,3 +11,4 @@ export 'src/model/chat_room.dart';
 export 'src/model/message.dart';
 export 'src/model/read_state.dart';
 export 'src/model/team_read_state.dart';
+export 'src/logic/chat_read_model.dart';
