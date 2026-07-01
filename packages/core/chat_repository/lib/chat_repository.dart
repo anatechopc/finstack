@@ -1,3 +1,11 @@
 /// Chat/messaging data layer.
 library chat_repository;
-// Exports are added by later tasks.
+
+export 'src/model/attachment.dart';
+export 'src/model/last_message.dart';
+export 'src/model/message_status.dart';
+export 'src/model/message_type.dart';
+export 'src/model/participant.dart';
+export 'src/model/participant_type.dart';
+export 'src/model/read_state.dart';
+export 'src/model/team_read_state.dart';
