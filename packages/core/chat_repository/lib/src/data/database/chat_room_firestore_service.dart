@@ -104,11 +104,12 @@ final class ChatRoomFirestoreService extends BaseFirestoreService<ChatRoomEntity
     unawaited(
       controller.addStream(
         query.snapshots().map(
-              (snap) => snap.docs
-                  .map((d) =>
-                      ChatRoomEntity.fromJson(d.data()! as Map<String, dynamic>))
-                  .toList(),
-            ),
+          (snap) => snap.docs
+              .map(
+                (d) => ChatRoomEntity.fromJson(d.data()! as Map<String, dynamic>),
+              )
+              .toList(),
+        ),
       ),
     );
   }

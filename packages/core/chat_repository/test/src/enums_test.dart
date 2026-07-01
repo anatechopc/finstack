@@ -6,7 +6,9 @@ void main() {
   test('enum names are stable (used as JSON values)', () {
     expect(ParticipantType.values.map((e) => e.name), ['user', 'company']);
     expect(MessageType.values.map((e) => e.name), ['text', 'image', 'file']);
-    expect(MessageStatus.values.map((e) => e.name),
-        ['sending', 'sent', 'delivered', 'read']);
+    expect(
+      MessageStatus.values.map((e) => e.name),
+      ['sending', 'sent', 'delivered', 'read'],
+    );
   });
 }

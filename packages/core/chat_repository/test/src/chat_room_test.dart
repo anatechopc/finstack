@@ -43,9 +43,15 @@ void main() {
     expect((json['participants'] as List).length, 2);
     expect(json['member_ids'], ['u1', 'c1']);
     expect(json['last_seq'], 3);
-    expect((json['reads'] as Map)['u1']['last_read_seq'], 3);
-    expect((json['team_reads'] as Map)['c1']['last_handled_seq'], 1);
-    expect(json['last_message']['seq'], 3);
+    expect(
+      ((json['reads'] as Map<String, dynamic>)['u1'] as Map<String, dynamic>)['last_read_seq'],
+      3,
+    );
+    expect(
+      ((json['team_reads'] as Map<String, dynamic>)['c1'] as Map<String, dynamic>)['last_handled_seq'],
+      1,
+    );
+    expect((json['last_message'] as Map<String, dynamic>)['seq'], 3);
 
     final entity = ChatRoomEntity.fromJson(json);
     expect(entity.participants.map((p) => p.id), ['u1', 'c1']);

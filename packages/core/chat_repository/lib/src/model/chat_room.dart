@@ -1,5 +1,4 @@
 import 'package:chat_repository/src/model/chat_room_entity.dart';
-import 'package:chat_repository/src/model/last_message.dart';
 import 'package:chat_repository/src/model/participant.dart';
 import 'package:chat_repository/src/model/read_state.dart';
 import 'package:chat_repository/src/model/team_read_state.dart';

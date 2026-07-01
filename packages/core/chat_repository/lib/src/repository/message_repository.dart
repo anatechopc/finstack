@@ -48,7 +48,11 @@ class MessageRepository implements BaseRepository<Message> {
     bool reset = false,
   }) =>
       _service.loadNext(
-          statements: statements, limit: limit, page: page, reset: reset);
+        statements: statements,
+        limit: limit,
+        page: page,
+        reset: reset,
+      );
 
   Future<void> editMessage({required String messageId, required String text}) =>
       _service.editMessage(messageId: messageId, text: text);

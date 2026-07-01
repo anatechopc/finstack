@@ -35,32 +35,48 @@ void main() {
 
   test('messageStatus derivation', () {
     final pending = Message.create(
-        roomId: 'r', senderId: 'u1', senderParticipantId: 'u1', type: MessageType.text);
-    expect(messageStatus(message: pending, counterpartReadStates: const []),
-        MessageStatus.sending);
+      roomId: 'r',
+      senderId: 'u1',
+      senderParticipantId: 'u1',
+      type: MessageType.text,
+    );
+    expect(
+      messageStatus(message: pending, counterpartReadStates: const []),
+      MessageStatus.sending,
+    );
 
     final sent = Message.create(
-        roomId: 'r', senderId: 'u1', senderParticipantId: 'u1', type: MessageType.text)
-      ..seq = 4;
-    expect(messageStatus(message: sent, counterpartReadStates: const []),
-        MessageStatus.sent);
+      roomId: 'r',
+      senderId: 'u1',
+      senderParticipantId: 'u1',
+      type: MessageType.text,
+    )..seq = 4;
+    expect(
+      messageStatus(message: sent, counterpartReadStates: const []),
+      MessageStatus.sent,
+    );
     expect(
       messageStatus(
-          message: sent,
-          counterpartReadStates: [ReadState(lastDeliveredSeq: 4, lastReadSeq: 0)]),
+        message: sent,
+        counterpartReadStates: [ReadState(lastDeliveredSeq: 4)],
+      ),
       MessageStatus.delivered,
     );
     expect(
       messageStatus(
-          message: sent,
-          counterpartReadStates: [ReadState(lastDeliveredSeq: 4, lastReadSeq: 4)]),
+        message: sent,
+        counterpartReadStates: [ReadState(lastDeliveredSeq: 4, lastReadSeq: 4)],
+      ),
       MessageStatus.read,
     );
     expect(
-      messageStatus(message: sent, counterpartReadStates: [
-        ReadState(lastDeliveredSeq: 4, lastReadSeq: 0),
-        ReadState(lastDeliveredSeq: 4, lastReadSeq: 4),
-      ]),
+      messageStatus(
+        message: sent,
+        counterpartReadStates: [
+          ReadState(lastDeliveredSeq: 4),
+          ReadState(lastDeliveredSeq: 4, lastReadSeq: 4),
+        ],
+      ),
       MessageStatus.read,
     );
   });
@@ -72,18 +88,30 @@ void main() {
   test('roomMatchesAnchor requires same members + same context', () {
     final r = room();
     expect(
-      roomMatchesAnchor(r,
-          memberIds: {'u1', 'c1'}, contextType: 'loan', contextId: 'l1'),
+      roomMatchesAnchor(
+        r,
+        memberIds: {'u1', 'c1'},
+        contextType: 'loan',
+        contextId: 'l1',
+      ),
       isTrue,
     );
     expect(
-      roomMatchesAnchor(r,
-          memberIds: {'u1', 'c1'}, contextType: 'product', contextId: 'p1'),
+      roomMatchesAnchor(
+        r,
+        memberIds: {'u1', 'c1'},
+        contextType: 'product',
+        contextId: 'p1',
+      ),
       isFalse,
     );
     expect(
-      roomMatchesAnchor(r,
-          memberIds: {'u1'}, contextType: 'loan', contextId: 'l1'),
+      roomMatchesAnchor(
+        r,
+        memberIds: {'u1'},
+        contextType: 'loan',
+        contextId: 'l1',
+      ),
       isFalse,
     );
   });

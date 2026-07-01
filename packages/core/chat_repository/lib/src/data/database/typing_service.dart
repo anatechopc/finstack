@@ -47,7 +47,9 @@ class TypingService {
     required int nowMillis,
   }) async {
     if (!shouldSendTyping(
-        lastSentMillis: _lastSentMillis, nowMillis: nowMillis)) {
+      lastSentMillis: _lastSentMillis,
+      nowMillis: nowMillis,
+    )) {
       return;
     }
     _lastSentMillis = nowMillis;

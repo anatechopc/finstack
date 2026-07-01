@@ -61,19 +61,23 @@ void main() {
     );
     await service.markRead(roomId: saved.id, userId: 'u1', seq: 5);
     final doc = await fs.collection('dev_chat_rooms').doc(saved.id).get();
-    final reads = doc.data()!['reads'] as Map;
-    expect(reads['u1']['last_read_seq'], 5);
-    expect(reads['u1']['last_delivered_seq'], 5);
-    expect(reads['c1']['last_read_seq'], 1); // untouched
+    final reads = doc.data()!['reads'] as Map<String, dynamic>;
+    expect((reads['u1'] as Map<String, dynamic>)['last_read_seq'], 5);
+    expect((reads['u1'] as Map<String, dynamic>)['last_delivered_seq'], 5);
+    expect((reads['c1'] as Map<String, dynamic>)['last_read_seq'], 1); // untouched
   });
 
   test('markHandled advances team_reads for the company', () async {
     final saved = await service.add(data: newRoom()..lastSeq = 4);
     await service.markHandled(
-        roomId: saved.id, companyId: 'c1', userId: 'staff1', seq: 4);
+      roomId: saved.id,
+      companyId: 'c1',
+      userId: 'staff1',
+      seq: 4,
+    );
     final doc = await fs.collection('dev_chat_rooms').doc(saved.id).get();
-    final team = doc.data()!['team_reads'] as Map;
-    expect(team['c1']['last_handled_seq'], 4);
-    expect(team['c1']['handled_by'], 'staff1');
+    final team = doc.data()!['team_reads'] as Map<String, dynamic>;
+    expect((team['c1'] as Map<String, dynamic>)['last_handled_seq'], 4);
+    expect((team['c1'] as Map<String, dynamic>)['handled_by'], 'staff1');
   });
 }

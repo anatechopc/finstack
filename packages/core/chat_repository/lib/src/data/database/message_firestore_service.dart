@@ -105,11 +105,12 @@ final class MessageFirestoreService extends BaseFirestoreService<MessageEntity> 
     unawaited(
       controller.addStream(
         query.snapshots().map(
-              (snap) => snap.docs
-                  .map((d) =>
-                      MessageEntity.fromJson(d.data()! as Map<String, dynamic>))
-                  .toList(),
-            ),
+          (snap) => snap.docs
+              .map(
+                (d) => MessageEntity.fromJson(d.data()! as Map<String, dynamic>),
+              )
+              .toList(),
+        ),
       ),
     );
   }

@@ -9,7 +9,6 @@ void main() {
       url: 'https://x/receipt.pdf',
       contentType: 'application/pdf',
       size: 1024,
-      thumbnailUrl: null,
     );
     final json = a.toJson();
     expect(json['content_type'], 'application/pdf');
@@ -24,7 +23,6 @@ void main() {
       id: 'c1',
       type: ParticipantType.company,
       displayName: 'Acme',
-      photoUrl: null,
     );
     final json = p.toJson();
     expect(json['type'], 'company');

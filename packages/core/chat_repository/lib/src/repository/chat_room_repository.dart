@@ -55,7 +55,11 @@ class ChatRoomRepository implements BaseRepository<ChatRoom> {
     bool reset = false,
   }) =>
       _service.loadNext(
-          statements: statements, limit: limit, page: page, reset: reset);
+        statements: statements,
+        limit: limit,
+        page: page,
+        reset: reset,
+      );
 
   /// Reuse the existing anchored room or create a new one (dedup).
   Future<ChatRoom> findOrCreate({
@@ -102,5 +106,9 @@ class ChatRoomRepository implements BaseRepository<ChatRoom> {
     required int seq,
   }) =>
       _service.markHandled(
-          roomId: roomId, companyId: companyId, userId: userId, seq: seq);
+        roomId: roomId,
+        companyId: companyId,
+        userId: userId,
+        seq: seq,
+      );
 }

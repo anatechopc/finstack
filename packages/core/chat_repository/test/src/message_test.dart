@@ -34,7 +34,10 @@ void main() {
     expect(json['sender_participant_id'], 'c1');
     expect(json['type'], 'file');
     expect(json['created_at'], isA<num>());
-    expect((json['attachments'] as List).first['content_type'], 'application/pdf');
+    expect(
+      ((json['attachments'] as List).first as Map<String, dynamic>)['content_type'],
+      'application/pdf',
+    );
 
     final entity = MessageEntity.fromJson(json);
     expect(entity.roomId, 'r1');

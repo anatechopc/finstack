@@ -131,7 +131,8 @@ class ChatRoomEntity implements BaseEntity {
   }
 
   static Map<String, Map<String, dynamic>> _teamReadsToJson(
-          Map<String, TeamReadState> m) =>
+    Map<String, TeamReadState> m,
+  ) =>
       m.map((k, v) => MapEntry(k, v.toJson()));
 
   static Map<String, TeamReadState> _teamReadsFromJson(Object? json) {
