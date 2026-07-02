@@ -83,6 +83,11 @@ class Constants {
         redirectPath: '${Paths.index}?sec=reports',
         show: AuthenticationService.instance.user.userRole == UserRole.admin,
       ),
+      const MenuModel(
+        title: 'Messages',
+        logoPath: 'svg/user.svg',
+        redirectPath: Paths.chat,
+      ),
     ];
   }
 

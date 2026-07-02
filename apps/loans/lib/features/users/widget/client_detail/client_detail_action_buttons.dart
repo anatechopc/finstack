@@ -1,13 +1,16 @@
 import 'dart:async';
 
+import 'package:chat_repository/chat_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_form_builder/flutter_form_builder.dart';
 import 'package:form_builder_validators/form_builder_validators.dart';
 import 'package:gap/gap.dart';
+import 'package:go_router/go_router.dart';
 import 'package:loan_repository/loan_repository.dart';
-import 'package:product_repository/product_repository.dart';
+import 'package:loooans/app/routing/paths.dart';
+import 'package:loooans/features/chat/chat_participants.dart';
 import 'package:loooans/features/loans/bloc/additional_loan_bloc.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
 import 'package:loooans/features/products/bloc/product_bloc.dart';
@@ -21,6 +24,7 @@ import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 import 'package:loooans_helpers/data_helpers.dart';
+import 'package:product_repository/product_repository.dart';
 import 'package:user_repository/user_repository.dart';
 
 class ClientDetailActionButtons extends StatelessWidget {
@@ -146,6 +150,13 @@ class ClientDetailActionButtons extends StatelessWidget {
                 ),
               ),
             ] else ...[
+              Expanded(
+                child: AppWidgets.defaultOutlinedButton(
+                  child: const Text('Message borrower'),
+                  onPressed: () => _openBorrowerChat(context),
+                ),
+              ),
+              const Gap(16),
               if (AuthenticationService.instance.allowAddClients &&
                   loan.dueAt == null &&
                   (AuthenticationService.instance.user.isTeller() ||
@@ -207,6 +218,29 @@ class ClientDetailActionButtons extends StatelessWidget {
         );
       },
     );
+  }
+
+  Future<void> _openBorrowerChat(BuildContext context) async {
+    final me = AuthenticationService.instance;
+    final loan = context.read<LoansBloc>().selectedLoan;
+    final seed = ChatParticipants.staffToBorrower(
+      companyId: me.company.id,
+      companyName: me.company.name,
+      companyPhotoUrl: me.company.companyProfilePhotoUrl?.url,
+      borrowerId: userId,
+      borrowerName: '',
+      borrowerPhotoUrl: null,
+      contextType: 'loan',
+      contextId: loan.id,
+    );
+    final room = await context.read<ChatRoomRepository>().findOrCreate(
+          participants: seed.participants,
+          createdBy: me.user.id,
+          contextType: seed.contextType,
+          contextId: seed.contextId,
+        );
+    if (!context.mounted) return;
+    GoRouter.of(context).go(Paths.chatRoom.replaceFirst(':roomId', room.id));
   }
 
   Future<void> _handleAdditionalLoan(
