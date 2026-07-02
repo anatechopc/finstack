@@ -1,6 +1,15 @@
 {
   "indexes": [
     {
+      "collectionGroup": "chat_rooms",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "member_ids", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "deleted_at", "order": "ASCENDING" },
+        { "fieldPath": "updated_at", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "additional_loan_amounts",
       "queryScope": "COLLECTION",
       "fields": [

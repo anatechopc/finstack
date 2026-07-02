@@ -1,0 +1,60 @@
+// ===== CHAT FIRESTORE RULES (reference — paste into each project's console ruleset) =====
+// The live Firestore rules for this project are console-managed (the repo firestore.rules
+// is a stale stub). Paste the block below inside `match /databases/{database}/documents { … }`.
+//
+// Firestore rules cannot parameterize a collection prefix, so paste the two match blocks
+// once PER ACTIVE PREFIX in each project:
+//   - loooans-dev-stg : <PREFIX> = "dev_"  AND  <PREFIX> = "stg_"   (two copies)
+//   - loooans-prod    : <PREFIX> = ""                                (one copy)
+// The helper functions can be declared once per ruleset (they take the prefix inline).
+//
+// v1 known limitations (harden later): the room `update` rule lets any participant write the
+// reads/team_reads maps (can't cheaply enforce "own sub-entry only" in rules); message create
+// blocks a client-set `seq` but does not deep-validate `attachments`.
+
+function chatSignedIn() { return request.auth != null; }
+
+function chatUserCompanyId() {
+  return get(/databases/$(database)/documents/<PREFIX>users/$(request.auth.uid)).data.company_id;
+}
+
+// membership: my uid is in member_ids, or my company's id is (staff)
+function chatIsMember(memberIds) {
+  return chatSignedIn() && (
+    request.auth.uid in memberIds ||
+    chatUserCompanyId() in memberIds
+  );
+}
+
+match /<PREFIX>chat_rooms/{roomId} {
+  allow read: if chatIsMember(resource.data.member_ids);
+
+  allow create: if chatSignedIn()
+    && request.resource.data.created_by == request.auth.uid
+    && chatIsMember(request.resource.data.member_ids);
+
+  // participants may only touch read/handled watermarks (+ updated_at);
+  // last_seq / last_message are written by the messageWritten trigger (Admin SDK bypasses rules).
+  allow update: if chatIsMember(resource.data.member_ids)
+    && request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['reads', 'team_reads', 'updated_at']);
+
+  match /messages/{messageId} {
+    allow read: if chatIsMember(
+      get(/databases/$(database)/documents/<PREFIX>chat_rooms/$(roomId)).data.member_ids
+    );
+
+    allow create: if chatIsMember(
+        get(/databases/$(database)/documents/<PREFIX>chat_rooms/$(roomId)).data.member_ids
+      )
+      && request.resource.data.sender_id == request.auth.uid
+      && (request.resource.data.sender_participant_id == request.auth.uid
+          || request.resource.data.sender_participant_id == chatUserCompanyId())
+      && !('seq' in request.resource.data); // seq is trigger-only
+
+    // edit/delete only your own message, only these fields
+    allow update: if resource.data.sender_id == request.auth.uid
+      && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['text', 'edited_at', 'deleted_at', 'updated_at']);
+  }
+}

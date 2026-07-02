@@ -1,0 +1,18 @@
+// ===== CHAT STORAGE RULES (reference — paste into each project's console ruleset) =====
+// The live Storage rules are console-managed (the repo storage.rules is a stale `if false` stub).
+// Paste this inside `match /b/{bucket}/o { … }` in BOTH loooans-dev-stg and loooans-prod.
+//
+// Chat attachments upload to chat/{roomId}/{messageId}/{fileName} (see ChatBloc). v1 gates on
+// authentication + a 20 MB write cap; the room/message ids in the path are unguessable.
+//
+// v1 decision (spec §9): NOT a per-room firestore.get() participant check, because dev and
+// staging SHARE one bucket (loooans-dev-stg) but use different Firestore prefixes
+// (dev_chat_rooms vs stg_chat_rooms) — a single ruleset can't resolve which room doc to read.
+// Hardening follow-up: encode env in the path (chat/{env}/{roomId}/…) then gate with
+// firestore.get(/databases/(default)/documents/$(env)_chat_rooms/$(roomId)).data.member_ids.
+
+match /chat/{roomId}/{messageId}/{fileName} {
+  allow read: if request.auth != null;
+  allow write: if request.auth != null
+    && request.resource.size < 20 * 1024 * 1024; // 20 MB cap
+}
