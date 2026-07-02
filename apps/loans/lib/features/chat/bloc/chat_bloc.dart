@@ -17,6 +17,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       : _roomId = roomId,
         _rooms = context.read<ChatRoomRepository>(),
         _messages = MessageRepository(roomId: roomId),
+        _typing = context.read<TypingService>(),
         _myUserId = AuthenticationService.instance.user.id,
         _mySenderParticipantId =
             AuthenticationService.instance.user.companyId ??
@@ -29,11 +30,13 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     required String roomId,
     required ChatRoomRepository chatRoomRepository,
     required MessageRepository messageRepository,
+    required TypingService typingService,
     required String myUserId,
     required String mySenderParticipantId,
   })  : _roomId = roomId,
         _rooms = chatRoomRepository,
         _messages = messageRepository,
+        _typing = typingService,
         _myUserId = myUserId,
         _mySenderParticipantId = mySenderParticipantId,
         super(const ChatState()) {
@@ -43,11 +46,13 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   final String _roomId;
   final ChatRoomRepository _rooms;
   final MessageRepository _messages;
+  final TypingService _typing;
   final String _myUserId;
   final String _mySenderParticipantId;
 
   StreamSubscription<List<Message>>? _msgSub;
   StreamSubscription<ChatRoom>? _roomSub;
+  StreamSubscription<List<String>>? _typingSub;
 
   void _wire() {
     on<SubscribeChat>(_onSubscribe);
@@ -58,6 +63,10 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     on<_ChatErrored>(
       (e, emit) =>
           emit(state.copyWith(status: ChatStatus.error, message: e.message)),
+    );
+    on<TypingChanged>(_onTyping);
+    on<_TypingUsersUpdated>(
+      (e, emit) => emit(state.copyWith(typingUserIds: e.userIds)),
     );
 
     // Subscriptions established synchronously so broadcast-stream tests don't
@@ -73,6 +82,18 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       (room) => add(_RoomUpdated(room)),
       onError: (Object err) => _log.severe('room stream error: $err'),
     );
+    _typingSub = _typing
+        .typingStream(
+          roomId: _roomId,
+          clock: () => DateTime.now().millisecondsSinceEpoch,
+        )
+        .listen(
+          (ids) => add(
+            _TypingUsersUpdated(
+              ids.where((id) => id != _myUserId).toList(),
+            ),
+          ),
+        );
   }
 
   Future<void> _onSubscribe(
@@ -140,10 +161,23 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     }
   }
 
+  Future<void> _onTyping(TypingChanged event, Emitter<ChatState> emit) async {
+    if (event.isTyping) {
+      await _typing.setTyping(
+        roomId: _roomId,
+        userId: _myUserId,
+        nowMillis: DateTime.now().millisecondsSinceEpoch,
+      );
+    } else {
+      await _typing.clearTyping(roomId: _roomId, userId: _myUserId);
+    }
+  }
+
   @override
   Future<void> close() {
     _msgSub?.cancel();
     _roomSub?.cancel();
+    _typingSub?.cancel();
     return super.close();
   }
 }

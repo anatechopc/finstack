@@ -10,6 +10,8 @@ class _MockChatRoomRepo extends Mock implements ChatRoomRepository {}
 
 class _MockMessageRepo extends Mock implements MessageRepository {}
 
+class _MockTyping extends Mock implements TypingService {}
+
 class _FakeMessage extends Fake implements Message {}
 
 void main() {
@@ -17,14 +19,18 @@ void main() {
 
   late _MockChatRoomRepo rooms;
   late _MockMessageRepo messages;
+  late _MockTyping typing;
   late StreamController<List<Message>> msgCtrl;
   late StreamController<ChatRoom> roomCtrl;
+  late StreamController<List<String>> typingCtrl;
 
   setUp(() {
     rooms = _MockChatRoomRepo();
     messages = _MockMessageRepo();
+    typing = _MockTyping();
     msgCtrl = StreamController<List<Message>>.broadcast();
     roomCtrl = StreamController<ChatRoom>.broadcast();
+    typingCtrl = StreamController<List<String>>.broadcast();
     when(() => messages.dataStream).thenAnswer((_) => msgCtrl.stream);
     when(
       () => messages.loadNext(
@@ -45,17 +51,25 @@ void main() {
     when(() => messages.add(data: any(named: 'data'))).thenAnswer(
       (invocation) async => invocation.namedArguments[#data] as Message,
     );
+    when(
+      () => typing.typingStream(
+        roomId: any(named: 'roomId'),
+        clock: any(named: 'clock'),
+      ),
+    ).thenAnswer((_) => typingCtrl.stream);
   });
 
   tearDown(() {
     msgCtrl.close();
     roomCtrl.close();
+    typingCtrl.close();
   });
 
   ChatBloc build() => ChatBloc.withDependencies(
         roomId: 'r1',
         chatRoomRepository: rooms,
         messageRepository: messages,
+        typingService: typing,
         myUserId: 'u1',
         mySenderParticipantId: 'u1',
       );
@@ -97,6 +111,19 @@ void main() {
       expect(sent.text, 'yo');
       expect(sent.senderParticipantId, 'u1');
       expect(sent.type, MessageType.text);
+    },
+  );
+
+  blocTest<ChatBloc, ChatState>(
+    'typingStream -> filters own userId and updates typingUserIds',
+    build: build,
+    act: (bloc) {
+      bloc.add(const SubscribeChat());
+      typingCtrl.add(['c1']);
+    },
+    wait: const Duration(milliseconds: 20),
+    verify: (bloc) {
+      expect(bloc.state.typingUserIds, ['c1']);
     },
   );
 }

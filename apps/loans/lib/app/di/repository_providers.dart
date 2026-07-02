@@ -45,6 +45,7 @@ class AppRepositoryProviders extends StatelessWidget {
         RepositoryProvider(create: (context) => ReportsRepository()),
         RepositoryProvider(create: (context) => NotificationRepository()),
         RepositoryProvider(create: (context) => ChatRoomRepository()),
+        RepositoryProvider(create: (context) => TypingService()),
         RepositoryProvider(create: (context) => PaymentRepository()),
         RepositoryProvider(create: (context) => SettingsRepository()),
         RepositoryProvider(create: (context) => CashPoolRepository()),

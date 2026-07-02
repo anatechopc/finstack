@@ -119,6 +119,25 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
               },
             ),
           ),
+          BlocBuilder<ChatBloc, ChatState>(
+            buildWhen: (a, b) => a.typingUserIds != b.typingUserIds,
+            builder: (context, state) {
+              if (state.typingUserIds.isEmpty) return const SizedBox.shrink();
+              return const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'typing…',
+                    style: TextStyle(
+                      color: AppColors.black,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
           _composer(),
         ],
       ),
@@ -138,6 +157,9 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                 minLines: 1,
                 maxLines: 4,
                 textInputAction: TextInputAction.send,
+                onChanged: (v) => context
+                    .read<ChatBloc>()
+                    .add(TypingChanged(v.trim().isNotEmpty)),
                 onSubmitted: (_) => _send(),
                 decoration: InputDecoration(
                   hintText: 'Message',

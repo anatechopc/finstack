@@ -41,3 +41,17 @@ final class _ChatErrored extends ChatEvent {
   @override
   List<Object?> get props => [message];
 }
+
+final class TypingChanged extends ChatEvent {
+  const TypingChanged(this.isTyping);
+  final bool isTyping;
+  @override
+  List<Object?> get props => [isTyping];
+}
+
+final class _TypingUsersUpdated extends ChatEvent {
+  const _TypingUsersUpdated(this.userIds);
+  final List<String> userIds;
+  @override
+  List<Object?> get props => [userIds];
+}
