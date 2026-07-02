@@ -34,6 +34,8 @@ class Paths {
   static const PathTemplate borrowersAction = '/borrowers/:action';
   static const PathTemplate paymentCenter = '/payment-center';
   static const PathTemplate setPassword = '/set-password';
+  static const PathTemplate chat = '/chat';
+  static const PathTemplate chatRoom = '/chat/:roomId';
 
   static const PathAction actionCreate = 'create';
   static const PathAction actionUpdate = 'update';
