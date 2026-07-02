@@ -1,10 +1,14 @@
+import 'package:chat_repository/chat_repository.dart';
 import 'package:company_repository/company_repository.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' as material;
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
 import 'package:loooans/app/model/notification_model.dart';
+import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/bootstrap.dart';
+import 'package:loooans/features/chat/chat_push.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:loooans_helpers/logging_helpers.dart';
@@ -29,6 +33,15 @@ class NotificationService {
     return _instance!;
   }
 
+  static void _handleChatTap(RemoteMessage message) {
+    if (!isChatPush(message.data)) return;
+    final roomId = chatRoomId(message.data);
+    if (roomId == null || _context == null) return;
+    GoRouter.of(_context!).go(
+      Paths.chatRoom.replaceFirst(':roomId', roomId),
+    );
+  }
+
   static void initialize(material.BuildContext context) {
     _log = Logger('notification_service.dart');
     _instance = NotificationService._internal();
@@ -39,13 +52,27 @@ class NotificationService {
       _log!.finest('Do something when app opens');
       _log!.finest(
           'message: ${message?.data}====${message?.notification?.title}',);
+      if (message != null) _handleChatTap(message);
     });
 
     FirebaseMessaging.onMessage.listen(showFlutterNotification);
 
+    // Foreground delivered-ack for chat messages.
+    FirebaseMessaging.onMessage.listen((message) async {
+      if (!isChatPush(message.data)) return;
+      final roomId = chatRoomId(message.data);
+      final seq = chatSeq(message.data);
+      if (roomId == null || seq == 0) return;
+      final repo = _context?.read<ChatRoomRepository>();
+      final userId = AuthenticationService.instance.user.id;
+      if (repo == null) return;
+      await repo.markDelivered(roomId: roomId, userId: userId, seq: seq);
+    });
+
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       _log!.finest('A new onMessageOpenedApp event was published!');
       _log!.finest('Do something when app opens');
+      _handleChatTap(message);
     });
 
     _instance!.initializeToken();
