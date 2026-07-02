@@ -111,4 +111,8 @@ class ChatRoomRepository implements BaseRepository<ChatRoom> {
         userId: userId,
         seq: seq,
       );
+
+  /// Live stream of a single room, mapped to the model.
+  Stream<ChatRoom> watchRoom(String roomId) =>
+      _service.watchRoom(roomId).map((e) => e.toChatRoom());
 }

@@ -178,4 +178,11 @@ final class ChatRoomFirestoreService extends BaseFirestoreService<ChatRoomEntity
       'team_reads.$companyId.handled_by': userId,
     });
   }
+
+  /// Live stream of a single room document.
+  Stream<ChatRoomEntity> watchRoom(String roomId) {
+    return root.doc(roomId).snapshots().where((s) => s.exists).map(
+          (s) => ChatRoomEntity.fromJson(s.data()! as Map<String, dynamic>),
+        );
+  }
 }
