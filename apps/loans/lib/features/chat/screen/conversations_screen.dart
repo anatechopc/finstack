@@ -49,7 +49,11 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
             separatorBuilder: (_, __) => const Gap(8),
             itemBuilder: (context, index) {
               final room = state.rooms[index];
-              return _ConversationRow(room: room, myUserId: state.myUserId);
+              return _ConversationRow(
+                room: room,
+                myUserId: state.myUserId,
+                myCompanyId: state.myCompanyId,
+              );
             },
           );
         },
@@ -59,10 +63,15 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
 }
 
 class _ConversationRow extends StatelessWidget {
-  const _ConversationRow({required this.room, required this.myUserId});
+  const _ConversationRow({
+    required this.room,
+    required this.myUserId,
+    this.myCompanyId,
+  });
 
   final ChatRoom room;
   final String myUserId;
+  final String? myCompanyId;
 
   @override
   Widget build(BuildContext context) {
@@ -96,6 +105,26 @@ class _ConversationRow extends StatelessWidget {
             if (unread > 0) ...[
               const Gap(4),
               _UnreadBadge(count: unread),
+            ],
+            if (myCompanyId != null &&
+                isAwaitingResponse(room, myCompanyId!)) ...[
+              const Gap(4),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.ubOrange.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  'Awaiting',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: AppColors.ubOrange,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
             ],
           ],
         ),

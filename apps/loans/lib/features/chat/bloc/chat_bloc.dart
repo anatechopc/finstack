@@ -129,6 +129,15 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         userId: _myUserId,
         seq: latestSeq,
       );
+      final iAmStaff = _mySenderParticipantId != _myUserId;
+      if (iAmStaff) {
+        await _rooms.markHandled(
+          roomId: _roomId,
+          companyId: _mySenderParticipantId,
+          userId: _myUserId,
+          seq: latestSeq,
+        );
+      }
     }
   }
 

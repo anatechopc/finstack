@@ -58,6 +58,14 @@ void main() {
         seq: any(named: 'seq'),
       ),
     ).thenAnswer((_) async {});
+    when(
+      () => rooms.markHandled(
+        roomId: any(named: 'roomId'),
+        companyId: any(named: 'companyId'),
+        userId: any(named: 'userId'),
+        seq: any(named: 'seq'),
+      ),
+    ).thenAnswer((_) async {});
     when(() => messages.add(data: any(named: 'data'))).thenAnswer(
       (invocation) async => invocation.namedArguments[#data] as Message,
     );
@@ -199,6 +207,42 @@ void main() {
       final sent = captured.single as Message;
       expect(sent.type, MessageType.image);
       expect(sent.attachments.single.thumbnailUrl, 'thumb');
+    },
+  );
+
+  blocTest<ChatBloc, ChatState>(
+    'staff identity: markHandled called with companyId when messages arrive',
+    build: () => ChatBloc.withDependencies(
+      roomId: 'r1',
+      chatRoomRepository: rooms,
+      messageRepository: messages,
+      typingService: typing,
+      storageRepository: storage,
+      myUserId: 'staff1',
+      mySenderParticipantId: 'c1',
+    ),
+    act: (bloc) {
+      bloc.add(const SubscribeChat());
+      msgCtrl.add([
+        Message.create(
+          roomId: 'r1',
+          senderId: 'u1',
+          senderParticipantId: 'u1',
+          type: MessageType.text,
+          text: 'hi',
+        )..seq = 4,
+      ]);
+    },
+    wait: const Duration(milliseconds: 20),
+    verify: (_) {
+      verify(
+        () => rooms.markHandled(
+          roomId: 'r1',
+          companyId: 'c1',
+          userId: 'staff1',
+          seq: 4,
+        ),
+      ).called(1);
     },
   );
 }

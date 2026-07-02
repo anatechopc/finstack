@@ -18,7 +18,12 @@ class ConversationsBloc extends Bloc<ConversationsEvent, ConversationsState> {
       : _repo = context.read<ChatRoomRepository>(),
         _myUserId = AuthenticationService.instance.user.id,
         _myCompanyId = AuthenticationService.instance.user.companyId,
-        super(ConversationsState(myUserId: AuthenticationService.instance.user.id)) {
+        super(
+          ConversationsState(
+            myUserId: AuthenticationService.instance.user.id,
+            myCompanyId: AuthenticationService.instance.user.companyId,
+          ),
+        ) {
     _wire();
   }
 
@@ -29,7 +34,7 @@ class ConversationsBloc extends Bloc<ConversationsEvent, ConversationsState> {
   })  : _repo = chatRoomRepository,
         _myUserId = myUserId,
         _myCompanyId = myCompanyId,
-        super(ConversationsState(myUserId: myUserId)) {
+        super(ConversationsState(myUserId: myUserId, myCompanyId: myCompanyId)) {
     _wire();
   }
 
