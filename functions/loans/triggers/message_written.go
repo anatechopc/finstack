@@ -14,6 +14,7 @@ import (
 	"github.com/cloudevents/sdk-go/v2/event"
 	"github.com/golang/protobuf/proto"
 	"github.com/googleapis/google-cloudevents-go/cloud/firestoredata"
+	"go.uber.org/zap"
 )
 
 // ParseMessagePath extracts roomId and messageId from a Firestore document
@@ -66,7 +67,7 @@ func MessageWritten(ctx context.Context, ev event.Event) error {
 	defer fs.Close()
 
 	prefix := utils.GetCollectionPrefix()
-	return HandleMessageWrittenCore(ctx, me, buildMessageWrittenDeps(app, fs, prefix))
+	return HandleMessageWrittenCore(ctx, me, buildMessageWrittenDeps(app, fs, prefix, log))
 }
 
 func extractMessageWrite(data *firestoredata.DocumentEventData) (MessageEvent, bool) {
@@ -99,12 +100,13 @@ func flattenMessageFields(fields map[string]*firestoredata.Value) map[string]any
 	out := map[string]any{}
 	for k, v := range fields {
 		switch k {
-		case "sender_id", "sender_participant_id", "type", "text", "room_id":
+		case "sender_id", "sender_participant_id", "type", "text":
 			out[k] = v.GetStringValue()
 		case "seq", "created_at":
-			out[k] = v.GetIntegerValue()
+			iv, _ := intMillisFromValue(v)
+			out[k] = iv
 		case "edited_at", "deleted_at":
-			if iv := v.GetIntegerValue(); iv != 0 {
+			if iv, ok := intMillisFromValue(v); ok && iv != 0 {
 				out[k] = iv
 			} else {
 				out[k] = nil
@@ -114,7 +116,23 @@ func flattenMessageFields(fields map[string]*firestoredata.Value) map[string]any
 	return out
 }
 
-func buildMessageWrittenDeps(app *firebase.App, fs *firestore.Client, prefix string) MessageWrittenDeps {
+// intMillisFromValue reads an int64 epoch-millis field, tolerating a Firestore
+// Timestamp encoding (the documented Go→Firestore `time.Time` footgun) by
+// converting it to millis. Returns ok=false for any other or absent type, so
+// callers keep the codebase's "epoch millis" invariant even if a rogue producer
+// ever writes a Timestamp instead of an int.
+func intMillisFromValue(v *firestoredata.Value) (int64, bool) {
+	switch v.GetValueType().(type) {
+	case *firestoredata.Value_IntegerValue:
+		return v.GetIntegerValue(), true
+	case *firestoredata.Value_TimestampValue:
+		return v.GetTimestampValue().AsTime().UnixMilli(), true
+	default:
+		return 0, false
+	}
+}
+
+func buildMessageWrittenDeps(app *firebase.App, fs *firestore.Client, prefix string, log *zap.Logger) MessageWrittenDeps {
 	return MessageWrittenDeps{
 		GetRoom: func(ctx context.Context, roomId string) (int64, []types.ChatParticipant, error) {
 			snap, err := fs.Doc(prefix + "chat_rooms/" + roomId).Get(ctx)
@@ -122,69 +140,95 @@ func buildMessageWrittenDeps(app *firebase.App, fs *firestore.Client, prefix str
 				return 0, nil, err
 			}
 			lastSeq, _ := utils.ToInt64(snap.Data()["last_seq"])
-			var parts []types.ChatParticipant
-			if raw, ok := snap.Data()["participants"].([]any); ok {
-				for _, item := range raw {
-					if m, ok := item.(map[string]any); ok {
-						id, _ := m["id"].(string)
-						t, _ := m["type"].(string)
-						parts = append(parts, types.ChatParticipant{Id: id, Type: t})
-					}
-				}
-			}
-			return lastSeq, parts, nil
+			return lastSeq, parseParticipants(snap.Data()["participants"]), nil
 		},
-		AllocateSeq: func(ctx context.Context, roomId, messageId string) (int64, error) {
+		AllocateAndCommit: func(
+			ctx context.Context, roomId, messageId string,
+			build func(seq int64, participants []types.ChatParticipant) map[string]any,
+		) (int64, []types.ChatParticipant, bool, error) {
 			roomRef := fs.Doc(prefix + "chat_rooms/" + roomId)
 			msgRef := fs.Collection(prefix + "chat_rooms/" + roomId + "/messages").Doc(messageId)
-			var next int64
+			var (
+				seq          int64
+				participants []types.ChatParticipant
+				isNew        bool
+			)
 			err := fs.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-				snap, err := tx.Get(roomRef)
+				// Idempotency: a message that already carries a seq was processed by
+				// a prior invocation (Eventarc is at-least-once) — no-op, so we
+				// neither re-allocate a seq nor re-send the push.
+				msgSnap, err := tx.Get(msgRef)
 				if err != nil {
 					return err
 				}
-				last, _ := utils.ToInt64(snap.Data()["last_seq"])
-				next = last + 1
-				if err := tx.Set(roomRef, map[string]any{"last_seq": next}, firestore.MergeAll); err != nil {
+				if existing, ok := utils.ToInt64(msgSnap.Data()["seq"]); ok && existing > 0 {
+					seq, isNew = existing, false
+					return nil
+				}
+				roomSnap, err := tx.Get(roomRef)
+				if err != nil {
 					return err
 				}
-				return tx.Set(msgRef, map[string]any{"seq": next}, firestore.MergeAll)
+				last, _ := utils.ToInt64(roomSnap.Data()["last_seq"])
+				participants = parseParticipants(roomSnap.Data()["participants"])
+				seq, isNew = last+1, true
+
+				// last_seq and the derived last_message/team_reads are written in the
+				// SAME transaction: transactions serialize on roomRef, so the message
+				// with the higher seq always writes last — the preview and the team
+				// handled-watermark can never regress under concurrent sends.
+				meta := build(seq, participants)
+				meta["last_seq"] = seq
+				if err := tx.Set(roomRef, meta, firestore.MergeAll); err != nil {
+					return err
+				}
+				// Stamping seq re-fires messageWritten as an update; handleMessageUpdate
+				// no-ops it (neither edited_at nor deleted_at changed). This is the one
+				// intentional extra (no-op) invocation per created message.
+				return tx.Set(msgRef, map[string]any{"seq": seq}, firestore.MergeAll)
 			})
 			if err != nil {
-				return 0, err
+				return 0, nil, false, err
 			}
-			return next, nil
+			return seq, participants, isNew, nil
 		},
 		UpdateRoomMeta: func(ctx context.Context, roomId string, meta map[string]any) error {
-			_, err := fs.Doc(prefix + "chat_rooms/" + roomId).Set(ctx, meta, firestore.MergeAll)
+			_, err := fs.Doc(prefix+"chat_rooms/"+roomId).Set(ctx, meta, firestore.MergeAll)
 			return err
 		},
 		CompanyUserIds: func(ctx context.Context, companyId string, roles []string) ([]string, error) {
 			return getCompanyUserIdsByRole(ctx, fs, prefix, companyId, roles)
 		},
 		SendPush: func(ctx context.Context, recipientUserIds []string, title, body string, data map[string]string) error {
-			return sendChatPush(ctx, app, fs, prefix, recipientUserIds, title, body, data)
+			return sendChatPush(ctx, app, fs, prefix, log, recipientUserIds, title, body, data)
 		},
 		Now: time.Now,
 	}
 }
 
-func sendChatPush(
-	ctx context.Context, app *firebase.App, fs *firestore.Client, prefix string,
-	recipientUserIds []string, title, body string, data map[string]string,
-) error {
-	var tokens []string
-	for _, uid := range recipientUserIds {
-		docs, err := fs.Collection(prefix + "users/" + uid + "/devices").Documents(ctx).GetAll()
-		if err != nil {
-			continue
-		}
-		for _, d := range docs {
-			if t, ok := d.Data()["token"].(string); ok && t != "" {
-				tokens = append(tokens, t)
-			}
+// parseParticipants decodes the denormalized `participants` array on a chat room
+// doc into typed participants (nil when absent/malformed).
+func parseParticipants(raw any) []types.ChatParticipant {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	parts := make([]types.ChatParticipant, 0, len(items))
+	for _, item := range items {
+		if m, ok := item.(map[string]any); ok {
+			id, _ := m["id"].(string)
+			t, _ := m["type"].(string)
+			parts = append(parts, types.ChatParticipant{Id: id, Type: t})
 		}
 	}
+	return parts
+}
+
+func sendChatPush(
+	ctx context.Context, app *firebase.App, fs *firestore.Client, prefix string, log *zap.Logger,
+	recipientUserIds []string, title, body string, data map[string]string,
+) error {
+	tokens := deviceTokensForUsers(ctx, fs, prefix, log, recipientUserIds)
 	if len(tokens) == 0 {
 		return nil
 	}
@@ -199,4 +243,29 @@ func sendChatPush(
 		Android:      &messaging.AndroidConfig{Priority: "high"},
 	})
 	return err
+}
+
+// deviceTokensForUsers collects the FCM tokens registered under each user's
+// devices subcollection. A per-user read failure is logged and skipped (rather
+// than silently dropped with a bare `continue`) so one recipient's transient
+// error never aborts the whole fan-out — or vanishes without a trace.
+func deviceTokensForUsers(
+	ctx context.Context, fs *firestore.Client, prefix string, log *zap.Logger, userIds []string,
+) []string {
+	var tokens []string
+	for _, uid := range userIds {
+		docs, err := fs.Collection(prefix + "users/" + uid + "/devices").Documents(ctx).GetAll()
+		if err != nil {
+			if log != nil {
+				log.Sugar().Warnf("message_written: skipping recipient %q — devices read failed: %v", uid, err)
+			}
+			continue
+		}
+		for _, d := range docs {
+			if t, ok := d.Data()["token"].(string); ok && t != "" {
+				tokens = append(tokens, t)
+			}
+		}
+	}
+	return tokens
 }

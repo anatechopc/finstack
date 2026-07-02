@@ -24,8 +24,19 @@ type MessageEvent struct {
 
 // MessageWrittenDeps injects every side effect so the core is unit-testable.
 type MessageWrittenDeps struct {
-	GetRoom        func(ctx context.Context, roomId string) (lastSeq int64, participants []types.ChatParticipant, err error)
-	AllocateSeq    func(ctx context.Context, roomId, messageId string) (int64, error)
+	GetRoom func(ctx context.Context, roomId string) (lastSeq int64, participants []types.ChatParticipant, err error)
+	// AllocateAndCommit atomically assigns the message's seq and writes the room
+	// meta (last_message/updated_at/team_reads) produced by build, inside one
+	// transaction — so seq allocation and the denormalized preview cannot race or
+	// regress under concurrent sends. It is idempotent: if the message already
+	// carries a seq (a redelivered/retried create event), it returns that seq with
+	// isNew=false and writes nothing, so the caller skips the duplicate push. The
+	// room participants are returned from the transaction read so the create path
+	// needs no separate room read.
+	AllocateAndCommit func(
+		ctx context.Context, roomId, messageId string,
+		build func(seq int64, participants []types.ChatParticipant) map[string]any,
+	) (seq int64, participants []types.ChatParticipant, isNew bool, err error)
 	UpdateRoomMeta func(ctx context.Context, roomId string, meta map[string]any) error
 	CompanyUserIds func(ctx context.Context, companyId string, roles []string) ([]string, error)
 	SendPush       func(ctx context.Context, recipientUserIds []string, title, body string, data map[string]string) error
@@ -40,7 +51,12 @@ func FixedClock(epochMillis int64) func() time.Time {
 // HandleMessageWrittenCore is the trigger's business logic.
 func HandleMessageWrittenCore(ctx context.Context, ev MessageEvent, deps MessageWrittenDeps) error {
 	if ev.IsDelete {
-		return nil // hard delete: nothing to maintain (we soft-delete via update)
+		// Firestore hard-delete: the normal lifecycle soft-deletes via update
+		// (deleted_at), so this only fires on an out-of-band hard delete
+		// (console / TTL / admin cleanup). We intentionally do nothing — note this
+		// leaves last_message pointing at the deleted doc if it was the latest,
+		// until the next message arrives (acceptable for v1; clients soft-delete).
+		return nil
 	}
 	if ev.Old == nil {
 		return handleMessageCreate(ctx, ev, deps)
@@ -49,43 +65,47 @@ func HandleMessageWrittenCore(ctx context.Context, ev MessageEvent, deps Message
 }
 
 func handleMessageCreate(ctx context.Context, ev MessageEvent, deps MessageWrittenDeps) error {
-	_, participants, err := deps.GetRoom(ctx, ev.RoomId)
-	if err != nil {
-		return err
-	}
 	senderPid, _ := ev.New["sender_participant_id"].(string)
 	senderId, _ := ev.New["sender_id"].(string)
 	msgType, _ := ev.New["type"].(string)
 	text, _ := ev.New["text"].(string)
 	createdAt, _ := utils.ToInt64(ev.New["created_at"])
+	now := deps.Now().UTC().UnixMilli()
 
-	seq, err := deps.AllocateSeq(ctx, ev.RoomId, ev.MessageId)
+	// build produces the room meta for the allocated seq. It runs inside the
+	// allocation transaction so last_message/team_reads are written atomically
+	// with (and monotonically relative to) last_seq.
+	build := func(seq int64, participants []types.ChatParticipant) map[string]any {
+		meta := map[string]any{
+			"updated_at": now,
+			"last_message": map[string]any{
+				"text":                  messagePreview(msgType, text),
+				"sender_participant_id": senderPid,
+				"type":                  msgType,
+				"seq":                   seq,
+				"created_at":            createdAt,
+			},
+		}
+		if isCompanyParticipant(participants, senderPid) {
+			meta["team_reads"] = map[string]any{
+				senderPid: map[string]any{
+					"last_handled_seq": seq,
+					"last_handled_at":  now,
+					"handled_by":       senderId,
+				},
+			}
+		}
+		return meta
+	}
+
+	seq, participants, isNew, err := deps.AllocateAndCommit(ctx, ev.RoomId, ev.MessageId, build)
 	if err != nil {
 		return err
 	}
-	now := deps.Now().UTC().UnixMilli()
-
-	meta := map[string]any{
-		"updated_at": now,
-		"last_message": map[string]any{
-			"text":                  messagePreview(msgType, text),
-			"sender_participant_id": senderPid,
-			"type":                  msgType,
-			"seq":                   seq,
-			"created_at":            createdAt,
-		},
-	}
-	if isCompanyParticipant(participants, senderPid) {
-		meta["team_reads"] = map[string]any{
-			senderPid: map[string]any{
-				"last_handled_seq": seq,
-				"last_handled_at":  now,
-				"handled_by":       senderId,
-			},
-		}
-	}
-	if err := deps.UpdateRoomMeta(ctx, ev.RoomId, meta); err != nil {
-		return err
+	if !isNew {
+		// Redelivered / retried create: this message was already allocated and
+		// pushed by a prior invocation. Skip the duplicate push.
+		return nil
 	}
 
 	recipients, err := recipientUserIds(ctx, participants, senderPid, deps)

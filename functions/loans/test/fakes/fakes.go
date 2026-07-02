@@ -471,20 +471,58 @@ func (r *RoomReader) GetRoom(_ context.Context, roomId string) (int64, []types.C
 	return info.LastSeq, info.Participants, nil
 }
 
-// SeqAllocator fakes MessageWrittenDeps.AllocateSeq (returns an incrementing seq).
-type SeqAllocator struct {
-	Start int64
-	Err   error
-	Calls []string
+// ChatCommit records one AllocateAndCommit invocation.
+type ChatCommit struct {
+	RoomId    string
+	MessageId string
+	Seq       int64
+	Meta      map[string]any // the room meta the core built (nil on an idempotent no-op)
+	IsNew     bool
 }
 
-func (s *SeqAllocator) AllocateSeq(_ context.Context, roomId, messageId string) (int64, error) {
-	s.Calls = append(s.Calls, roomId+":"+messageId)
-	if s.Err != nil {
-		return 0, s.Err
+// ChatCommitter fakes MessageWrittenDeps.AllocateAndCommit. It assigns an
+// incrementing seq per room (seeded from each room's LastSeq), invokes the core's
+// build callback with the room participants, records the resulting meta, and
+// models idempotency: a messageId it has already committed returns its prior seq
+// with isNew=false (without re-running build), mirroring a redelivered event.
+type ChatCommitter struct {
+	Rooms   map[string]ChatRoomInfo // participants + starting LastSeq per room
+	Err     error
+	Commits []ChatCommit
+
+	lastSeq map[string]int64
+	msgSeq  map[string]int64
+}
+
+func (c *ChatCommitter) AllocateAndCommit(
+	_ context.Context, roomId, messageId string,
+	build func(seq int64, participants []types.ChatParticipant) map[string]any,
+) (int64, []types.ChatParticipant, bool, error) {
+	if c.Err != nil {
+		return 0, nil, false, c.Err
 	}
-	s.Start++
-	return s.Start, nil
+	if c.lastSeq == nil {
+		c.lastSeq = map[string]int64{}
+	}
+	if c.msgSeq == nil {
+		c.msgSeq = map[string]int64{}
+	}
+	info := c.Rooms[roomId]
+	key := roomId + ":" + messageId
+	if existing, ok := c.msgSeq[key]; ok {
+		c.Commits = append(c.Commits, ChatCommit{RoomId: roomId, MessageId: messageId, Seq: existing, IsNew: false})
+		return existing, nil, false, nil
+	}
+	last, ok := c.lastSeq[roomId]
+	if !ok {
+		last = info.LastSeq
+	}
+	seq := last + 1
+	c.lastSeq[roomId] = seq
+	c.msgSeq[key] = seq
+	meta := build(seq, info.Participants)
+	c.Commits = append(c.Commits, ChatCommit{RoomId: roomId, MessageId: messageId, Seq: seq, Meta: meta, IsNew: true})
+	return seq, info.Participants, true, nil
 }
 
 // RoomMetaUpdate records one UpdateRoomMeta call.
