@@ -3,6 +3,8 @@ package fakes
 import (
 	"context"
 	"errors"
+
+	"com.loooans.app/types"
 )
 
 // OtpReader fake — returns a preconfigured OTP entry by token, ErrOtpNotFound,
@@ -443,4 +445,80 @@ type PasswordSetter struct {
 func (s *PasswordSetter) Set(_ context.Context, uid, newPassword string) error {
 	s.Sets = append(s.Sets, PasswordSet{UID: uid, NewPassword: newPassword})
 	return s.Err
+}
+
+// ---- chat / message_written fakes ----
+
+// ChatRoomInfo is the canned room state for RoomReader.
+type ChatRoomInfo struct {
+	LastSeq      int64
+	Participants []types.ChatParticipant
+}
+
+// RoomReader fakes MessageWrittenDeps.GetRoom.
+type RoomReader struct {
+	Rooms map[string]ChatRoomInfo
+	Err   error
+	Calls []string
+}
+
+func (r *RoomReader) GetRoom(_ context.Context, roomId string) (int64, []types.ChatParticipant, error) {
+	r.Calls = append(r.Calls, roomId)
+	if r.Err != nil {
+		return 0, nil, r.Err
+	}
+	info := r.Rooms[roomId]
+	return info.LastSeq, info.Participants, nil
+}
+
+// SeqAllocator fakes MessageWrittenDeps.AllocateSeq (returns an incrementing seq).
+type SeqAllocator struct {
+	Start int64
+	Err   error
+	Calls []string
+}
+
+func (s *SeqAllocator) AllocateSeq(_ context.Context, roomId, messageId string) (int64, error) {
+	s.Calls = append(s.Calls, roomId+":"+messageId)
+	if s.Err != nil {
+		return 0, s.Err
+	}
+	s.Start++
+	return s.Start, nil
+}
+
+// RoomMetaUpdate records one UpdateRoomMeta call.
+type RoomMetaUpdate struct {
+	RoomId string
+	Meta   map[string]any
+}
+
+// RoomMetaWriter fakes MessageWrittenDeps.UpdateRoomMeta.
+type RoomMetaWriter struct {
+	Updates []RoomMetaUpdate
+	Err     error
+}
+
+func (w *RoomMetaWriter) UpdateRoomMeta(_ context.Context, roomId string, meta map[string]any) error {
+	w.Updates = append(w.Updates, RoomMetaUpdate{RoomId: roomId, Meta: meta})
+	return w.Err
+}
+
+// ChatPush records one SendPush call.
+type ChatPush struct {
+	Recipients []string
+	Title      string
+	Body       string
+	Data       map[string]string
+}
+
+// ChatPusher fakes MessageWrittenDeps.SendPush.
+type ChatPusher struct {
+	Pushes []ChatPush
+	Err    error
+}
+
+func (p *ChatPusher) SendPush(_ context.Context, recipients []string, title, body string, data map[string]string) error {
+	p.Pushes = append(p.Pushes, ChatPush{Recipients: recipients, Title: title, Body: body, Data: data})
+	return p.Err
 }
