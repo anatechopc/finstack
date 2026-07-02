@@ -1,9 +1,11 @@
+import 'package:chat_repository/chat_repository.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loooans/features/chat/bloc/chat_bloc.dart';
+import 'package:loooans/features/chat/chat_status.dart';
 import 'package:loooans/features/chat/widget/message_bubble.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/utils/screen_helpers.dart';
@@ -85,7 +87,33 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                     final m = state.messages[index];
                     final isMine = m.senderParticipantId == myUserId ||
                         m.senderParticipantId == myCompanyId;
-                    return MessageBubble(message: m, isMine: isMine);
+                    final room = state.room;
+                    final status = (isMine && room != null)
+                        ? messageStatus(
+                            message: m,
+                            counterpartReadStates: counterpartReadStates(
+                              room,
+                              myUserId: myUserId,
+                              myCompanyId: myCompanyId,
+                            ),
+                          )
+                        : null;
+                    final senderLabel = (!isMine &&
+                            room != null &&
+                            m.senderParticipantId != myUserId)
+                        ? room.participants
+                            .firstWhere(
+                              (p) => p.id == m.senderParticipantId,
+                              orElse: () => room.participants.first,
+                            )
+                            .displayName
+                        : null;
+                    return MessageBubble(
+                      message: m,
+                      isMine: isMine,
+                      status: status,
+                      senderLabel: senderLabel,
+                    );
                   },
                 );
               },
