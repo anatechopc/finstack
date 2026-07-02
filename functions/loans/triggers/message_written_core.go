@@ -41,6 +41,16 @@ type MessageWrittenDeps struct {
 	CompanyUserIds func(ctx context.Context, companyId string, roles []string) ([]string, error)
 	SendPush       func(ctx context.Context, recipientUserIds []string, title, body string, data map[string]string) error
 	Now            func() time.Time
+	// LogWarn records a non-fatal warning — used for best-effort push failures
+	// after the message is already committed. Wired to the zap logger in prod;
+	// may be nil in tests (then it is a no-op).
+	LogWarn func(format string, args ...any)
+}
+
+func (d MessageWrittenDeps) warn(format string, args ...any) {
+	if d.LogWarn != nil {
+		d.LogWarn(format, args...)
+	}
 }
 
 // FixedClock returns a Now func pinned to the given epoch millis (for tests).
@@ -108,9 +118,16 @@ func handleMessageCreate(ctx context.Context, ev MessageEvent, deps MessageWritt
 		return nil
 	}
 
+	// The message and its unread watermark are now durably committed. The push is
+	// best-effort: the seq idempotency guard means a retry can never re-send it,
+	// so recipient-lookup / FCM errors are logged and swallowed rather than
+	// returned — returning them would only trigger a no-op Eventarc redelivery and
+	// permanently drop the notification. Per the design, the committed unread state
+	// (not the push) is the durable signal.
 	recipients, err := recipientUserIds(ctx, participants, senderPid, deps)
 	if err != nil {
-		return err
+		deps.warn("message_written: recipient lookup failed (room=%s msg=%s): %v", ev.RoomId, ev.MessageId, err)
+		return nil
 	}
 	if len(recipients) == 0 {
 		return nil
@@ -121,7 +138,10 @@ func handleMessageCreate(ctx context.Context, ev MessageEvent, deps MessageWritt
 		"message_id":        ev.MessageId,
 		"seq":               strconv.FormatInt(seq, 10),
 	}
-	return deps.SendPush(ctx, recipients, "New message", messagePreview(msgType, text), data)
+	if err := deps.SendPush(ctx, recipients, "New message", messagePreview(msgType, text), data); err != nil {
+		deps.warn("message_written: push failed (room=%s msg=%s): %v", ev.RoomId, ev.MessageId, err)
+	}
+	return nil
 }
 
 func handleMessageUpdate(ctx context.Context, ev MessageEvent, deps MessageWrittenDeps) error {

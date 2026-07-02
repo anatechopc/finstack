@@ -2,6 +2,7 @@ package triggers_test
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"testing"
 
@@ -55,6 +56,9 @@ func TestCreate_BorrowerSends_PushesCompanyStaff_AndWritesLastMessage(t *testing
 	lm := committer.Commits[0].Meta["last_message"].(map[string]any)
 	if lm["seq"].(int64) != 1 || lm["text"].(string) != "hello" {
 		t.Errorf("last_message: %+v", lm)
+	}
+	if committer.Commits[0].Meta["last_seq"].(int64) != 1 {
+		t.Errorf("room last_seq must advance to 1, meta=%+v", committer.Commits[0].Meta)
 	}
 	if _, hasTeam := committer.Commits[0].Meta["team_reads"]; hasTeam {
 		t.Errorf("borrower message must not advance team_reads")
@@ -136,6 +140,55 @@ func TestCreate_Redelivered_NoDuplicatePush(t *testing.T) {
 	}
 	if len(push.Pushes) != 1 {
 		t.Errorf("redelivered create must not push twice, got %d pushes", len(push.Pushes))
+	}
+}
+
+func TestCreate_PushError_IsBestEffort(t *testing.T) {
+	committer := borrowerCompanyCommitter()
+	company := &fakes.CompanyUsersReader{Users: map[string][]string{"c1": {"admin1"}}}
+	push := &fakes.ChatPusher{Err: errors.New("fcm boom")}
+
+	ev := triggers.MessageEvent{
+		RoomId: "r1", MessageId: "m1",
+		New: map[string]any{
+			"sender_id": "u1", "sender_participant_id": "u1",
+			"type": "text", "text": "hello", "created_at": int64(111),
+		},
+	}
+	// A push failure must NOT propagate: the message is already committed and a
+	// retry would only no-op the push (idempotency guard), so it must be swallowed.
+	if err := triggers.HandleMessageWrittenCore(context.Background(), ev, chatDeps(committer, company, push)); err != nil {
+		t.Fatalf("push failure must be swallowed, got err: %v", err)
+	}
+	if len(committer.Commits) != 1 || !committer.Commits[0].IsNew {
+		t.Errorf("message must still be committed, commits=%+v", committer.Commits)
+	}
+	if len(push.Pushes) != 1 {
+		t.Errorf("push should have been attempted once, got %d", len(push.Pushes))
+	}
+}
+
+func TestCreate_RecipientLookupError_IsBestEffort(t *testing.T) {
+	committer := borrowerCompanyCommitter()
+	company := &fakes.CompanyUsersReader{Err: errors.New("query boom")}
+	push := &fakes.ChatPusher{}
+
+	ev := triggers.MessageEvent{
+		RoomId: "r1", MessageId: "m1",
+		New: map[string]any{
+			"sender_id": "u1", "sender_participant_id": "u1",
+			"type": "text", "text": "hello", "created_at": int64(111),
+		},
+	}
+	// A recipient-lookup failure after the commit must also be best-effort.
+	if err := triggers.HandleMessageWrittenCore(context.Background(), ev, chatDeps(committer, company, push)); err != nil {
+		t.Fatalf("recipient-lookup failure must be swallowed, got err: %v", err)
+	}
+	if len(committer.Commits) != 1 {
+		t.Errorf("message must still be committed, commits=%+v", committer.Commits)
+	}
+	if len(push.Pushes) != 0 {
+		t.Errorf("no push expected when recipient lookup failed, got %d", len(push.Pushes))
 	}
 }
 

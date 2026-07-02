@@ -202,7 +202,8 @@ func buildMessageWrittenDeps(app *firebase.App, fs *firestore.Client, prefix str
 		SendPush: func(ctx context.Context, recipientUserIds []string, title, body string, data map[string]string) error {
 			return sendChatPush(ctx, app, fs, prefix, log, recipientUserIds, title, body, data)
 		},
-		Now: time.Now,
+		Now:     time.Now,
+		LogWarn: func(format string, args ...any) { log.Sugar().Warnf(format, args...) },
 	}
 }
 

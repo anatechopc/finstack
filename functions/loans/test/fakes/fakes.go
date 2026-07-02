@@ -521,6 +521,7 @@ func (c *ChatCommitter) AllocateAndCommit(
 	c.lastSeq[roomId] = seq
 	c.msgSeq[key] = seq
 	meta := build(seq, info.Participants)
+	meta["last_seq"] = seq // mirror the real adapter, which stamps last_seq after build
 	c.Commits = append(c.Commits, ChatCommit{RoomId: roomId, MessageId: messageId, Seq: seq, Meta: meta, IsNew: true})
 	return seq, info.Participants, true, nil
 }
