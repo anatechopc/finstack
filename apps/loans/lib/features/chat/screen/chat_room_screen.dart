@@ -108,11 +108,16 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                             )
                             .displayName
                         : null;
-                    return MessageBubble(
+                    final bubble = MessageBubble(
                       message: m,
                       isMine: isMine,
                       status: status,
                       senderLabel: senderLabel,
+                    );
+                    if (!isMine) return bubble;
+                    return GestureDetector(
+                      onLongPress: () => _showMessageActions(context, m),
+                      child: bubble,
                     );
                   },
                 );
@@ -139,6 +144,62 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             },
           ),
           _composer(),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showMessageActions(BuildContext context, Message m) async {
+    if (m.deletedAt != null) return;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (m.type == MessageType.text)
+              ListTile(
+                leading: const Icon(Icons.edit),
+                title: const Text('Edit'),
+                onTap: () => Navigator.pop(context, 'edit'),
+              ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Delete'),
+              onTap: () => Navigator.pop(context, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!context.mounted || action == null) return;
+    if (action == 'edit') {
+      final edited = await _editDialog(context, m.text ?? '');
+      if (edited != null && context.mounted) {
+        context.read<ChatBloc>().add(EditMessage(m.id, edited));
+      }
+    } else if (action == 'delete') {
+      context.read<ChatBloc>().add(DeleteMessage(m.id));
+    }
+  }
+
+  Future<String?> _editDialog(BuildContext context, String initial) {
+    final ctrl = TextEditingController(text: initial);
+    return showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Edit message'),
+        content: TextField(controller: ctrl, autofocus: true, maxLines: 4),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+            child: const Text('Save'),
+          ),
         ],
       ),
     );

@@ -55,3 +55,18 @@ final class _TypingUsersUpdated extends ChatEvent {
   @override
   List<Object?> get props => [userIds];
 }
+
+final class EditMessage extends ChatEvent {
+  const EditMessage(this.messageId, this.text);
+  final String messageId;
+  final String text;
+  @override
+  List<Object?> get props => [messageId, text];
+}
+
+final class DeleteMessage extends ChatEvent {
+  const DeleteMessage(this.messageId);
+  final String messageId;
+  @override
+  List<Object?> get props => [messageId];
+}

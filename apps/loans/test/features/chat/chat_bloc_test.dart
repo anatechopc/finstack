@@ -52,6 +52,15 @@ void main() {
       (invocation) async => invocation.namedArguments[#data] as Message,
     );
     when(
+      () => messages.editMessage(
+        messageId: any(named: 'messageId'),
+        text: any(named: 'text'),
+      ),
+    ).thenAnswer((_) async {});
+    when(
+      () => messages.deleteMessage(messageId: any(named: 'messageId')),
+    ).thenAnswer((_) async {});
+    when(
       () => typing.typingStream(
         roomId: any(named: 'roomId'),
         clock: any(named: 'clock'),
@@ -124,6 +133,30 @@ void main() {
     wait: const Duration(milliseconds: 20),
     verify: (bloc) {
       expect(bloc.state.typingUserIds, ['c1']);
+    },
+  );
+
+  blocTest<ChatBloc, ChatState>(
+    'EditMessage calls messageRepository.editMessage',
+    build: build,
+    act: (bloc) => bloc.add(const EditMessage('m1', 'new text')),
+    wait: const Duration(milliseconds: 10),
+    verify: (_) {
+      verify(
+        () => messages.editMessage(messageId: 'm1', text: 'new text'),
+      ).called(1);
+    },
+  );
+
+  blocTest<ChatBloc, ChatState>(
+    'DeleteMessage calls messageRepository.deleteMessage',
+    build: build,
+    act: (bloc) => bloc.add(const DeleteMessage('m2')),
+    wait: const Duration(milliseconds: 10),
+    verify: (_) {
+      verify(
+        () => messages.deleteMessage(messageId: 'm2'),
+      ).called(1);
     },
   );
 }

@@ -68,6 +68,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     on<_TypingUsersUpdated>(
       (e, emit) => emit(state.copyWith(typingUserIds: e.userIds)),
     );
+    on<EditMessage>(_onEdit);
+    on<DeleteMessage>(_onDelete);
 
     // Subscriptions established synchronously so broadcast-stream tests don't
     // miss emissions fired right after SubscribeChat.
@@ -158,6 +160,26 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         userId: _myUserId,
         seq: latestSeq,
       );
+    }
+  }
+
+  Future<void> _onEdit(EditMessage event, Emitter<ChatState> emit) async {
+    final text = event.text.trim();
+    if (text.isEmpty) return;
+    try {
+      await _messages.editMessage(messageId: event.messageId, text: text);
+    } catch (err) {
+      _log.severe('edit failed: $err');
+      emit(state.copyWith(message: 'Failed to edit'));
+    }
+  }
+
+  Future<void> _onDelete(DeleteMessage event, Emitter<ChatState> emit) async {
+    try {
+      await _messages.deleteMessage(messageId: event.messageId);
+    } catch (err) {
+      _log.severe('delete failed: $err');
+      emit(state.copyWith(message: 'Failed to delete'));
     }
   }
 
