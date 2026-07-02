@@ -149,8 +149,12 @@ echo "Deploying UserChanges trigger"
 gcloud functions deploy userChanges_$environment --gen2 --service-account="$serviceAccount" --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=userChanges --trigger-event-filters=type=google.cloud.firestore.document.v1.updated --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}users/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
 pids[$!]="userChanges"
 
+echo "Deploying MessageWritten trigger"
+gcloud functions deploy messageWritten_$environment --gen2 --service-account="$serviceAccount" --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=messageWritten --trigger-event-filters=type=google.cloud.firestore.document.v1.written --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}chat_rooms/{roomId}/messages/{messageId}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+pids[$!]="messageWritten"
+
 echo ""
-echo "All 16 functions deploying in parallel. Waiting for completion..."
+echo "All 17 functions deploying in parallel. Waiting for completion..."
 echo ""
 
 # Wait for all background processes and track failures
@@ -163,7 +167,7 @@ done
 
 echo ""
 if [ ${#failed[@]} -eq 0 ]; then
-  echo "Deployment done. All 16 functions deployed successfully."
+  echo "Deployment done. All 17 functions deployed successfully."
 else
   echo "Deployment finished with errors. Failed functions: ${failed[*]}"
   exit 1
