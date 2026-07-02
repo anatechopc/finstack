@@ -4,6 +4,7 @@ go 1.22
 
 require (
 	cloud.google.com/go/firestore v1.14.0
+	com.loooans.app/types v0.0.0-00010101000000-000000000000
 	com.loooans.app/utils v0.0.0-00010101000000-000000000000
 	firebase.google.com/go/v4 v4.13.0
 	github.com/cloudevents/sdk-go/v2 v2.15.2
@@ -19,7 +20,6 @@ require (
 	cloud.google.com/go/iam v1.1.5 // indirect
 	cloud.google.com/go/longrunning v0.5.4 // indirect
 	cloud.google.com/go/storage v1.30.1 // indirect
-	com.loooans.app/types v0.0.0-00010101000000-000000000000 // indirect
 	github.com/MicahParks/keyfunc v1.9.0 // indirect
 	github.com/go-logr/logr v1.2.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
