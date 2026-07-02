@@ -60,6 +60,7 @@ class AppWidgets {
     bool showAddCapitalButton = false,
     bool showAdvertiseButton = false,
     bool showAddBorrowerButton = false,
+    bool showMessagesButton = false,
   }) =>
       LayoutWidgets.defaultAppBar(
         context,
@@ -69,6 +70,7 @@ class AppWidgets {
         showAddCapitalButton: showAddCapitalButton,
         showAdvertiseButton: showAdvertiseButton,
         showAddBorrowerButton: showAddBorrowerButton,
+        showMessagesButton: showMessagesButton,
       );
 
   static Widget separatedItem({
