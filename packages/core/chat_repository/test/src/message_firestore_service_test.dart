@@ -22,6 +22,20 @@ void main() {
         text: text,
       ).toEntity();
 
+  test('add uses preset id when provided', () async {
+    final msg = newMsg()..id = 'preset-123';
+    final saved = await service.add(data: msg);
+    expect(saved.id, 'preset-123');
+    final doc = await fs
+        .collection('dev_chat_rooms')
+        .doc('r1')
+        .collection('messages')
+        .doc('preset-123')
+        .get();
+    expect(doc.exists, isTrue);
+    expect(doc.data()!['text'], 'hi');
+  });
+
   test('add writes under dev_chat_rooms/r1/messages with a doc id', () async {
     final saved = await service.add(data: newMsg());
     expect(saved.id, isNotEmpty);

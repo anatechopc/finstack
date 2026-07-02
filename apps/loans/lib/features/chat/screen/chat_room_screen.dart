@@ -1,5 +1,8 @@
+import 'dart:typed_data';
+
 import 'package:chat_repository/chat_repository.dart';
 import 'package:collection/collection.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gap/gap.dart';
@@ -9,6 +12,7 @@ import 'package:loooans/features/chat/chat_status.dart';
 import 'package:loooans/features/chat/widget/message_bubble.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/utils/screen_helpers.dart';
+import 'package:loooans/widgets/app_widgets.dart';
 
 class ChatRoomScreen extends StatefulWidget {
   const ChatRoomScreen({required this.roomId, super.key});
@@ -205,6 +209,49 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     );
   }
 
+  Future<void> _attach() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo),
+              title: const Text('Photo'),
+              onTap: () => Navigator.pop(context, 'photo'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.insert_drive_file),
+              title: const Text('File'),
+              onTap: () => Navigator.pop(context, 'file'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || choice == null) return;
+    if (choice == 'photo') {
+      final data = await AppWidgets.defaultMediaChooserDialog(context);
+      if (data != null && mounted) {
+        context.read<ChatBloc>().add(
+              SendImageAttachment(
+                fileName: data['name'] as String,
+                bytes: data['bytes'] as Uint8List,
+              ),
+            );
+      }
+    } else {
+      final res = await FilePicker.platform.pickFiles(withData: true);
+      final f = res?.files.single;
+      if (f?.bytes != null && mounted) {
+        context.read<ChatBloc>().add(
+              SendFileAttachment(fileName: f!.name, bytes: f.bytes!),
+            );
+      }
+    }
+  }
+
   Widget _composer() {
     return SafeArea(
       top: false,
@@ -212,6 +259,10 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
           children: [
+            IconButton(
+              icon: const Icon(Icons.attach_file),
+              onPressed: _attach,
+            ),
             Expanded(
               child: TextField(
                 controller: _controller,

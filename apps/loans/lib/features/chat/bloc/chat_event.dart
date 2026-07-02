@@ -70,3 +70,19 @@ final class DeleteMessage extends ChatEvent {
   @override
   List<Object?> get props => [messageId];
 }
+
+final class SendImageAttachment extends ChatEvent {
+  const SendImageAttachment({required this.fileName, required this.bytes});
+  final String fileName;
+  final Uint8List bytes;
+  @override
+  List<Object?> get props => [fileName, bytes.length];
+}
+
+final class SendFileAttachment extends ChatEvent {
+  const SendFileAttachment({required this.fileName, required this.bytes});
+  final String fileName;
+  final Uint8List bytes;
+  @override
+  List<Object?> get props => [fileName, bytes.length];
+}

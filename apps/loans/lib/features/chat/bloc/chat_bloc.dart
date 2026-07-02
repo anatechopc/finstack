@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:chat_repository/chat_repository.dart';
 import 'package:equatable/equatable.dart';
@@ -6,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans_helpers/logging_helpers.dart';
+import 'package:storage_repository/storage_repository.dart';
+import 'package:uuid/uuid.dart';
 
 part 'chat_event.dart';
 part 'chat_state.dart';
@@ -18,6 +21,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         _rooms = context.read<ChatRoomRepository>(),
         _messages = MessageRepository(roomId: roomId),
         _typing = context.read<TypingService>(),
+        _storage = context.read<StorageRepository>(),
         _myUserId = AuthenticationService.instance.user.id,
         _mySenderParticipantId =
             AuthenticationService.instance.user.companyId ??
@@ -31,12 +35,14 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     required ChatRoomRepository chatRoomRepository,
     required MessageRepository messageRepository,
     required TypingService typingService,
+    required StorageRepository storageRepository,
     required String myUserId,
     required String mySenderParticipantId,
   })  : _roomId = roomId,
         _rooms = chatRoomRepository,
         _messages = messageRepository,
         _typing = typingService,
+        _storage = storageRepository,
         _myUserId = myUserId,
         _mySenderParticipantId = mySenderParticipantId,
         super(const ChatState()) {
@@ -47,6 +53,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   final ChatRoomRepository _rooms;
   final MessageRepository _messages;
   final TypingService _typing;
+  final StorageRepository _storage;
   final String _myUserId;
   final String _mySenderParticipantId;
 
@@ -70,6 +77,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     );
     on<EditMessage>(_onEdit);
     on<DeleteMessage>(_onDelete);
+    on<SendImageAttachment>(_onSendImage);
+    on<SendFileAttachment>(_onSendFile);
 
     // Subscriptions established synchronously so broadcast-stream tests don't
     // miss emissions fired right after SubscribeChat.
@@ -192,6 +201,76 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       );
     } else {
       await _typing.clearTyping(roomId: _roomId, userId: _myUserId);
+    }
+  }
+
+  Future<void> _onSendImage(
+    SendImageAttachment e,
+    Emitter<ChatState> emit,
+  ) async {
+    emit(state.copyWith(sending: true));
+    try {
+      final msgId = const Uuid().v4();
+      final img = await _storage.upload(
+        data: e.bytes,
+        folder: 'chat/$_roomId/$msgId',
+        fileName: e.fileName,
+        includeOriginal: true,
+      );
+      final att = Attachment(
+        name: e.fileName,
+        url: img.original ?? img.thumbnail ?? '',
+        thumbnailUrl: img.thumbnail,
+        contentType: 'image/*',
+        size: e.bytes.length,
+      );
+      await _messages.add(
+        data: Message.create(
+          roomId: _roomId,
+          senderId: _myUserId,
+          senderParticipantId: _mySenderParticipantId,
+          type: MessageType.image,
+          attachments: [att],
+        )..id = msgId,
+      );
+      emit(state.copyWith(sending: false));
+    } catch (err) {
+      _log.severe('image send failed: $err');
+      emit(state.copyWith(sending: false, message: 'Failed to send image'));
+    }
+  }
+
+  Future<void> _onSendFile(
+    SendFileAttachment e,
+    Emitter<ChatState> emit,
+  ) async {
+    emit(state.copyWith(sending: true));
+    try {
+      final msgId = const Uuid().v4();
+      final file = await _storage.uploadFile(
+        data: e.bytes,
+        folder: 'chat/$_roomId/$msgId',
+        fileName: e.fileName,
+      );
+      final att = Attachment(
+        name: e.fileName,
+        url: file.url,
+        contentType: 'application/octet-stream',
+        size: e.bytes.length,
+      );
+      await _messages.add(
+        data: Message.create(
+          roomId: _roomId,
+          senderId: _myUserId,
+          senderParticipantId: _mySenderParticipantId,
+          type: MessageType.file,
+          attachments: [att],
+        )..id = msgId,
+      );
+      emit(state.copyWith(sending: false));
+    } catch (err) {
+      _log.severe('file send failed: $err');
+      emit(state.copyWith(sending: false, message: 'Failed to send file'));
     }
   }
 

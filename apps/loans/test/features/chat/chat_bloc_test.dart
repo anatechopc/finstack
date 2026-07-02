@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:bloc_test/bloc_test.dart';
 import 'package:chat_repository/chat_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:loooans/features/chat/bloc/chat_bloc.dart';
+import 'package:loooans_helpers/data_helpers.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:storage_repository/storage_repository.dart';
 
 class _MockChatRoomRepo extends Mock implements ChatRoomRepository {}
 
@@ -12,14 +15,20 @@ class _MockMessageRepo extends Mock implements MessageRepository {}
 
 class _MockTyping extends Mock implements TypingService {}
 
+class _MockStorage extends Mock implements StorageRepository {}
+
 class _FakeMessage extends Fake implements Message {}
 
 void main() {
-  setUpAll(() => registerFallbackValue(_FakeMessage()));
+  setUpAll(() {
+    registerFallbackValue(_FakeMessage());
+    registerFallbackValue(Uint8List(0));
+  });
 
   late _MockChatRoomRepo rooms;
   late _MockMessageRepo messages;
   late _MockTyping typing;
+  late _MockStorage storage;
   late StreamController<List<Message>> msgCtrl;
   late StreamController<ChatRoom> roomCtrl;
   late StreamController<List<String>> typingCtrl;
@@ -28,6 +37,7 @@ void main() {
     rooms = _MockChatRoomRepo();
     messages = _MockMessageRepo();
     typing = _MockTyping();
+    storage = _MockStorage();
     msgCtrl = StreamController<List<Message>>.broadcast();
     roomCtrl = StreamController<ChatRoom>.broadcast();
     typingCtrl = StreamController<List<String>>.broadcast();
@@ -79,6 +89,7 @@ void main() {
         chatRoomRepository: rooms,
         messageRepository: messages,
         typingService: typing,
+        storageRepository: storage,
         myUserId: 'u1',
         mySenderParticipantId: 'u1',
       );
@@ -157,6 +168,37 @@ void main() {
       verify(
         () => messages.deleteMessage(messageId: 'm2'),
       ).called(1);
+    },
+  );
+
+  blocTest<ChatBloc, ChatState>(
+    'SendImageAttachment uploads image and adds image message',
+    build: () {
+      when(
+        () => storage.upload(
+          data: any(named: 'data'),
+          folder: any(named: 'folder'),
+          fileName: any(named: 'fileName'),
+          includeOriginal: any(named: 'includeOriginal'),
+        ),
+      ).thenAnswer(
+        (_) async => ImageUrl(name: 'p.jpg', thumbnail: 'thumb', original: 'orig'),
+      );
+      return build();
+    },
+    act: (bloc) => bloc.add(
+      SendImageAttachment(
+        fileName: 'p.jpg',
+        bytes: Uint8List.fromList([1, 2, 3]),
+      ),
+    ),
+    wait: const Duration(milliseconds: 20),
+    verify: (_) {
+      final captured =
+          verify(() => messages.add(data: captureAny(named: 'data'))).captured;
+      final sent = captured.single as Message;
+      expect(sent.type, MessageType.image);
+      expect(sent.attachments.single.thumbnailUrl, 'thumb');
     },
   );
 }

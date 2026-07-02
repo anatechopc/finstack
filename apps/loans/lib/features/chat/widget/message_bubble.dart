@@ -47,13 +47,52 @@ class MessageBubble extends StatelessWidget {
                   ),
                 ),
               ),
-            Text(
-              deleted ? 'This message was deleted' : (message.text ?? ''),
-              style: TextStyle(
-                color: isMine ? AppColors.white : AppColors.black,
-                fontStyle: deleted ? FontStyle.italic : FontStyle.normal,
+            if (deleted)
+              Text(
+                'This message was deleted',
+                style: TextStyle(
+                  color: isMine ? AppColors.white : AppColors.black,
+                  fontStyle: FontStyle.italic,
+                ),
+              )
+            else if (message.type == MessageType.image &&
+                message.attachments.isNotEmpty)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.network(
+                  message.attachments.first.thumbnailUrl ??
+                      message.attachments.first.url,
+                  width: 180,
+                  fit: BoxFit.cover,
+                ),
+              )
+            else if (message.type == MessageType.file &&
+                message.attachments.isNotEmpty)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.insert_drive_file,
+                    color: isMine ? AppColors.white : AppColors.black,
+                  ),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      message.attachments.first.name,
+                      style: TextStyle(
+                        color: isMine ? AppColors.white : AppColors.black,
+                      ),
+                    ),
+                  ),
+                ],
+              )
+            else
+              Text(
+                message.text ?? '',
+                style: TextStyle(
+                  color: isMine ? AppColors.white : AppColors.black,
+                ),
               ),
-            ),
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [

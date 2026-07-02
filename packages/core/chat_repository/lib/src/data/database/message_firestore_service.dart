@@ -22,7 +22,7 @@ final class MessageFirestoreService extends BaseFirestoreService<MessageEntity> 
 
   @override
   Future<MessageEntity> add({required MessageEntity data}) async {
-    final doc = root.doc();
+    final doc = (data.id.isEmpty || data.id == NO_ID) ? root.doc() : root.doc(data.id);
     final updated = data..id = doc.id;
     await doc.set(updated.toJson());
     return updated;
