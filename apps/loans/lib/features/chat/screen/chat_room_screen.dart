@@ -66,89 +66,108 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
           },
         ),
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: BlocBuilder<ChatBloc, ChatState>(
-              builder: (context, state) {
-                if (state.status == ChatStatus.loading &&
-                    state.messages.isEmpty) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (state.messages.isEmpty) {
-                  return const Center(
-                    child: Text(
-                      'Say hello 👋',
-                      style: TextStyle(color: AppColors.black, fontSize: 16),
-                    ),
-                  );
-                }
-                return ListView.builder(
-                  reverse: true,
-                  padding: const EdgeInsets.all(16),
-                  itemCount: state.messages.length,
-                  itemBuilder: (context, index) {
-                    final m = state.messages[index];
-                    final isMine = m.senderParticipantId == myUserId ||
-                        m.senderParticipantId == myCompanyId;
-                    final room = state.room;
-                    final status = (isMine && room != null)
-                        ? messageStatus(
-                            message: m,
-                            counterpartReadStates: counterpartReadStates(
-                              room,
-                              myUserId: myUserId,
-                              myCompanyId: myCompanyId,
-                            ),
-                          )
-                        : null;
-                    final senderLabel = (!isMine &&
-                            room != null &&
-                            m.senderParticipantId != myUserId)
-                        ? room.participants
-                            .firstWhere(
-                              (p) => p.id == m.senderParticipantId,
-                              orElse: () => room.participants.first,
+      body: BlocListener<ChatBloc, ChatState>(
+        listenWhen: (a, b) => b.message != null && b.message != a.message,
+        listener: (context, state) {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(SnackBar(content: Text(state.message!)));
+        },
+        child: Column(
+          children: [
+            Expanded(
+              child: BlocBuilder<ChatBloc, ChatState>(
+                builder: (context, state) {
+                  if (state.status == ChatStatus.loading &&
+                      state.messages.isEmpty) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (state.messages.isEmpty) {
+                    if (state.status == ChatStatus.error) {
+                      return Center(
+                        child: Text(
+                          state.message ?? 'Could not load messages',
+                          style: const TextStyle(
+                            color: AppColors.black,
+                            fontSize: 16,
+                          ),
+                        ),
+                      );
+                    }
+                    return const Center(
+                      child: Text(
+                        'Say hello 👋',
+                        style: TextStyle(color: AppColors.black, fontSize: 16),
+                      ),
+                    );
+                  }
+                  return ListView.builder(
+                    reverse: true,
+                    padding: const EdgeInsets.all(16),
+                    itemCount: state.messages.length,
+                    itemBuilder: (context, index) {
+                      final m = state.messages[index];
+                      final isMine = m.senderParticipantId == myUserId ||
+                          m.senderParticipantId == myCompanyId;
+                      final room = state.room;
+                      final status = (isMine && room != null)
+                          ? messageStatus(
+                              message: m,
+                              counterpartReadStates: counterpartReadStates(
+                                room,
+                                myUserId: myUserId,
+                                myCompanyId: myCompanyId,
+                              ),
                             )
-                            .displayName
-                        : null;
-                    final bubble = MessageBubble(
-                      message: m,
-                      isMine: isMine,
-                      status: status,
-                      senderLabel: senderLabel,
-                    );
-                    if (!isMine) return bubble;
-                    return GestureDetector(
-                      onLongPress: () => _showMessageActions(context, m),
-                      child: bubble,
-                    );
-                  },
+                          : null;
+                      final senderLabel = (!isMine &&
+                              room != null &&
+                              m.senderParticipantId != myUserId)
+                          ? room.participants
+                              .firstWhere(
+                                (p) => p.id == m.senderParticipantId,
+                                orElse: () => room.participants.first,
+                              )
+                              .displayName
+                          : null;
+                      final bubble = MessageBubble(
+                        message: m,
+                        isMine: isMine,
+                        status: status,
+                        senderLabel: senderLabel,
+                      );
+                      if (!isMine) return bubble;
+                      return GestureDetector(
+                        onLongPress: () => _showMessageActions(context, m),
+                        child: bubble,
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+            BlocBuilder<ChatBloc, ChatState>(
+              buildWhen: (a, b) => a.typingUserIds != b.typingUserIds,
+              builder: (context, state) {
+                if (state.typingUserIds.isEmpty) return const SizedBox.shrink();
+                return const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'typing…',
+                      style: TextStyle(
+                        color: AppColors.black,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ),
                 );
               },
             ),
-          ),
-          BlocBuilder<ChatBloc, ChatState>(
-            buildWhen: (a, b) => a.typingUserIds != b.typingUserIds,
-            builder: (context, state) {
-              if (state.typingUserIds.isEmpty) return const SizedBox.shrink();
-              return const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'typing…',
-                    style: TextStyle(
-                      color: AppColors.black,
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-          _composer(),
-        ],
+            _composer(),
+          ],
+        ),
       ),
     );
   }
@@ -187,26 +206,30 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     }
   }
 
-  Future<String?> _editDialog(BuildContext context, String initial) {
+  Future<String?> _editDialog(BuildContext context, String initial) async {
     final ctrl = TextEditingController(text: initial);
-    return showDialog<String>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Edit message'),
-        content: TextField(controller: ctrl, autofocus: true, maxLines: 4),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          const SizedBox(width: 8),
-          TextButton(
-            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Edit message'),
+          content: TextField(controller: ctrl, autofocus: true, maxLines: 4),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      ctrl.dispose();
+    }
   }
 
   Future<void> _attach() async {
@@ -291,7 +314,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             const Gap(8),
             IconButton.filled(
               onPressed: _send,
-              style: IconButton.styleFrom(backgroundColor: AppColors.lightBlack),
+              style:
+                  IconButton.styleFrom(backgroundColor: AppColors.lightBlack),
               icon: const Icon(Icons.send, color: AppColors.white),
             ),
           ],

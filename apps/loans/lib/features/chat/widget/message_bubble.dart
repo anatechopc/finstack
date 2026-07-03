@@ -57,14 +57,28 @@ class MessageBubble extends StatelessWidget {
               )
             else if (message.type == MessageType.image &&
                 message.attachments.isNotEmpty)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.network(
-                  message.attachments.first.thumbnailUrl ??
-                      message.attachments.first.url,
-                  width: 180,
-                  fit: BoxFit.cover,
-                ),
+              Builder(
+                builder: (_) {
+                  final url = message.attachments.first.thumbnailUrl ??
+                      message.attachments.first.url;
+                  if (url.isEmpty) return _imageFallback(isMine);
+                  return ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(
+                      url,
+                      width: 180,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _imageFallback(isMine),
+                      loadingBuilder: (_, child, progress) => progress == null
+                          ? child
+                          : const SizedBox(
+                              width: 180,
+                              height: 120,
+                              child: Center(child: CircularProgressIndicator()),
+                            ),
+                    ),
+                  );
+                },
               )
             else if (message.type == MessageType.file &&
                 message.attachments.isNotEmpty)
@@ -113,6 +127,19 @@ class MessageBubble extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _imageFallback(bool mine) {
+    return Container(
+      width: 180,
+      height: 120,
+      alignment: Alignment.center,
+      color: (mine ? AppColors.white : AppColors.black).withValues(alpha: 0.1),
+      child: Icon(
+        Icons.broken_image_outlined,
+        color: mine ? AppColors.white : AppColors.black,
       ),
     );
   }

@@ -32,7 +32,8 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       ),
       body: BlocBuilder<ConversationsBloc, ConversationsState>(
         builder: (context, state) {
-          if (state.status == ConversationsStatus.loading && state.rooms.isEmpty) {
+          if (state.status == ConversationsStatus.loading &&
+              state.rooms.isEmpty) {
             return const Center(child: CircularProgressIndicator());
           }
           if (state.rooms.isEmpty) {
@@ -75,8 +76,11 @@ class _ConversationRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Exclude BOTH my user id and my company id — for staff the personal id is
+    // not a participant at all, so excluding only myUserId would resolve the
+    // counterpart to the company itself (matching chat_status/chat_room_screen).
     final counterpart = room.participants.firstWhere(
-      (p) => p.id != myUserId,
+      (p) => p.id != myUserId && p.id != myCompanyId,
       orElse: () => room.participants.first,
     );
     final unread = unreadFor(room, myUserId);
@@ -110,8 +114,7 @@ class _ConversationRow extends StatelessWidget {
                 isAwaitingResponse(room, myCompanyId!)) ...[
               const Gap(4),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
                   color: AppColors.ubOrange.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(8),
@@ -161,9 +164,11 @@ class _UnreadBadge extends StatelessWidget {
 
 extension _Initials on String {
   String get initialsSafe {
-    final parts = trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    final parts =
+        trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
     if (parts.isEmpty) return '?';
     if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
-    return (parts.first.substring(0, 1) + parts.last.substring(0, 1)).toUpperCase();
+    return (parts.first.substring(0, 1) + parts.last.substring(0, 1))
+        .toUpperCase();
   }
 }

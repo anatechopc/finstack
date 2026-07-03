@@ -16,18 +16,21 @@ part 'chat_state.dart';
 final _log = Logger('chat_bloc');
 
 class ChatBloc extends Bloc<ChatEvent, ChatState> {
-  ChatBloc(BuildContext context, {required String roomId})
-      : _roomId = roomId,
-        _rooms = context.read<ChatRoomRepository>(),
-        _messages = MessageRepository(roomId: roomId),
-        _typing = context.read<TypingService>(),
-        _storage = context.read<StorageRepository>(),
-        _myUserId = AuthenticationService.instance.user.id,
-        _mySenderParticipantId =
-            AuthenticationService.instance.user.companyId ??
-                AuthenticationService.instance.user.id,
-        super(const ChatState()) {
-    _wire();
+  // Reads the auth singleton ONCE and delegates to the injectable path, rather
+  // than scattering AuthenticationService.instance through the bloc (per the
+  // "use the injected authService field, never AuthenticationService.instance in
+  // BLoCs" rule in apps/loans/CLAUDE.md).
+  factory ChatBloc(BuildContext context, {required String roomId}) {
+    final user = AuthenticationService.instance.user;
+    return ChatBloc.withDependencies(
+      roomId: roomId,
+      chatRoomRepository: context.read<ChatRoomRepository>(),
+      messageRepository: MessageRepository(roomId: roomId),
+      typingService: context.read<TypingService>(),
+      storageRepository: context.read<StorageRepository>(),
+      myUserId: user.id,
+      mySenderParticipantId: user.companyId ?? user.id,
+    );
   }
 
   ChatBloc.withDependencies({
@@ -61,6 +64,10 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   StreamSubscription<ChatRoom>? _roomSub;
   StreamSubscription<List<String>>? _typingSub;
 
+  // Highest seq already marked, so we only write a watermark when it advances.
+  int _lastReadMarked = 0;
+  int _lastHandledMarked = 0;
+
   void _wire() {
     on<SubscribeChat>(_onSubscribe);
     on<SendTextMessage>(_onSendText);
@@ -90,9 +97,9 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       },
     );
     _roomSub = _rooms.watchRoom(_roomId).listen(
-      (room) => add(_RoomUpdated(room)),
-      onError: (Object err) => _log.severe('room stream error: $err'),
-    );
+          (room) => add(_RoomUpdated(room)),
+          onError: (Object err) => _log.severe('room stream error: $err'),
+        );
     _typingSub = _typing
         .typingStream(
           roomId: _roomId,
@@ -123,21 +130,26 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     final latestSeq = event.messages
         .map((m) => m.seq ?? 0)
         .fold<int>(0, (a, b) => a > b ? a : b);
-    if (latestSeq > 0) {
+    // Coalesce: only write a watermark when it actually advances, so repeated
+    // emissions (own sends, edits, deletes, re-deliveries) don't re-issue
+    // identical reads/team_reads writes, and a stale/lower seq can't regress it.
+    if (latestSeq > _lastReadMarked) {
+      _lastReadMarked = latestSeq;
       await _rooms.markRead(
         roomId: _roomId,
         userId: _myUserId,
         seq: latestSeq,
       );
-      final iAmStaff = _mySenderParticipantId != _myUserId;
-      if (iAmStaff) {
-        await _rooms.markHandled(
-          roomId: _roomId,
-          companyId: _mySenderParticipantId,
-          userId: _myUserId,
-          seq: latestSeq,
-        );
-      }
+    }
+    final iAmStaff = _mySenderParticipantId != _myUserId;
+    if (iAmStaff && latestSeq > _lastHandledMarked) {
+      _lastHandledMarked = latestSeq;
+      await _rooms.markHandled(
+        roomId: _roomId,
+        companyId: _mySenderParticipantId,
+        userId: _myUserId,
+        seq: latestSeq,
+      );
     }
   }
 

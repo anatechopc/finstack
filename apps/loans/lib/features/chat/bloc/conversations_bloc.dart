@@ -14,17 +14,15 @@ part 'conversations_state.dart';
 final _log = Logger('conversations_bloc');
 
 class ConversationsBloc extends Bloc<ConversationsEvent, ConversationsState> {
-  ConversationsBloc(BuildContext context)
-      : _repo = context.read<ChatRoomRepository>(),
-        _myUserId = AuthenticationService.instance.user.id,
-        _myCompanyId = AuthenticationService.instance.user.companyId,
-        super(
-          ConversationsState(
-            myUserId: AuthenticationService.instance.user.id,
-            myCompanyId: AuthenticationService.instance.user.companyId,
-          ),
-        ) {
-    _wire();
+  // Reads the auth singleton ONCE and delegates to the injectable path (per the
+  // "no AuthenticationService.instance in BLoCs" rule in apps/loans/CLAUDE.md).
+  factory ConversationsBloc(BuildContext context) {
+    final user = AuthenticationService.instance.user;
+    return ConversationsBloc.withDependencies(
+      chatRoomRepository: context.read<ChatRoomRepository>(),
+      myUserId: user.id,
+      myCompanyId: user.companyId,
+    );
   }
 
   ConversationsBloc.withDependencies({
@@ -34,7 +32,8 @@ class ConversationsBloc extends Bloc<ConversationsEvent, ConversationsState> {
   })  : _repo = chatRoomRepository,
         _myUserId = myUserId,
         _myCompanyId = myCompanyId,
-        super(ConversationsState(myUserId: myUserId, myCompanyId: myCompanyId)) {
+        super(
+            ConversationsState(myUserId: myUserId, myCompanyId: myCompanyId)) {
     _wire();
   }
 
@@ -43,17 +42,14 @@ class ConversationsBloc extends Bloc<ConversationsEvent, ConversationsState> {
   final String? _myCompanyId;
   StreamSubscription<List<ChatRoom>>? _sub;
 
+  // Highest delivered seq we've already written per room (avoids re-writes in
+  // the window before the room stream reflects the mark).
+  final Map<String, int> _deliveredUpTo = {};
+
   void _wire() {
     // Register handlers before subscribing so all event types are ready.
     on<SubscribeConversations>(_onSubscribe);
-    on<_ConversationsUpdated>(
-      (e, emit) => emit(
-        state.copyWith(
-          status: ConversationsStatus.loaded,
-          rooms: e.rooms,
-        ),
-      ),
-    );
+    on<_ConversationsUpdated>(_onConversationsUpdated);
     on<_ConversationsErrored>(
       (e, emit) => emit(
         state.copyWith(
@@ -72,6 +68,47 @@ class ConversationsBloc extends Bloc<ConversationsEvent, ConversationsState> {
         add(const _ConversationsErrored('Failed to load conversations'));
       },
     );
+
+    // Subscribe immediately so the app-bar unread badge is populated on cold
+    // start — not only after the Messages screen is opened for the first time.
+    add(const SubscribeConversations());
+  }
+
+  Future<void> _onConversationsUpdated(
+    _ConversationsUpdated event,
+    Emitter<ConversationsState> emit,
+  ) async {
+    emit(
+      state.copyWith(
+        status: ConversationsStatus.loaded,
+        rooms: event.rooms,
+      ),
+    );
+    // Advance the personal delivered watermark for rooms with a new incoming
+    // message the user hasn't read yet — so the sender's "delivered" tick works
+    // while the recipient is on the inbox (not inside the room). Coalesced, and
+    // skipped for our own last message. Never lowers the watermark (target is
+    // room.lastSeq, always >= the current delivered seq).
+    for (final room in event.rooms) {
+      final target = room.lastSeq;
+      final current = room.reads[_myUserId]?.lastDeliveredSeq ?? 0;
+      final floor = current > (_deliveredUpTo[room.id] ?? 0)
+          ? current
+          : (_deliveredUpTo[room.id] ?? 0);
+      if (target <= floor) continue;
+      final senderPid = room.lastMessage?.senderParticipantId;
+      if (senderPid == _myUserId || senderPid == _myCompanyId) continue;
+      _deliveredUpTo[room.id] = target;
+      try {
+        await _repo.markDelivered(
+          roomId: room.id,
+          userId: _myUserId,
+          seq: target,
+        );
+      } catch (err) {
+        _log.warning('markDelivered failed for ${room.id}: $err');
+      }
+    }
   }
 
   void _onSubscribe(

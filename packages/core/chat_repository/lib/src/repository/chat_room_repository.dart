@@ -44,8 +44,8 @@ class ChatRoomRepository implements BaseRepository<ChatRoom> {
           .then((list) => list.map((e) => e.toChatRoom()).toList());
 
   @override
-  Stream<List<ChatRoom>> get dataStream =>
-      _service.dataStream.map((list) => list.map((e) => e.toChatRoom()).toList());
+  Stream<List<ChatRoom>> get dataStream => _service.dataStream
+      .map((list) => list.map((e) => e.toChatRoom()).toList());
 
   @override
   void loadNext({
@@ -69,12 +69,19 @@ class ChatRoomRepository implements BaseRepository<ChatRoom> {
     String? contextId,
   }) async {
     final memberIds = memberIdsOf(participants).toSet();
-    final existing = await _service.findAnchoredRoom(
-      currentId: createdBy,
-      memberIds: memberIds,
-      contextType: contextType,
-      contextId: contextId,
-    );
+    // Pre-filter the dedup query by an actual member id, NOT createdBy: when
+    // company staff initiate a chat, createdBy is the staff user's uid, which is
+    // not in member_ids (the company id is), so keying the query on it would
+    // always miss and create a duplicate room. Any member works — roomMatchesAnchor
+    // then narrows to the exact participant set + context.
+    final existing = memberIds.isEmpty
+        ? null
+        : await _service.findAnchoredRoom(
+            currentId: memberIds.first,
+            memberIds: memberIds,
+            contextType: contextType,
+            contextId: contextId,
+          );
     if (existing != null) return existing.toChatRoom();
     final room = ChatRoom.create(
       participants: participants,
