@@ -103,13 +103,13 @@ func getCompanyUserIdsByRole(
 }
 
 // pushOptions is the per-message FCM payload shared by the notificationCreated
-// and chat messageWritten triggers.
+// and chat messageWritten triggers. Callers pass priority explicitly ("high" for
+// chat; the notification doc's value for notificationCreated).
 type pushOptions struct {
 	title    string
 	body     string
 	data     map[string]string
-	priority string // "high" or "normal"; defaults to "high" when empty
-	imageURL string
+	priority string // "high" or "normal"
 }
 
 // deviceTokensForUsers collects the FCM tokens registered under each user's
@@ -155,15 +155,11 @@ func sendPushToUsers(
 	if err != nil {
 		return fmt.Errorf("cannot initialize FCM client: %w", err)
 	}
-	priority := opts.priority
-	if priority == "" {
-		priority = "high"
-	}
-	_, err = fcm.SendEachForMulticast(ctx, &messaging.MulticastMessage{
+	resp, err := fcm.SendEachForMulticast(ctx, &messaging.MulticastMessage{
 		Tokens:       tokens,
 		Data:         opts.data,
-		Notification: &messaging.Notification{Title: opts.title, Body: opts.body, ImageURL: opts.imageURL},
-		Android:      &messaging.AndroidConfig{Priority: priority},
+		Notification: &messaging.Notification{Title: opts.title, Body: opts.body},
+		Android:      &messaging.AndroidConfig{Priority: opts.priority},
 		APNS: &messaging.APNSConfig{
 			Payload: &messaging.APNSPayload{
 				Aps: &messaging.Aps{
@@ -173,7 +169,13 @@ func sendPushToUsers(
 			},
 		},
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if log != nil && resp != nil {
+		log.Sugar().Debugf("push: sent to %d token(s) — success=%d failure=%d", len(tokens), resp.SuccessCount, resp.FailureCount)
+	}
+	return nil
 }
 
 // getProductName reads a product document and returns its loan_type field.
