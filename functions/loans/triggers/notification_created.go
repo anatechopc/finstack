@@ -4,7 +4,6 @@ import (
 	"com.loooans.app/utils"
 	"context"
 	"errors"
-	"firebase.google.com/go/v4/messaging"
 	"fmt"
 	"github.com/cloudevents/sdk-go/v2/event"
 	"github.com/golang/protobuf/proto"
@@ -52,31 +51,31 @@ func NotificationCreated(ctx context.Context, event event.Event) error {
 	if value, ok := data.GetValue().GetFields()["title"]; ok {
 		title = value.GetStringValue()
 	} else {
-		return errors.New(fmt.Sprintf("No title for notification: %s", data.GetValue().GetName()))
+		return fmt.Errorf("No title for notification: %s", data.GetValue().GetName())
 	}
 
 	if value, ok := data.GetValue().GetFields()["message"]; ok {
 		message = value.GetStringValue()
 	} else {
-		return errors.New(fmt.Sprintf("No message for notification: %s", data.GetValue().GetName()))
+		return fmt.Errorf("No message for notification: %s", data.GetValue().GetName())
 	}
 
 	if value, ok := data.GetValue().GetFields()["recipient_id"]; ok {
 		recipientId = value.GetStringValue()
 	} else {
-		return errors.New(fmt.Sprintf("No recipient for notification: %s", data.GetValue().GetName()))
+		return fmt.Errorf("No recipient for notification: %s", data.GetValue().GetName())
 	}
 
 	if value, ok := data.GetValue().GetFields()["priority"]; ok {
 		priority = value.GetStringValue()
 	} else {
-		return errors.New(fmt.Sprintf("No priority for notification: %s", data.GetValue().GetName()))
+		return fmt.Errorf("No priority for notification: %s", data.GetValue().GetName())
 	}
 
 	if value, ok := data.GetValue().GetFields()["data"]; ok {
 		notificationData = value.GetMapValue().GetFields()
 	} else {
-		return errors.New(fmt.Sprintf("No data for notification: %s", data.GetValue().GetName()))
+		return fmt.Errorf("No data for notification: %s", data.GetValue().GetName())
 	}
 
 	app, errFirebaseAdmin := utils.InitializeFirebase(ctx)
@@ -85,110 +84,26 @@ func NotificationCreated(ctx context.Context, event event.Event) error {
 		return errFirebaseAdmin
 	}
 
-	// get environment for apth
+	// get environment for path
 	collectionPrefix := utils.GetCollectionPrefix()
 	firestoreClient, errFirestoreClient := app.Firestore(ctx)
 
 	if errFirestoreClient != nil {
-		//log.Error("error firestore client: " + errFirestoreClient.Error())
-		//http.Error(w, "error firestore client: "+errFirestoreClient.Error(), http.StatusInternalServerError)
 		return fmt.Errorf("failed to instantiate firestore client: %v", errFirestoreClient)
 	}
 
-	devicesCollection := firestoreClient.
-		Collection(collectionPrefix + "users/" + recipientId + "/devices").
-		Documents(ctx)
-	devicesSnapshots, snapshotsErr := devicesCollection.GetAll()
-
-	if snapshotsErr != nil {
-		return fmt.Errorf("failed to get devices for user %s: %v", recipientId, snapshotsErr)
+	// Deliver the push via the shared multicast helper (token gather + FCM payload
+	// with Android priority + APNS alert/default sound). The notification document
+	// is already persisted, so the push is best-effort at the token layer; a send
+	// error is still returned so the platform retries.
+	if err := sendPushToUsers(ctx, app, firestoreClient, collectionPrefix, log, []string{recipientId}, pushOptions{
+		title:    title,
+		body:     message,
+		data:     parseNotificationData(notificationData),
+		priority: priority,
+	}); err != nil {
+		return fmt.Errorf("failed to send FCM message: %w", err)
 	}
-
-	var tokens []string
-
-	for _, snapshot := range devicesSnapshots {
-		tokenTemp := snapshot.Data()["token"]
-
-		if value, ok := tokenTemp.(string); ok {
-			tokens = append(tokens, value)
-		}
-	}
-
-	fcmClient, fcmClientErr := app.Messaging(ctx)
-
-	if fcmClientErr != nil {
-		return fmt.Errorf("cannot initialize FCM client, %v", fcmClientErr)
-	}
-
-	/// create message here:
-	/// NOTES:
-	///		Token = device fcm token
-	/// 	Data = additional data on top of the notification
-	///		Notification = the object that they can see when opening the status bar / notification bar of the device (android/ios)
-	/// 	Android = Android specific configurations for push notification
-	///			Priority = Values are either 'normal' or "high"
-	///			Data = the same data as above, overrides the data outside of this notification message object once this is supplied
-	///		APNS = apple push notification config for push notification
-	///			Payload = APNS payload of the notification
-	///				Aps = contains the payload
-	///
-	///	For MulticastMessage, token is a list of tokens
-	///
-	fcmMulticastMessage := &messaging.MulticastMessage{
-		Data: parseNotificationData(notificationData),
-		Notification: &messaging.Notification{
-			Title:    title,
-			Body:     message,
-			ImageURL: "",
-		},
-		Android: &messaging.AndroidConfig{
-			CollapseKey:           "",
-			Priority:              priority,
-			TTL:                   nil,
-			RestrictedPackageName: "",
-			Data:                  nil,
-			Notification:          nil,
-			FCMOptions:            nil,
-		},
-		Webpush: nil,
-		APNS: &messaging.APNSConfig{
-			Headers: nil,
-			Payload: &messaging.APNSPayload{
-				Aps: &messaging.Aps{
-					Alert: &messaging.ApsAlert{
-						Title:           title,
-						SubTitle:        "",
-						Body:            message,
-						LocKey:          "",
-						LocArgs:         nil,
-						TitleLocKey:     "",
-						TitleLocArgs:    nil,
-						SubTitleLocKey:  "",
-						SubTitleLocArgs: nil,
-						ActionLocKey:    "",
-						LaunchImage:     "",
-					},
-					Sound: "default",
-				},
-				CustomData: nil,
-			},
-			FCMOptions: nil,
-		},
-		//FCMOptions:   nil,
-		Tokens: tokens,
-		//Topic:     "",
-		//Condition: "",
-	}
-
-	//fcmResponse, fcmResponseErr := fcmClient.Send(ctx, fcmMessage)
-	fcmBatchResponse, fcmResponseErr := fcmClient.SendEachForMulticast(ctx, fcmMulticastMessage)
-	//fcmResponse, fcmResponseErr := fcmClient.SendEach(ctx, messages)
-
-	if fcmResponseErr != nil {
-		return fmt.Errorf("failed to send FCM message: %v", fcmResponseErr)
-	}
-
-	log.Debug(fmt.Sprintf("Successfully sent FCM message: %v", fcmBatchResponse))
 
 	return nil
 }

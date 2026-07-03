@@ -3,6 +3,8 @@ package fakes
 import (
 	"context"
 	"errors"
+
+	"com.loooans.app/types"
 )
 
 // OtpReader fake — returns a preconfigured OTP entry by token, ErrOtpNotFound,
@@ -443,4 +445,119 @@ type PasswordSetter struct {
 func (s *PasswordSetter) Set(_ context.Context, uid, newPassword string) error {
 	s.Sets = append(s.Sets, PasswordSet{UID: uid, NewPassword: newPassword})
 	return s.Err
+}
+
+// ---- chat / message_written fakes ----
+
+// ChatRoomInfo is the canned room state for RoomReader.
+type ChatRoomInfo struct {
+	LastSeq      int64
+	Participants []types.ChatParticipant
+}
+
+// RoomReader fakes MessageWrittenDeps.GetRoom.
+type RoomReader struct {
+	Rooms map[string]ChatRoomInfo
+	Err   error
+	Calls []string
+}
+
+func (r *RoomReader) GetRoom(_ context.Context, roomId string) (int64, []types.ChatParticipant, error) {
+	r.Calls = append(r.Calls, roomId)
+	if r.Err != nil {
+		return 0, nil, r.Err
+	}
+	info := r.Rooms[roomId]
+	return info.LastSeq, info.Participants, nil
+}
+
+// ChatCommit records one AllocateAndCommit invocation.
+type ChatCommit struct {
+	RoomId    string
+	MessageId string
+	Seq       int64
+	Meta      map[string]any // the room meta the core built (nil on an idempotent no-op)
+	IsNew     bool
+}
+
+// ChatCommitter fakes MessageWrittenDeps.AllocateAndCommit. It assigns an
+// incrementing seq per room (seeded from each room's LastSeq), invokes the core's
+// build callback with the room participants, records the resulting meta, and
+// models idempotency: a messageId it has already committed returns its prior seq
+// with isNew=false (without re-running build), mirroring a redelivered event.
+type ChatCommitter struct {
+	Rooms   map[string]ChatRoomInfo // participants + starting LastSeq per room
+	Err     error
+	Commits []ChatCommit
+
+	lastSeq map[string]int64
+	msgSeq  map[string]int64
+}
+
+func (c *ChatCommitter) AllocateAndCommit(
+	_ context.Context, roomId, messageId string,
+	build func(seq int64, participants []types.ChatParticipant) map[string]any,
+) (int64, []types.ChatParticipant, bool, error) {
+	if c.Err != nil {
+		return 0, nil, false, c.Err
+	}
+	if c.lastSeq == nil {
+		c.lastSeq = map[string]int64{}
+	}
+	if c.msgSeq == nil {
+		c.msgSeq = map[string]int64{}
+	}
+	info := c.Rooms[roomId]
+	key := roomId + ":" + messageId
+	if existing, ok := c.msgSeq[key]; ok {
+		c.Commits = append(c.Commits, ChatCommit{RoomId: roomId, MessageId: messageId, Seq: existing, IsNew: false})
+		return existing, nil, false, nil
+	}
+	last, ok := c.lastSeq[roomId]
+	if !ok {
+		last = info.LastSeq
+	}
+	seq := last + 1
+	c.lastSeq[roomId] = seq
+	c.msgSeq[key] = seq
+	meta := build(seq, info.Participants)
+	meta["last_seq"] = seq // mirror the real adapter, which stamps last_seq after build
+	c.Commits = append(c.Commits, ChatCommit{RoomId: roomId, MessageId: messageId, Seq: seq, Meta: meta, IsNew: true})
+	return seq, info.Participants, true, nil
+}
+
+// RoomMetaUpdate records one UpdateRoomMeta call.
+type RoomMetaUpdate struct {
+	RoomId string
+	Meta   map[string]any
+}
+
+// RoomMetaWriter fakes MessageWrittenDeps.UpdateRoomMeta.
+type RoomMetaWriter struct {
+	Updates []RoomMetaUpdate
+	Err     error
+}
+
+func (w *RoomMetaWriter) UpdateRoomMeta(_ context.Context, roomId string, meta map[string]any) error {
+	w.Updates = append(w.Updates, RoomMetaUpdate{RoomId: roomId, Meta: meta})
+	return w.Err
+}
+
+// ChatPush records one SendPush call.
+type ChatPush struct {
+	Recipients []string
+	Title      string
+	Body       string
+	Data       map[string]string
+}
+
+// ChatPusher fakes MessageWrittenDeps.SendPush.
+type ChatPusher struct {
+	Pushes []ChatPush
+	Err    error
+}
+
+func (p *ChatPusher) SendPush(_ context.Context, recipients []string, title, body string, data map[string]string) error {
+	p.Pushes = append(p.Pushes, ChatPush{Recipients: recipients, Title: title, Body: body, Data: data})
+	return p.Err
 }
