@@ -7,6 +7,9 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"com.loooans.app/utils"
+	firebase "firebase.google.com/go/v4"
+	"firebase.google.com/go/v4/messaging"
+	"go.uber.org/zap"
 	"google.golang.org/api/iterator"
 )
 
@@ -99,6 +102,80 @@ func getCompanyUserIdsByRole(
 	return userIds, nil
 }
 
+// pushOptions is the per-message FCM payload shared by the notificationCreated
+// and chat messageWritten triggers.
+type pushOptions struct {
+	title    string
+	body     string
+	data     map[string]string
+	priority string // "high" or "normal"; defaults to "high" when empty
+	imageURL string
+}
+
+// deviceTokensForUsers collects the FCM tokens registered under each user's
+// devices subcollection. A per-user read failure is logged and skipped (rather
+// than aborting the whole fan-out or vanishing without a trace).
+func deviceTokensForUsers(
+	ctx context.Context, fs *firestore.Client, prefix string, log *zap.Logger, userIds []string,
+) []string {
+	var tokens []string
+	for _, uid := range userIds {
+		docs, err := fs.Collection(prefix + "users/" + uid + "/devices").Documents(ctx).GetAll()
+		if err != nil {
+			if log != nil {
+				log.Sugar().Warnf("push: skipping recipient %q — devices read failed: %v", uid, err)
+			}
+			continue
+		}
+		for _, d := range docs {
+			if t, ok := d.Data()["token"].(string); ok && t != "" {
+				tokens = append(tokens, t)
+			}
+		}
+	}
+	return tokens
+}
+
+// sendPushToUsers gathers device tokens for the given users and sends one FCM
+// multicast with a consistent cross-platform payload (Notification + Data +
+// Android priority + APNS alert with default sound). Delivery is best-effort at
+// the token layer (per-user read failures are logged and skipped); it returns
+// nil when no tokens are found and only returns an error for FCM client-init or
+// send failure. Callers decide whether to propagate that error (retry) or treat
+// the push as best-effort.
+func sendPushToUsers(
+	ctx context.Context, app *firebase.App, fs *firestore.Client, prefix string,
+	log *zap.Logger, userIds []string, opts pushOptions,
+) error {
+	tokens := deviceTokensForUsers(ctx, fs, prefix, log, userIds)
+	if len(tokens) == 0 {
+		return nil
+	}
+	fcm, err := app.Messaging(ctx)
+	if err != nil {
+		return fmt.Errorf("cannot initialize FCM client: %w", err)
+	}
+	priority := opts.priority
+	if priority == "" {
+		priority = "high"
+	}
+	_, err = fcm.SendEachForMulticast(ctx, &messaging.MulticastMessage{
+		Tokens:       tokens,
+		Data:         opts.data,
+		Notification: &messaging.Notification{Title: opts.title, Body: opts.body, ImageURL: opts.imageURL},
+		Android:      &messaging.AndroidConfig{Priority: priority},
+		APNS: &messaging.APNSConfig{
+			Payload: &messaging.APNSPayload{
+				Aps: &messaging.Aps{
+					Alert: &messaging.ApsAlert{Title: opts.title, Body: opts.body},
+					Sound: "default",
+				},
+			},
+		},
+	})
+	return err
+}
+
 // getProductName reads a product document and returns its loan_type field.
 func getProductName(
 	ctx context.Context,
@@ -106,7 +183,7 @@ func getProductName(
 	collectionPrefix string,
 	productId string,
 ) (string, error) {
-	doc, err := firestoreClient.Collection(collectionPrefix+"products").Doc(productId).Get(ctx)
+	doc, err := firestoreClient.Collection(collectionPrefix + "products").Doc(productId).Get(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to get product %s: %w", productId, err)
 	}

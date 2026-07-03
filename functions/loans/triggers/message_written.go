@@ -10,7 +10,6 @@ import (
 	"com.loooans.app/types"
 	"com.loooans.app/utils"
 	firebase "firebase.google.com/go/v4"
-	"firebase.google.com/go/v4/messaging"
 	"github.com/cloudevents/sdk-go/v2/event"
 	"github.com/golang/protobuf/proto"
 	"github.com/googleapis/google-cloudevents-go/cloud/firestoredata"
@@ -225,48 +224,17 @@ func parseParticipants(raw any) []types.ChatParticipant {
 	return parts
 }
 
+// sendChatPush delivers the chat data-push via the shared sendPushToUsers helper
+// (which also carries the APNS alert + default sound, so chat notifications ring
+// on iOS like every other push).
 func sendChatPush(
 	ctx context.Context, app *firebase.App, fs *firestore.Client, prefix string, log *zap.Logger,
 	recipientUserIds []string, title, body string, data map[string]string,
 ) error {
-	tokens := deviceTokensForUsers(ctx, fs, prefix, log, recipientUserIds)
-	if len(tokens) == 0 {
-		return nil
-	}
-	fcm, err := app.Messaging(ctx)
-	if err != nil {
-		return err
-	}
-	_, err = fcm.SendEachForMulticast(ctx, &messaging.MulticastMessage{
-		Tokens:       tokens,
-		Data:         data,
-		Notification: &messaging.Notification{Title: title, Body: body},
-		Android:      &messaging.AndroidConfig{Priority: "high"},
+	return sendPushToUsers(ctx, app, fs, prefix, log, recipientUserIds, pushOptions{
+		title:    title,
+		body:     body,
+		data:     data,
+		priority: "high",
 	})
-	return err
-}
-
-// deviceTokensForUsers collects the FCM tokens registered under each user's
-// devices subcollection. A per-user read failure is logged and skipped (rather
-// than silently dropped with a bare `continue`) so one recipient's transient
-// error never aborts the whole fan-out — or vanishes without a trace.
-func deviceTokensForUsers(
-	ctx context.Context, fs *firestore.Client, prefix string, log *zap.Logger, userIds []string,
-) []string {
-	var tokens []string
-	for _, uid := range userIds {
-		docs, err := fs.Collection(prefix + "users/" + uid + "/devices").Documents(ctx).GetAll()
-		if err != nil {
-			if log != nil {
-				log.Sugar().Warnf("message_written: skipping recipient %q — devices read failed: %v", uid, err)
-			}
-			continue
-		}
-		for _, d := range docs {
-			if t, ok := d.Data()["token"].(string); ok && t != "" {
-				tokens = append(tokens, t)
-			}
-		}
-	}
-	return tokens
 }
