@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_database/firebase_database.dart';
 import 'package:loooans_helpers/loooans_helpers.dart';
 
@@ -65,22 +67,60 @@ class TypingService {
   }
 
   /// Stream of userIds currently (freshly) typing in [roomId].
+  ///
+  /// Re-evaluates the [typingStaleness] window on a periodic tick as well as on
+  /// each RTDB change, so a lingering entry (e.g. a user who backgrounded without
+  /// clearing typing, and no one else types) expires on time instead of staying
+  /// shown until the next RTDB event.
   Stream<List<String>> typingStream({
     required String roomId,
     required int Function() clock,
   }) {
-    return _db.ref('${_prefix}typing/$roomId').onValue.map((event) {
-      final value = event.snapshot.value;
-      if (value == null) return <String>[];
-      final map = (value as Map).map((k, v) => MapEntry(k as String, v));
+    final ref = _db.ref('${_prefix}typing/$roomId');
+    late StreamController<List<String>> controller;
+    StreamSubscription<DatabaseEvent>? sub;
+    Timer? ticker;
+    var latest = <String, dynamic>{};
+    List<String>? lastEmitted;
+
+    List<String> active() {
       final now = clock();
-      return map.entries
+      return latest.entries
           .where((e) {
             final at = ((e.value as Map)['at'] as num?)?.toInt() ?? 0;
             return isActivelyTyping(atMillis: at, nowMillis: now);
           })
           .map((e) => e.key)
           .toList();
-    });
+    }
+
+    void push() {
+      final next = active();
+      if (lastEmitted != null &&
+          next.length == lastEmitted!.length &&
+          next.every(lastEmitted!.contains)) {
+        return; // unchanged — don't spam identical lists
+      }
+      lastEmitted = next;
+      if (!controller.isClosed) controller.add(next);
+    }
+
+    controller = StreamController<List<String>>(
+      onListen: () {
+        sub = ref.onValue.listen((event) {
+          final value = event.snapshot.value;
+          latest = value == null
+              ? <String, dynamic>{}
+              : (value as Map).map((k, v) => MapEntry(k as String, v));
+          push();
+        });
+        ticker = Timer.periodic(typingThrottle, (_) => push());
+      },
+      onCancel: () async {
+        await sub?.cancel();
+        ticker?.cancel();
+      },
+    );
+    return controller.stream;
   }
 }

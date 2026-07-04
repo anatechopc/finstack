@@ -222,13 +222,14 @@ class ClientDetailActionButtons extends StatelessWidget {
 
   Future<void> _openBorrowerChat(BuildContext context) async {
     final me = AuthenticationService.instance;
-    final loan = context.read<LoansBloc>().selectedLoan;
+    final loansBloc = context.read<LoansBloc>();
+    final loan = loansBloc.selectedLoan;
     final seed = ChatParticipants.staffToBorrower(
       companyId: me.company.id,
       companyName: me.company.name,
       companyPhotoUrl: me.company.companyProfilePhotoUrl?.url,
       borrowerId: userId,
-      borrowerName: '',
+      borrowerName: loansBloc.selectedUserLoanView?.userFullName ?? '',
       borrowerPhotoUrl: null,
       contextType: 'loan',
       contextId: loan.id,
@@ -322,8 +323,7 @@ class ClientDetailActionButtons extends StatelessWidget {
                         const Gap(16),
                         for (final charge in product!.additionalCharges)
                           Row(
-                            mainAxisAlignment:
-                                MainAxisAlignment.spaceBetween,
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text(
                                 'Add: ${charge.description}:',
@@ -338,8 +338,7 @@ class ClientDetailActionButtons extends StatelessWidget {
                           ),
                         for (final charge in product.deductions)
                           Row(
-                            mainAxisAlignment:
-                                MainAxisAlignment.spaceBetween,
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text(
                                 'Less: ${charge.description}:',
@@ -357,8 +356,7 @@ class ClientDetailActionButtons extends StatelessWidget {
                         ),
                         const Gap(8),
                         Row(
-                          mainAxisAlignment:
-                              MainAxisAlignment.spaceBetween,
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             const Text('Total:'),
                             Text(
@@ -367,8 +365,8 @@ class ClientDetailActionButtons extends StatelessWidget {
                                   .computeTotalAdditionalLoanAmount(
                                     product,
                                     formKey.currentState
-                                            ?.simplifiedFields()[
-                                        'amount'] as String?,
+                                            ?.simplifiedFields()['amount']
+                                        as String?,
                                   )
                                   .toCurrency(),
                             ),
@@ -384,8 +382,7 @@ class ClientDetailActionButtons extends StatelessWidget {
               AppWidgets.defaultFilledButton(
                 child: const Text('Add'),
                 onPressed: () async {
-                  if (formKey.currentState?.saveAndValidate() ??
-                      false) {
+                  if (formKey.currentState?.saveAndValidate() ?? false) {
                     final result = await showDialog<dynamic>(
                       context: context,
                       builder: (context) {
@@ -400,15 +397,14 @@ class ClientDetailActionButtons extends StatelessWidget {
                             AppWidgets.defaultFilledButton(
                               child: const Text('Proceed'),
                               onPressed: () async {
-                                final fileData = await AppWidgets
-                                    .defaultMediaChooserDialog(
+                                final fileData =
+                                    await AppWidgets.defaultMediaChooserDialog(
                                   context,
                                   allowGallery: false,
                                 );
                                 if (fileData != null) {
                                   try {
-                                    final fileName =
-                                        fileData['name'] as String;
+                                    final fileName = fileData['name'] as String;
                                     final fileBytes =
                                         fileData['bytes'] as Uint8List;
                                     final signatureBytes =

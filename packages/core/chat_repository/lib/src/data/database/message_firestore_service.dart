@@ -5,7 +5,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 
 /// Operates on the `chat_rooms/{roomId}/messages` subcollection.
-final class MessageFirestoreService extends BaseFirestoreService<MessageEntity> {
+final class MessageFirestoreService
+    extends BaseFirestoreService<MessageEntity> {
   MessageFirestoreService({required this.roomId, super.firestore});
 
   final String roomId;
@@ -22,7 +23,8 @@ final class MessageFirestoreService extends BaseFirestoreService<MessageEntity> 
 
   @override
   Future<MessageEntity> add({required MessageEntity data}) async {
-    final doc = (data.id.isEmpty || data.id == NO_ID) ? root.doc() : root.doc(data.id);
+    final doc =
+        (data.id.isEmpty || data.id == NO_ID) ? root.doc() : root.doc(data.id);
     final updated = data..id = doc.id;
     await doc.set(updated.toJson());
     return updated;
@@ -39,14 +41,17 @@ final class MessageFirestoreService extends BaseFirestoreService<MessageEntity> 
   @override
   Future<MessageEntity> update({required MessageEntity data}) async {
     data.updatedAt = DateTime.timestamp();
-    await root.doc(data.id).update(data.toJson());
+    // `seq` is assigned by the messageWritten trigger and is null on a locally
+    // built entity — never clobber it via a full-entity write. Prefer the
+    // surgical [editMessage]/[deleteMessage] for text/edit/delete.
+    await root.doc(data.id).update(data.toJson()..remove('seq'));
     return data;
   }
 
   @override
   Future<MessageEntity> delete({required MessageEntity data}) async {
     final updated = data..deletedAt = DateTime.timestamp();
-    await root.doc(data.id).update(updated.toJson());
+    await root.doc(data.id).update(updated.toJson()..remove('seq'));
     return updated;
   }
 
@@ -105,12 +110,13 @@ final class MessageFirestoreService extends BaseFirestoreService<MessageEntity> 
     unawaited(
       controller.addStream(
         query.snapshots().map(
-          (snap) => snap.docs
-              .map(
-                (d) => MessageEntity.fromJson(d.data()! as Map<String, dynamic>),
-              )
-              .toList(),
-        ),
+              (snap) => snap.docs
+                  .map(
+                    (d) => MessageEntity.fromJson(
+                        d.data()! as Map<String, dynamic>),
+                  )
+                  .toList(),
+            ),
       ),
     );
   }

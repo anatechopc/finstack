@@ -5,7 +5,8 @@ import 'package:chat_repository/src/model/chat_room_entity.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 
-final class ChatRoomFirestoreService extends BaseFirestoreService<ChatRoomEntity> {
+final class ChatRoomFirestoreService
+    extends BaseFirestoreService<ChatRoomEntity> {
   ChatRoomFirestoreService({super.firestore});
 
   @override
@@ -27,17 +28,32 @@ final class ChatRoomFirestoreService extends BaseFirestoreService<ChatRoomEntity
     return ChatRoomEntity.fromJson(doc.data()! as Map<String, dynamic>);
   }
 
+  // Fields owned by the messageWritten trigger (last_seq/last_message) or written
+  // surgically per-user (reads/team_reads). A full-entity update from a client
+  // model would reset them to stale/empty values, so they're stripped here —
+  // use markRead/markDelivered/markHandled for read state.
+  static const _triggerOwnedRoomFields = [
+    'last_seq',
+    'last_message',
+    'reads',
+    'team_reads',
+  ];
+
   @override
   Future<ChatRoomEntity> update({required ChatRoomEntity data}) async {
     data.updatedAt = DateTime.timestamp();
-    await root.doc(data.id).update(data.toJson());
+    final json = data.toJson()
+      ..removeWhere((k, _) => _triggerOwnedRoomFields.contains(k));
+    await root.doc(data.id).update(json);
     return data;
   }
 
   @override
   Future<ChatRoomEntity> delete({required ChatRoomEntity data}) async {
     final updated = data..deletedAt = DateTime.timestamp();
-    await root.doc(data.id).update(updated.toJson());
+    final json = updated.toJson()
+      ..removeWhere((k, _) => _triggerOwnedRoomFields.contains(k));
+    await root.doc(data.id).update(json);
     return updated;
   }
 
@@ -104,12 +120,13 @@ final class ChatRoomFirestoreService extends BaseFirestoreService<ChatRoomEntity
     unawaited(
       controller.addStream(
         query.snapshots().map(
-          (snap) => snap.docs
-              .map(
-                (d) => ChatRoomEntity.fromJson(d.data()! as Map<String, dynamic>),
-              )
-              .toList(),
-        ),
+              (snap) => snap.docs
+                  .map(
+                    (d) => ChatRoomEntity.fromJson(
+                        d.data()! as Map<String, dynamic>),
+                  )
+                  .toList(),
+            ),
       ),
     );
   }
