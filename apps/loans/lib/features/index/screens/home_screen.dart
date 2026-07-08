@@ -45,6 +45,7 @@ class HomeScreen extends StatelessWidget {
                   showAddBorrowerButton:
                       AuthenticationService.instance.allowAddClients,
                   showAddCapitalButton: AuthenticationService.instance.isAdmin,
+                  showMessagesButton: true,
                 ),
                 body: child,
               ),

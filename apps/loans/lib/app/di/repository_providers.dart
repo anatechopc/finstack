@@ -3,6 +3,7 @@ import 'package:authentication_repository/authentication_repository.dart';
 import 'package:bank_details_repository/bank_details_repository.dart';
 import 'package:capital_repository/capital_repository.dart';
 import 'package:cash_pool_repository/cash_pool_repository.dart';
+import 'package:chat_repository/chat_repository.dart';
 import 'package:company_repository/company_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -43,6 +44,8 @@ class AppRepositoryProviders extends StatelessWidget {
         RepositoryProvider(create: (context) => CapitalRepository()),
         RepositoryProvider(create: (context) => ReportsRepository()),
         RepositoryProvider(create: (context) => NotificationRepository()),
+        RepositoryProvider(create: (context) => ChatRoomRepository()),
+        RepositoryProvider(create: (context) => TypingService()),
         RepositoryProvider(create: (context) => PaymentRepository()),
         RepositoryProvider(create: (context) => SettingsRepository()),
         RepositoryProvider(create: (context) => CashPoolRepository()),

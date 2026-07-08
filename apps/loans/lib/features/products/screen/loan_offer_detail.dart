@@ -1,3 +1,4 @@
+import 'package:chat_repository/chat_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_form_builder/flutter_form_builder.dart';
@@ -5,11 +6,13 @@ import 'package:flutter_svg/svg.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loooans/app/routing/paths.dart';
+import 'package:loooans/features/chat/chat_participants.dart';
 import 'package:loooans/features/products/bloc/product_bloc.dart';
 import 'package:loooans/features/products/bloc/product_status.dart';
 import 'package:loooans/features/products/screen/loan_application.dart';
 import 'package:loooans/features/products/widget/loan_offer_detail/loan_offer_details_form.dart';
 import 'package:loooans/features/products/widget/loan_offer_detail/loan_offer_reviews_section.dart';
+import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
@@ -91,6 +94,8 @@ class LoanOfferDetail extends StatelessWidget {
                     ),
                   ),
                 _applyButton(context),
+                const Gap(8),
+                _messageLenderButton(context),
               ],
             ),
           ),
@@ -188,6 +193,38 @@ class LoanOfferDetail extends StatelessWidget {
         ),
         const Gap(16),
       ],
+    );
+  }
+
+  Future<void> _openLenderChat(BuildContext context) async {
+    final me = AuthenticationService.instance.user;
+    final seed = ChatParticipants.borrowerToCompany(
+      userId: me.id,
+      userName: me.completeNameWesternOrder,
+      userPhotoUrl: me.profilePhotoUrl?.url,
+      companyId: productView.companyId,
+      companyName: productView.companyName,
+      companyPhotoUrl: productView.companyProfilePhotoUrl?.url,
+      contextType: 'product',
+      contextId: productView.productId,
+    );
+    final room = await context.read<ChatRoomRepository>().findOrCreate(
+          participants: seed.participants,
+          createdBy: me.id,
+          contextType: seed.contextType,
+          contextId: seed.contextId,
+        );
+    if (!context.mounted) return;
+    GoRouter.of(context).go(Paths.chatRoom.replaceFirst(':roomId', room.id));
+  }
+
+  Widget _messageLenderButton(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: AppWidgets.defaultOutlinedButton(
+        child: const Text('Message lender'),
+        onPressed: () => _openLenderChat(context),
+      ),
     );
   }
 

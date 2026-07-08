@@ -20,6 +20,8 @@ dependencies:
     path: "../../packages/loans/capital_repository"
   cash_pool_repository:
     path: "../../packages/loans/cash_pool_repository"
+  chat_repository:
+    path: "../../packages/core/chat_repository"
   collection: ^1.18.0
   company_repository:
     path: "../../packages/core/company_repository"

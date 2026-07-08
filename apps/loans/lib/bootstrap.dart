@@ -27,6 +27,17 @@ class AppBlocObserver extends BlocObserver {
   }
 }
 
+/// Background FCM handler — runs in a separate isolate.
+///
+/// v1: no delivered-ack while fully closed; there is no signed-in user context
+/// in the background isolate. Delivered state advances when the app is next
+/// opened and the foreground listener / ChatBloc runs.
+/// Follow-up: persist uid locally to enable ack here.
+@pragma('vm:entry-point')
+Future<void> chatBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+}
+
 Future<void> bootstrap(
   FutureOr<Widget> Function() builder,
   FirebaseOptions options,
@@ -45,6 +56,7 @@ Future<void> bootstrap(
 
   if (!kIsWeb) {
     await setupFlutterNotifications();
+    FirebaseMessaging.onBackgroundMessage(chatBackgroundHandler);
   }
 
   FlutterError.onError = (details) {

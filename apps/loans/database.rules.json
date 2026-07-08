@@ -44,6 +44,14 @@
             }
           }
         }
+      },
+      "typing": {
+        "$roomId": {
+          ".read": "auth != null",
+          "$userId": {
+            ".write": "auth != null && auth.uid == $userId"
+          }
+        }
       }
     },
 
@@ -63,6 +71,14 @@
             "force_logout": {
               ".read": "auth != null"
             }
+          }
+        }
+      },
+      "typing": {
+        "$roomId": {
+          ".read": "auth != null",
+          "$userId": {
+            ".write": "auth != null && auth.uid == $userId"
           }
         }
       }

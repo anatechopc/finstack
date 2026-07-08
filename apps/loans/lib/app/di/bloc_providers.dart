@@ -4,6 +4,7 @@ import 'package:loooans/features/authentication/bloc/authentication_bloc.dart';
 import 'package:loooans/features/bank_details/bloc/bank_details_bloc.dart';
 import 'package:loooans/features/capital/bloc/capital_bloc.dart';
 import 'package:loooans/features/cash_pool/bloc/cash_pool_bloc.dart';
+import 'package:loooans/features/chat/bloc/conversations_bloc.dart';
 import 'package:loooans/features/companies/bloc/company_bloc.dart';
 import 'package:loooans/features/loans/bloc/additional_loan_bloc.dart';
 import 'package:loooans/features/loans/bloc/loan_settlement_bloc.dart';
@@ -46,6 +47,7 @@ class AppBlocProviders extends StatelessWidget {
         BlocProvider(create: CashPoolBloc.new),
         BlocProvider(create: PaymentCenterBloc.new),
         BlocProvider(create: BankDetailsBloc.new),
+        BlocProvider(create: ConversationsBloc.new),
       ],
       child: child,
     );

@@ -1,13 +1,16 @@
 import 'dart:async';
 
+import 'package:chat_repository/chat_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_form_builder/flutter_form_builder.dart';
 import 'package:form_builder_validators/form_builder_validators.dart';
 import 'package:gap/gap.dart';
+import 'package:go_router/go_router.dart';
 import 'package:loan_repository/loan_repository.dart';
-import 'package:product_repository/product_repository.dart';
+import 'package:loooans/app/routing/paths.dart';
+import 'package:loooans/features/chat/chat_participants.dart';
 import 'package:loooans/features/loans/bloc/additional_loan_bloc.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
 import 'package:loooans/features/products/bloc/product_bloc.dart';
@@ -21,6 +24,7 @@ import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 import 'package:loooans_helpers/data_helpers.dart';
+import 'package:product_repository/product_repository.dart';
 import 'package:user_repository/user_repository.dart';
 
 class ClientDetailActionButtons extends StatelessWidget {
@@ -146,6 +150,13 @@ class ClientDetailActionButtons extends StatelessWidget {
                 ),
               ),
             ] else ...[
+              Expanded(
+                child: AppWidgets.defaultOutlinedButton(
+                  child: const Text('Message borrower'),
+                  onPressed: () => _openBorrowerChat(context),
+                ),
+              ),
+              const Gap(16),
               if (AuthenticationService.instance.allowAddClients &&
                   loan.dueAt == null &&
                   (AuthenticationService.instance.user.isTeller() ||
@@ -207,6 +218,30 @@ class ClientDetailActionButtons extends StatelessWidget {
         );
       },
     );
+  }
+
+  Future<void> _openBorrowerChat(BuildContext context) async {
+    final me = AuthenticationService.instance;
+    final loansBloc = context.read<LoansBloc>();
+    final loan = loansBloc.selectedLoan;
+    final seed = ChatParticipants.staffToBorrower(
+      companyId: me.company.id,
+      companyName: me.company.name,
+      companyPhotoUrl: me.company.companyProfilePhotoUrl?.url,
+      borrowerId: userId,
+      borrowerName: loansBloc.selectedUserLoanView?.userFullName ?? '',
+      borrowerPhotoUrl: null,
+      contextType: 'loan',
+      contextId: loan.id,
+    );
+    final room = await context.read<ChatRoomRepository>().findOrCreate(
+          participants: seed.participants,
+          createdBy: me.user.id,
+          contextType: seed.contextType,
+          contextId: seed.contextId,
+        );
+    if (!context.mounted) return;
+    GoRouter.of(context).go(Paths.chatRoom.replaceFirst(':roomId', room.id));
   }
 
   Future<void> _handleAdditionalLoan(
@@ -288,8 +323,7 @@ class ClientDetailActionButtons extends StatelessWidget {
                         const Gap(16),
                         for (final charge in product!.additionalCharges)
                           Row(
-                            mainAxisAlignment:
-                                MainAxisAlignment.spaceBetween,
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text(
                                 'Add: ${charge.description}:',
@@ -304,8 +338,7 @@ class ClientDetailActionButtons extends StatelessWidget {
                           ),
                         for (final charge in product.deductions)
                           Row(
-                            mainAxisAlignment:
-                                MainAxisAlignment.spaceBetween,
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text(
                                 'Less: ${charge.description}:',
@@ -323,8 +356,7 @@ class ClientDetailActionButtons extends StatelessWidget {
                         ),
                         const Gap(8),
                         Row(
-                          mainAxisAlignment:
-                              MainAxisAlignment.spaceBetween,
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             const Text('Total:'),
                             Text(
@@ -333,8 +365,8 @@ class ClientDetailActionButtons extends StatelessWidget {
                                   .computeTotalAdditionalLoanAmount(
                                     product,
                                     formKey.currentState
-                                            ?.simplifiedFields()[
-                                        'amount'] as String?,
+                                            ?.simplifiedFields()['amount']
+                                        as String?,
                                   )
                                   .toCurrency(),
                             ),
@@ -350,8 +382,7 @@ class ClientDetailActionButtons extends StatelessWidget {
               AppWidgets.defaultFilledButton(
                 child: const Text('Add'),
                 onPressed: () async {
-                  if (formKey.currentState?.saveAndValidate() ??
-                      false) {
+                  if (formKey.currentState?.saveAndValidate() ?? false) {
                     final result = await showDialog<dynamic>(
                       context: context,
                       builder: (context) {
@@ -366,15 +397,14 @@ class ClientDetailActionButtons extends StatelessWidget {
                             AppWidgets.defaultFilledButton(
                               child: const Text('Proceed'),
                               onPressed: () async {
-                                final fileData = await AppWidgets
-                                    .defaultMediaChooserDialog(
+                                final fileData =
+                                    await AppWidgets.defaultMediaChooserDialog(
                                   context,
                                   allowGallery: false,
                                 );
                                 if (fileData != null) {
                                   try {
-                                    final fileName =
-                                        fileData['name'] as String;
+                                    final fileName = fileData['name'] as String;
                                     final fileBytes =
                                         fileData['bytes'] as Uint8List;
                                     final signatureBytes =

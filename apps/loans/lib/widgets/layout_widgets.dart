@@ -8,6 +8,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:loooans/app/model/notification_model.dart';
 import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/capital/bloc/capital_bloc.dart';
+import 'package:loooans/features/chat/bloc/conversations_bloc.dart';
 import 'package:loooans/features/users/bloc/user_bloc.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/notification_service.dart';
@@ -86,6 +87,7 @@ class LayoutWidgets {
     bool showAddCapitalButton = false,
     bool showAdvertiseButton = false,
     bool showAddBorrowerButton = false,
+    bool showMessagesButton = false,
   }) {
     final isCompact = getScreenSize(context: context) == ScreenSize.compact;
 
@@ -280,6 +282,27 @@ class LayoutWidgets {
           const SizedBox(
             width: 8,
           ),
+          if (showMessagesButton) ...[
+            BlocBuilder<ConversationsBloc, ConversationsState>(
+              builder: (context, state) {
+                final n = state.totalUnread;
+                final button = IconButton(
+                  tooltip: 'Messages',
+                  onPressed: () => GoRouter.of(context).go(Paths.chat),
+                  style: IconButton.styleFrom(
+                    backgroundColor: AppColors.white,
+                    foregroundColor: AppColors.black,
+                  ),
+                  icon: const Icon(Icons.chat_bubble_outline),
+                );
+                if (n == 0) return button;
+                return Badge(label: Text('$n'), child: button);
+              },
+            ),
+            const SizedBox(
+              width: 8,
+            ),
+          ],
           StreamBuilder(
             stream: NotificationService.instance.notificationStream,
             builder: (context, snapshot) {

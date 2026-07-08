@@ -11,6 +11,9 @@ import 'package:loooans/features/authentication/screen/email_verification_screen
 import 'package:loooans/features/authentication/screen/login_screen.dart';
 import 'package:loooans/features/authentication/screen/mobile_verification_screen.dart';
 import 'package:loooans/features/authentication/screen/verification_hub_screen.dart';
+import 'package:loooans/features/chat/bloc/chat_bloc.dart';
+import 'package:loooans/features/chat/screen/chat_room_screen.dart';
+import 'package:loooans/features/chat/screen/conversations_screen.dart';
 import 'package:loooans/features/index/screens/home_screen.dart';
 import 'package:loooans/features/index/screens/index_screen.dart';
 import 'package:loooans/features/loans/screens/loan_details.dart';
@@ -248,6 +251,10 @@ RouterConfig<Object> buildAppRoutes() {
               return const PaymentCenterScreen();
             },
           ),
+          GoRoute(
+            path: Paths.chat,
+            builder: (context, state) => const ConversationsScreen(),
+          ),
         ],
       ),
       GoRoute(
@@ -353,6 +360,16 @@ RouterConfig<Object> buildAppRoutes() {
           }
 
           return const PageNotFound();
+        },
+      ),
+      GoRoute(
+        path: Paths.chatRoom,
+        builder: (context, state) {
+          final roomId = state.pathParameters['roomId']!;
+          return BlocProvider(
+            create: (ctx) => ChatBloc(ctx, roomId: roomId),
+            child: ChatRoomScreen(roomId: roomId),
+          );
         },
       ),
     ],

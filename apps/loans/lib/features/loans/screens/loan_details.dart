@@ -1,4 +1,5 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:chat_repository/chat_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_form_builder/flutter_form_builder.dart';
@@ -8,12 +9,14 @@ import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loooans/app/routing/paths.dart';
+import 'package:loooans/features/chat/chat_participants.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
 import 'package:loooans/features/payments/widget/submit_payment_dialog.dart';
 import 'package:loooans/features/products/bloc/product_bloc.dart';
 import 'package:loooans/features/products/bloc/product_status.dart';
 import 'package:loooans/features/products/screen/loan_schedule_widget.dart';
 import 'package:loooans/features/products/widget/quotation_widget.dart';
+import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
@@ -193,25 +196,47 @@ class _LoanDetailsState extends State<LoanDetails> {
                   1 => _nextPayment(
                       fullScreen: true,
                     ),
-                  2 => loan.status == LoanStatus.completed
-                      ? SizedBox(
+                  2 => Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (loan.status == LoanStatus.completed) ...[
+                          SizedBox(
+                            width: double.infinity,
+                            child: AppWidgets.defaultOutlinedButton(
+                              child: const Text(
+                                'Review',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              onPressed: () {
+                                _reviewDialog(
+                                  context,
+                                  companyName: userLoanView.companyName,
+                                );
+                              },
+                            ),
+                          ),
+                          const Gap(8),
+                        ],
+                        SizedBox(
                           width: double.infinity,
                           child: AppWidgets.defaultOutlinedButton(
                             child: const Text(
-                              'Review',
+                              'Message lender',
                               style: TextStyle(
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
-                            onPressed: () {
-                              _reviewDialog(
-                                context,
-                                companyName: userLoanView.companyName,
-                              );
-                            },
+                            onPressed: () => _openLenderChat(
+                              context,
+                              loan: loan,
+                              userLoanView: userLoanView,
+                            ),
                           ),
-                        )
-                      : Container(),
+                        ),
+                      ],
+                    ),
                   3 => Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -331,6 +356,23 @@ class _LoanDetailsState extends State<LoanDetails> {
                             ),
                           ),
                         ],
+                        const Gap(16),
+                        SizedBox(
+                          width: double.infinity,
+                          child: AppWidgets.defaultOutlinedButton(
+                            child: const Text(
+                              'Message lender',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            onPressed: () => _openLenderChat(
+                              context,
+                              loan: loan,
+                              userLoanView: userLoanView,
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -540,6 +582,32 @@ class _LoanDetailsState extends State<LoanDetails> {
         ],
       ),
     );
+  }
+
+  Future<void> _openLenderChat(
+    BuildContext context, {
+    required Loan loan,
+    required UserLoanView userLoanView,
+  }) async {
+    final me = AuthenticationService.instance.user;
+    final seed = ChatParticipants.borrowerToCompany(
+      userId: me.id,
+      userName: me.completeNameWesternOrder,
+      userPhotoUrl: me.profilePhotoUrl?.url,
+      companyId: userLoanView.companyId,
+      companyName: userLoanView.companyName,
+      companyPhotoUrl: null,
+      contextType: 'loan',
+      contextId: loan.id,
+    );
+    final room = await context.read<ChatRoomRepository>().findOrCreate(
+          participants: seed.participants,
+          createdBy: me.id,
+          contextType: seed.contextType,
+          contextId: seed.contextId,
+        );
+    if (!context.mounted) return;
+    GoRouter.of(context).go(Paths.chatRoom.replaceFirst(':roomId', room.id));
   }
 
   void _reviewDialog(BuildContext context, {required String companyName}) {
