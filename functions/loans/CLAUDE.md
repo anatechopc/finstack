@@ -35,7 +35,7 @@ Each subdirectory is a separate Go module with its own `go.mod`/`go.sum`. The ro
 - Register every new function in `loooans_cloud_functions.go` `init()`
 - Use `utils.InitializeLogger("functionName")` at the start of every handler
 - Use `utils.ValidateRequestV2()` for auth in HTTP handlers
-- Use `utils.GetEnvironment()` for environment-specific config (collection prefixes, URLs)
+- Use `utils.GetCollectionPrefix()` for the environment-based Firestore prefix (`dev_`/`stg_`/`""`); `ENVIRONMENT` itself is read from the env var. Never hardcode a prefix.
 - Run `go mod tidy` in the sub-module directory when adding dependencies to a sub-module
 - Follow the existing HTTP handler pattern: CORS headers → validate JWT → parse body → respond with JSON
 - Follow the existing trigger pattern: init logger → unmarshal protobuf → extract fields → business logic → return error or nil
@@ -73,17 +73,17 @@ Each subdirectory is a separate Go module with its own `go.mod`/`go.sum`. The ro
 
 ## Deployment
 
-Automated via GitHub Actions — pushing to a branch triggers the corresponding deploy:
+Automated via GitHub Actions — pushing a branch auto-deploys the functions. For the full branch → environment → project mapping (shared with the Flutter app), see the root `CLAUDE.md` "Environments" table; for the deploy-script anatomy, orphaned-service cleanup, and the fact that `master`/`release/*` don't yet exist on the remote, load the `finstack-run-deploy-operate` skill.
 
-| Branch | Environment | GCP Project |
-|---|---|---|
-| `develop` | development | `loooans-dev-stg` |
-| `release/**` | staging | `loooans-dev-stg` |
-| `master` | production | `loooans-prod` |
+`master` deploys to production (`loooans-prod`). The `ENVIRONMENT` env var (`development`|`staging`|`production`) is **required at runtime** — the function fatals on startup without it.
 
-The `ENVIRONMENT` env var (`development`, `staging`, `production`) is required at runtime.
+## Skill library
+
+An on-demand skill library lives at the repo root `.claude/skills/`. Load the relevant skill before non-trivial work: `finstack-run-deploy-operate` (deploy/CI), `finstack-testing-and-validation` (the adapter+core test recipe), `finstack-security-hardening` (open security items, `ValidateRequestV2`, keyless ADC), `finstack-architecture-contract` (invariants, data flow), `finstack-config-and-environments` (prefixes, secrets, WIF).
 
 ## Reference Docs
+
+Note: `docs/` predates the skill library and is partly stale (e.g. `project-overview.md` still describes the old TransmitSMS path). Prefer the skills where they disagree.
 
 - [Project Overview](docs/project-overview.md) — tech stack, integrations
 - [Architecture](docs/architecture.md) — module details, patterns, function registration
