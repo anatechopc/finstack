@@ -408,3 +408,13 @@ Added `UserBloc.withDependencies` and `AuthenticationBloc.withDependencies` mirr
 - Tests: `test/features/users/user_bloc_resend_invite_test.dart` (success + error), `test/features/authentication/authentication_bloc_forgot_password_test.dart` (success + error-still-neutral). All pass.
 - `fvm flutter analyze` (whole app): zero net-new issues vs the pre-work baseline (6224 before == 6224 after, line-number-normalized diff empty).
 - Still console-managed before prod: nothing new here, but the password-setup-link backend (Phase A, PR #70) must be deployed for these flows to actually deliver email.
+
+---
+
+## Notification permission no longer blocks startup (branch `fix/notification-permission-blocking-startup`)
+
+Found during the chat dev smoke test (2026-07-09): the deployed dev web app rendered a **blank page indefinitely** because `bootstrap()` did `await requestPermissions()` **before `runApp()`** — the whole app waited on the browser's notification-permission prompt. Additionally, `requestPermissions()` recursed on any non-authorized status; since browsers won't re-show the prompt after an explicit deny, a denial spun a permanent `getNotificationSettings`/`requestPermission` busy-loop.
+
+- Fix in `lib/bootstrap.dart`: `runApp()` first, then `unawaited(requestPermissions())`; the request only fires when `authorizationStatus == notDetermined` (never re-prompts on denial).
+- Timing note: on web, FCM `getToken` needs granted permission — token registration happens post-login via `NotificationService`, by which time the (now non-blocking) prompt has been answered, so no behavior change expected there.
+- Drive-by in the same file: `print` → `debugPrint` in `showFlutterNotification` (pre-existing `avoid_print` from monorepo-genesis commit `275ad55`).
