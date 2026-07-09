@@ -154,5 +154,6 @@ firebase-debug.log
 .env
 .env.*
 !.env.example
-.claude/
+.claude/*
+!.claude/skills/
 .worktrees/

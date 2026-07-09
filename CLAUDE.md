@@ -2,6 +2,25 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Skill library (load on demand)
+
+A verified skill library lives at `.claude/skills/` (12 skills). **Load the relevant skill before non-trivial work** — they hold depth this always-loaded file intentionally omits, and take precedence over `ARCHITECTURE.md`/`docs/` where those are stale.
+
+| Task | Skill |
+|---|---|
+| Plan/commit/merge/deploy a change; the non-negotiable rules | `finstack-change-control` |
+| Triage a broken symptom | `finstack-debugging-playbook` |
+| The incident/history behind a pattern | `finstack-failure-archaeology` |
+| Why it's built this way; invariants; changing shapes | `finstack-architecture-contract` |
+| Loan/lending domain meaning | `loans-domain-reference` |
+| Environments, prefixes, secrets, flags | `finstack-config-and-environments` |
+| Set up a dev machine / build failures | `finstack-build-and-env` |
+| Run, deploy, operate (incl. SMS gateway) | `finstack-run-deploy-operate` |
+| Add tests / what counts as evidence | `finstack-testing-and-validation` |
+| Loan computation & reporting rebuild | `finstack-loan-engine-and-reporting-campaign` |
+| Security fixes; rules-into-source | `finstack-security-hardening` |
+| What to work on next; in-flight state | `finstack-roadmap-and-frontier` |
+
 ## Repository Structure
 
 This is a monorepo (**finstack**) with shared packages and multiple apps/functions sharing Firebase backends:

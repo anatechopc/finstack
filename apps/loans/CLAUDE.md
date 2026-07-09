@@ -96,7 +96,7 @@ For detailed architecture and onboarding, see [ARCHITECTURE.md](ARCHITECTURE.md)
 
 ### State Management
 
-BLoC pattern via `flutter_bloc`. 9 app-level BLoCs registered in `lib/app/di/bloc_providers.dart`. Each BLoC accepts `AuthenticationService` as a constructor parameter.
+BLoC pattern via `flutter_bloc`. App-level BLoCs are registered in `lib/app/di/bloc_providers.dart` (that file is the source of truth for the current set — don't hardcode a count here). Dependency injection is **partial**: repositories are injected via `context.read<>()`, but several BLoCs still bind `AuthenticationService.instance` / `SettingsService.instance` in their constructors (the "Must Never use `.instance` in BLoCs" rule above is the target state, not yet fully reached). See the `finstack-architecture-contract` skill for the full DI picture.
 
 ### Firebase
 
@@ -112,4 +112,8 @@ BLoC pattern via `flutter_bloc`. 9 app-level BLoCs registered in `lib/app/di/blo
 
 ### Localization
 
-ARB files in `lib/l10n/arb/` (English, Spanish). Access via `context.l10n`.
+`gen-l10n` is wired (ARB files in `lib/l10n/arb/`, `context.l10n`), but the ARB files currently hold only Very Good CLI counter-scaffold keys — real UI strings are hardcoded, not localized. Treat l10n as scaffolding-only unless localization is actually being adopted.
+
+## Skill library
+
+An on-demand skill library lives at the repo root `.claude/skills/` (12 skills, e.g. `finstack-architecture-contract`, `finstack-debugging-playbook`, `finstack-testing-and-validation`, `loans-domain-reference`, `finstack-loan-engine-and-reporting-campaign`). Load the relevant skill before non-trivial work — they hold verified depth this file intentionally omits. `ARCHITECTURE.md` predates the skills and is occasionally stale; prefer the skills where they disagree.
