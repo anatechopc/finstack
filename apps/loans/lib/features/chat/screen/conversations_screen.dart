@@ -101,35 +101,42 @@ class _ConversationRow extends StatelessWidget {
         ),
         title: Text(counterpart.displayName ?? 'Conversation'),
         subtitle: Text(preview, maxLines: 1, overflow: TextOverflow.ellipsis),
-        trailing: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(time, style: const TextStyle(fontSize: 11)),
-            if (unread > 0) ...[
-              const Gap(4),
-              _UnreadBadge(count: unread),
-            ],
-            if (myCompanyId != null &&
-                isAwaitingResponse(room, myCompanyId!)) ...[
-              const Gap(4),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: AppColors.ubOrange.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Text(
-                  'Awaiting',
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: AppColors.ubOrange,
-                    fontWeight: FontWeight.w600,
+        // FittedBox: with time + unread badge + Awaiting chip stacked, the
+        // column exceeds the ListTile trailing height (28px overflow seen in
+        // the dev smoke test) — scale down instead of overflowing.
+        trailing: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(time, style: const TextStyle(fontSize: 11)),
+              if (unread > 0) ...[
+                const Gap(4),
+                _UnreadBadge(count: unread),
+              ],
+              if (myCompanyId != null &&
+                  isAwaitingResponse(room, myCompanyId!)) ...[
+                const Gap(4),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppColors.ubOrange.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    'Awaiting',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: AppColors.ubOrange,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
+              ],
             ],
-          ],
+          ),
         ),
         onTap: () => GoRouter.of(context)
             .go(Paths.chatRoom.replaceFirst(':roomId', room.id)),

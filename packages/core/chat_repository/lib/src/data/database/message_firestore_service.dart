@@ -113,7 +113,8 @@ final class MessageFirestoreService
               (snap) => snap.docs
                   .map(
                     (d) => MessageEntity.fromJson(
-                        d.data()! as Map<String, dynamic>),
+                      d.data()! as Map<String, dynamic>,
+                    ),
                   )
                   .toList(),
             ),

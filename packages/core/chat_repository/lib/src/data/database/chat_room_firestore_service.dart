@@ -123,7 +123,8 @@ final class ChatRoomFirestoreService
               (snap) => snap.docs
                   .map(
                     (d) => ChatRoomEntity.fromJson(
-                        d.data()! as Map<String, dynamic>),
+                      d.data()! as Map<String, dynamic>,
+                    ),
                   )
                   .toList(),
             ),
