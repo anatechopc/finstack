@@ -105,8 +105,11 @@ void main() {
   blocTest<ChatBloc, ChatState>(
     'subscribe -> emits incoming messages',
     build: build,
-    act: (bloc) {
+    act: (bloc) async {
       bloc.add(const SubscribeChat());
+      // Yield so the Subscribe handler runs (it attaches the messages
+      // listener AFTER loadNext — see ChatBloc._onSubscribe) before emitting.
+      await Future<void>.delayed(Duration.zero);
       msgCtrl.add([
         Message.create(
           roomId: 'r1',
@@ -190,7 +193,8 @@ void main() {
           includeOriginal: any(named: 'includeOriginal'),
         ),
       ).thenAnswer(
-        (_) async => ImageUrl(name: 'p.jpg', thumbnail: 'thumb', original: 'orig'),
+        (_) async =>
+            ImageUrl(name: 'p.jpg', thumbnail: 'thumb', original: 'orig'),
       );
       return build();
     },
@@ -221,8 +225,10 @@ void main() {
       myUserId: 'staff1',
       mySenderParticipantId: 'c1',
     ),
-    act: (bloc) {
+    act: (bloc) async {
       bloc.add(const SubscribeChat());
+      // Yield so the Subscribe handler attaches the messages listener first.
+      await Future<void>.delayed(Duration.zero);
       msgCtrl.add([
         Message.create(
           roomId: 'r1',

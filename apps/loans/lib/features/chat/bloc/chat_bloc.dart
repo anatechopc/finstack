@@ -87,15 +87,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     on<SendImageAttachment>(_onSendImage);
     on<SendFileAttachment>(_onSendFile);
 
-    // Subscriptions established synchronously so broadcast-stream tests don't
-    // miss emissions fired right after SubscribeChat.
-    _msgSub = _messages.dataStream.listen(
-      (msgs) => add(_MessagesUpdated(msgs)),
-      onError: (Object err) {
-        _log.severe('messages stream error: $err');
-        add(const _ChatErrored('Failed to load messages'));
-      },
-    );
+    // Room + typing streams are independent of loadNext, so they can be wired
+    // here. The MESSAGES subscription must NOT be taken here — see _onSubscribe.
     _roomSub = _rooms.watchRoom(_roomId).listen(
           (room) => add(_RoomUpdated(room)),
           onError: (Object err) => _log.severe('room stream error: $err'),
@@ -120,6 +113,19 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   ) async {
     emit(state.copyWith(status: ChatStatus.loading));
     _messages.loadNext(reset: true);
+    // Listen AFTER loadNext: loadNext(reset: true) calls
+    // resetStreamController(), which REPLACES the controller backing
+    // `dataStream`. A subscription taken before it (as this bloc originally
+    // did in the constructor) stays attached to the old, dead controller and
+    // never receives a message. Re-subscribed on every SubscribeChat.
+    await _msgSub?.cancel();
+    _msgSub = _messages.dataStream.listen(
+      (msgs) => add(_MessagesUpdated(msgs)),
+      onError: (Object err) {
+        _log.severe('messages stream error: $err');
+        add(const _ChatErrored('Failed to load messages'));
+      },
+    );
   }
 
   Future<void> _onMessagesUpdated(

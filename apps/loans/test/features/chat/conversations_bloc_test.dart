@@ -46,8 +46,12 @@ void main() {
       myUserId: 'u1',
       myCompanyId: null,
     ),
-    act: (bloc) {
+    act: (bloc) async {
       bloc.add(const SubscribeConversations());
+      // Yield so the Subscribe handler runs (it attaches the dataStream
+      // listener AFTER loadNext — see ConversationsBloc._onSubscribe) before
+      // emitting on the broadcast controller.
+      await Future<void>.delayed(Duration.zero);
       controller.add([
         _room('r1', lastSeq: 3, reads: {'u1': ReadState(lastReadSeq: 1)}),
         _room('r2', lastSeq: 2, reads: {'u1': ReadState(lastReadSeq: 2)}),
