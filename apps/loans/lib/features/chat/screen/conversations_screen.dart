@@ -16,11 +16,10 @@ class ConversationsScreen extends StatefulWidget {
 }
 
 class _ConversationsScreenState extends State<ConversationsScreen> {
-  @override
-  void initState() {
-    super.initState();
-    context.read<ConversationsBloc>().add(const SubscribeConversations());
-  }
+  // No SubscribeConversations dispatch here: the bloc auto-subscribes at
+  // construction (for the app-bar badge) and the stream is already a live
+  // snapshot listener — re-dispatching on every screen open just re-runs the
+  // query for nothing.
 
   @override
   Widget build(BuildContext context) {
@@ -100,19 +99,19 @@ class _ConversationRow extends StatelessWidget {
           ),
         ),
         title: Text(counterpart.displayName ?? 'Conversation'),
-        subtitle: Text(preview, maxLines: 1, overflow: TextOverflow.ellipsis),
-        trailing: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.end,
+        // The "Awaiting" chip lives on the subtitle line: stacking it in the
+        // trailing column with the time + unread badge exceeded the ListTile
+        // trailing height (28px overflow seen in the dev smoke test), and a
+        // FittedBox workaround shrank the text inconsistently per row.
+        subtitle: Row(
           children: [
-            Text(time, style: const TextStyle(fontSize: 11)),
-            if (unread > 0) ...[
-              const Gap(4),
-              _UnreadBadge(count: unread),
-            ],
+            Flexible(
+              child:
+                  Text(preview, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
             if (myCompanyId != null &&
                 isAwaitingResponse(room, myCompanyId!)) ...[
-              const Gap(4),
+              const Gap(8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
@@ -128,6 +127,17 @@ class _ConversationRow extends StatelessWidget {
                   ),
                 ),
               ),
+            ],
+          ],
+        ),
+        trailing: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(time, style: const TextStyle(fontSize: 11)),
+            if (unread > 0) ...[
+              const Gap(4),
+              _UnreadBadge(count: unread),
             ],
           ],
         ),

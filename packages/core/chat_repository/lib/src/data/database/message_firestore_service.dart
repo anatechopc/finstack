@@ -11,9 +11,22 @@ final class MessageFirestoreService
 
   final String roomId;
 
+  /// The live query subscription piping snapshots into [controller]. Held so
+  /// each [loadNext] can cancel the previous query instead of leaking it, and
+  /// so [dispose] can tear it down when the owning bloc closes (this service
+  /// is created per room).
+  StreamSubscription<List<MessageEntity>>? _querySub;
+
   /// Used only to build the prefixed parent path in [root].
   @override
   String get collectionName => 'chat_rooms';
+
+  /// Cancels the live query and closes the stream controller.
+  void dispose() {
+    unawaited(_querySub?.cancel());
+    _querySub = null;
+    unawaited(controller.close());
+  }
 
   @override
   CollectionReference get root => fs
@@ -106,18 +119,19 @@ final class MessageFirestoreService
   }) {
     var query = root.orderBy('created_at', descending: true);
     if (limit != null && limit > 0) query = query.limit(limit);
+    unawaited(_querySub?.cancel());
     resetStreamController();
-    unawaited(
-      controller.addStream(
-        query.snapshots().map(
-              (snap) => snap.docs
-                  .map(
-                    (d) => MessageEntity.fromJson(
-                        d.data()! as Map<String, dynamic>),
-                  )
-                  .toList(),
-            ),
-      ),
-    );
+    _querySub = query
+        .snapshots()
+        .map(
+          (snap) => snap.docs
+              .map(
+                (d) => MessageEntity.fromJson(
+                  d.data()! as Map<String, dynamic>,
+                ),
+              )
+              .toList(),
+        )
+        .listen(controller.add, onError: controller.addError);
   }
 }

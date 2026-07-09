@@ -105,8 +105,11 @@ void main() {
   blocTest<ChatBloc, ChatState>(
     'subscribe -> emits incoming messages',
     build: build,
-    act: (bloc) {
+    act: (bloc) async {
       bloc.add(const SubscribeChat());
+      // Drain the event queue so the Subscribe handler runs (it attaches the
+      // messages listener AFTER loadNext — see ChatBloc._onSubscribe).
+      await pumpEventQueue();
       msgCtrl.add([
         Message.create(
           roomId: 'r1',
@@ -190,7 +193,8 @@ void main() {
           includeOriginal: any(named: 'includeOriginal'),
         ),
       ).thenAnswer(
-        (_) async => ImageUrl(name: 'p.jpg', thumbnail: 'thumb', original: 'orig'),
+        (_) async =>
+            ImageUrl(name: 'p.jpg', thumbnail: 'thumb', original: 'orig'),
       );
       return build();
     },
@@ -221,8 +225,10 @@ void main() {
       myUserId: 'staff1',
       mySenderParticipantId: 'c1',
     ),
-    act: (bloc) {
+    act: (bloc) async {
       bloc.add(const SubscribeChat());
+      // Drain the event queue so the Subscribe handler attaches the listener.
+      await pumpEventQueue();
       msgCtrl.add([
         Message.create(
           roomId: 'r1',
@@ -245,4 +251,71 @@ void main() {
       ).called(1);
     },
   );
+
+  late _ResettingFakeMessages fakeMessages;
+
+  blocTest<ChatBloc, ChatState>(
+    'REGRESSION: receives messages even though loadNext replaces the stream '
+    '(dead-subscription bug — listen must come after loadNext)',
+    build: () {
+      fakeMessages = _ResettingFakeMessages();
+      return ChatBloc.withDependencies(
+        roomId: 'r1',
+        chatRoomRepository: rooms,
+        messageRepository: fakeMessages,
+        typingService: typing,
+        storageRepository: storage,
+        myUserId: 'u1',
+        mySenderParticipantId: 'u1',
+      );
+    },
+    act: (bloc) async {
+      bloc.add(const SubscribeChat());
+      await pumpEventQueue();
+      // Emitted on the CURRENT (post-loadNext-swap) controller — where real
+      // Firestore snapshots land. A bloc subscribed before loadNext (the
+      // original bug) is attached to the orphaned controller and never sees
+      // this.
+      fakeMessages.emitMessages([
+        Message.create(
+          roomId: 'r1',
+          senderId: 'c1',
+          senderParticipantId: 'c1',
+          type: MessageType.text,
+          text: 'post-reset',
+        )..seq = 1,
+      ]);
+    },
+    wait: const Duration(milliseconds: 20),
+    verify: (bloc) {
+      expect(bloc.state.status, ChatStatus.loaded);
+      expect(bloc.state.messages.single.text, 'post-reset');
+    },
+  );
+}
+
+/// Fake mirroring the REAL BaseFirestoreService behavior the mocks hide:
+/// every `loadNext` REPLACES the controller backing `dataStream`
+/// (resetStreamController), orphaning any subscription taken earlier.
+class _ResettingFakeMessages extends Fake implements MessageRepository {
+  StreamController<List<Message>> _controller =
+      StreamController<List<Message>>.broadcast();
+
+  @override
+  Stream<List<Message>> get dataStream => _controller.stream;
+
+  @override
+  void loadNext({
+    List<QueryStatement>? statements,
+    int? limit = defaultDataLimit,
+    int? page,
+    bool reset = false,
+  }) {
+    _controller = StreamController<List<Message>>.broadcast();
+  }
+
+  void emitMessages(List<Message> messages) => _controller.add(messages);
+
+  @override
+  void dispose() {}
 }

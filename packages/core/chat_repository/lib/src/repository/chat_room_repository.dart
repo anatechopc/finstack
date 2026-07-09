@@ -11,6 +11,9 @@ class ChatRoomRepository implements BaseRepository<ChatRoom> {
 
   final ChatRoomFirestoreService _service;
 
+  /// Tears down the live rooms query and stream.
+  void dispose() => _service.dispose();
+
   @override
   Future<ChatRoom> add({required ChatRoom data}) =>
       _service.add(data: data.toEntity()).then((e) => e.toChatRoom());

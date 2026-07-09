@@ -33,7 +33,8 @@ class ConversationsBloc extends Bloc<ConversationsEvent, ConversationsState> {
         _myUserId = myUserId,
         _myCompanyId = myCompanyId,
         super(
-            ConversationsState(myUserId: myUserId, myCompanyId: myCompanyId)) {
+          ConversationsState(myUserId: myUserId, myCompanyId: myCompanyId),
+        ) {
     _wire();
   }
 
@@ -57,16 +58,6 @@ class ConversationsBloc extends Bloc<ConversationsEvent, ConversationsState> {
           message: e.message,
         ),
       ),
-    );
-
-    // Subscribe to the stream synchronously so test-side events emitted
-    // in the same act callback are captured even before _onSubscribe runs.
-    _sub = _repo.dataStream.listen(
-      (rooms) => add(_ConversationsUpdated(rooms)),
-      onError: (Object err) {
-        _log.severe('conversations stream error: $err');
-        add(const _ConversationsErrored('Failed to load conversations'));
-      },
     );
 
     // Subscribe immediately so the app-bar unread badge is populated on cold
@@ -115,11 +106,29 @@ class ConversationsBloc extends Bloc<ConversationsEvent, ConversationsState> {
     SubscribeConversations event,
     Emitter<ConversationsState> emit,
   ) {
+    // close() drains pending events — a handler running after close would
+    // attach a subscription nothing ever cancels.
+    if (isClosed) return;
     emit(state.copyWith(status: ConversationsStatus.loading));
     final ids = <Object?>[_myUserId, if (_myCompanyId != null) _myCompanyId];
+    // Cancel first, then loadNext, then listen — all in one synchronous turn.
+    // loadNext (every call in the chat services) calls resetStreamController(),
+    // which REPLACES the controller backing `dataStream` — a subscription taken
+    // before loadNext (e.g. in the constructor, as this bloc originally did) is
+    // left attached to the old, dead controller and never receives a single
+    // emission. Working blocs (LoansBloc/ProductBloc) avoid this by exposing
+    // dataStream as a getter consumed at build time.
+    _sub?.cancel();
     _repo.loadNext(
       statements: [QueryStatement(field: 'member_ids', arrayContainsAny: ids)],
       reset: true,
+    );
+    _sub = _repo.dataStream.listen(
+      (rooms) => add(_ConversationsUpdated(rooms)),
+      onError: (Object err) {
+        _log.severe('conversations stream error: $err');
+        add(const _ConversationsErrored('Failed to load conversations'));
+      },
     );
   }
 
