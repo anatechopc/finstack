@@ -418,3 +418,14 @@ Found during the chat dev smoke test (2026-07-09): the deployed dev web app rend
 - Fix in `lib/bootstrap.dart`: `runApp()` first, then `unawaited(requestPermissions())`; the request only fires when `authorizationStatus == notDetermined` (never re-prompts on denial).
 - Timing note: on web, FCM `getToken` needs granted permission — and with a restored session, `NotificationService.initializeToken()` (router init, right after `runApp`) can now run while the prompt is still pending. On web the JS SDK's `getToken` awaits the same prompt and REJECTS (`messaging/permission-blocked`) on denial; the `.then` chain had no error handler, so review hardening added a `catchError` that logs instead of surfacing an unhandled async rejection (no token on denial is correct).
 - Drive-by in the same file: `print` → `debugPrint` in `showFlutterNotification` (pre-existing `avoid_print` from monorepo-genesis commit `275ad55`).
+
+---
+
+## Chat blocs never received data — dataStream subscribed before loadNext (branch `fix/chat-dead-stream-subscription`)
+
+Caught by the same dev smoke test (2026-07-09), right after the startup fix unblocked the UI: the Messages screen body stayed blank forever and **no Firestore Listen channel was ever opened** for the inbox query.
+
+- **Cause:** `BaseFirestoreService.loadNext(reset: true)` calls `resetStreamController()`, which **replaces** the controller behind `dataStream`. `ConversationsBloc` and `ChatBloc` subscribed to `dataStream` in their constructors and called `loadNext` afterwards — leaving their subscriptions on the old, dead controller; all query results flowed into the new controller with no listeners. Inbox and chat-room messages could never load. Working blocs (LoansBloc/ProductBloc) don't hit this because they expose `dataStream` as a getter consumed at widget build time.
+- **Why tests missed it:** the bloc tests mock the repository with a fixed stream and stub `loadNext` — the reset never happens under mocks. Beware of this pattern generally: any bloc that `.listen()`s a repo `dataStream` before calling `loadNext(reset: true)` is broken in production and green under mocktail.
+- **Fix:** subscribe inside `_onSubscribe` AFTER `loadNext` (cancel previous sub first) in both chat blocs; tests yield one event-loop turn between `Subscribe` and emitting on the mock stream.
+- **Follow-up worth filing:** `resetStreamController()` abandons the previous controller while its `addStream(query.snapshots())` is still attached — every `loadNext(reset: true)` anywhere in the app leaks the prior Firestore listener until the page dies. Pattern-wide, pre-existing, not chat-specific.
