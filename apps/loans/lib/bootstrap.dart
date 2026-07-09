@@ -52,7 +52,6 @@ Future<void> bootstrap(
   final log = Logger('main');
 
   await Firebase.initializeApp(options: options);
-  await requestPermissions();
 
   if (!kIsWeb) {
     await setupFlutterNotifications();
@@ -68,6 +67,12 @@ Future<void> bootstrap(
   // Add cross-flavor configuration here
 
   runApp(await builder());
+
+  // Ask for notification permission AFTER the first frame is scheduled, and
+  // without awaiting it: awaiting before runApp left the whole app on a blank
+  // screen until the user answered the browser/OS prompt (on web the page
+  // rendered nothing at all until the permission dialog was dismissed).
+  unawaited(requestPermissions());
 
   log.info('Application started');
 }
@@ -112,8 +117,10 @@ Future<void> setupFlutterNotifications() async {
 
 void showFlutterNotification(RemoteMessage message) {
   if (kDebugMode) {
-    print(
-        'showFlutterNotification: ${message.data}====${message.notification?.title}',);
+    debugPrint(
+      'showFlutterNotification: ${message.data}===='
+      '${message.notification?.title}',
+    );
   }
   final notification = message.notification;
   final android = message.notification?.android;
@@ -139,20 +146,16 @@ void showFlutterNotification(RemoteMessage message) {
 /// Initialize the [FlutterLocalNotificationsPlugin] package.
 late FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin;
 
-// check for circular implementation error.
 Future<void> requestPermissions() async {
   final checkSettings =
       await FirebaseMessaging.instance.getNotificationSettings();
 
-  // overall notification, the user has not authorized the app.
-  // TODO: when implementing iOS notification, check for individual permissions from request
-  if (checkSettings.authorizationStatus != AuthorizationStatus.authorized) {
-    final requestSettings =
-        await FirebaseMessaging.instance.requestPermission();
-
-    if (requestSettings.authorizationStatus != AuthorizationStatus.authorized) {
-      unawaited(requestPermissions());
-    }
+  // Only prompt while the user hasn't decided yet. Never re-request on denial:
+  // browsers won't re-show the prompt after an explicit deny, so the previous
+  // retry-on-not-authorized recursion spun a permanent busy-loop of
+  // getNotificationSettings/requestPermission calls.
+  if (checkSettings.authorizationStatus == AuthorizationStatus.notDetermined) {
+    await FirebaseMessaging.instance.requestPermission();
   }
 }
 
