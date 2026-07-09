@@ -148,7 +148,8 @@ RouterConfig<Object> buildAppRoutes() {
           final token = state.uri.queryParameters['token'];
 
           return BlocProvider(
-            create: (context) => SetPasswordCubit(context.read<UserRepository>()),
+            create: (context) =>
+                SetPasswordCubit(context.read<UserRepository>()),
             child: SetPasswordScreen(token: token),
           );
         },
@@ -196,8 +197,7 @@ RouterConfig<Object> buildAppRoutes() {
                 } else {
                   GoRouter.of(context).go(state.uri.toString());
                 }
-              } else if (!useClassicUI &&
-                  state.uri.path == Paths.dashboard) {
+              } else if (!useClassicUI && state.uri.path == Paths.dashboard) {
                 GoRouter.of(context).go(Paths.index);
               }
 
@@ -366,7 +366,13 @@ RouterConfig<Object> buildAppRoutes() {
         path: Paths.chatRoom,
         builder: (context, state) {
           final roomId = state.pathParameters['roomId']!;
+          // Key by roomId: go_router reuses the page element when only the
+          // path PARAM changes (/chat/A -> /chat/B), so without the key the
+          // old ChatBloc (frozen on room A) and the old screen state would be
+          // kept — no new SubscribeChat, and sends would go to the wrong room.
+          // The FCM chat-tap handler navigates exactly this way.
           return BlocProvider(
+            key: ValueKey('chat-room-$roomId'),
             create: (ctx) => ChatBloc(ctx, roomId: roomId),
             child: ChatRoomScreen(roomId: roomId),
           );

@@ -9,8 +9,22 @@ final class ChatRoomFirestoreService
     extends BaseFirestoreService<ChatRoomEntity> {
   ChatRoomFirestoreService({super.firestore});
 
+  /// The live query subscription piping snapshots into [controller]. Held so
+  /// each [loadNext] can cancel the previous query instead of leaking it:
+  /// `resetStreamController()` abandons the old controller, and a plain
+  /// `controller.addStream(...)` would keep the orphaned Firestore listener
+  /// alive for the life of the app.
+  StreamSubscription<List<ChatRoomEntity>>? _querySub;
+
   @override
   String get collectionName => 'chat_rooms';
+
+  /// Cancels the live query and closes the stream controller.
+  void dispose() {
+    unawaited(_querySub?.cancel());
+    _querySub = null;
+    unawaited(controller.close());
+  }
 
   @override
   Future<ChatRoomEntity> add({required ChatRoomEntity data}) async {
@@ -116,20 +130,20 @@ final class ChatRoomFirestoreService
       }
     }
     if (limit != null && limit > 0) query = query.limit(limit);
+    unawaited(_querySub?.cancel());
     resetStreamController();
-    unawaited(
-      controller.addStream(
-        query.snapshots().map(
-              (snap) => snap.docs
-                  .map(
-                    (d) => ChatRoomEntity.fromJson(
-                      d.data()! as Map<String, dynamic>,
-                    ),
-                  )
-                  .toList(),
-            ),
-      ),
-    );
+    _querySub = query
+        .snapshots()
+        .map(
+          (snap) => snap.docs
+              .map(
+                (d) => ChatRoomEntity.fromJson(
+                  d.data()! as Map<String, dynamic>,
+                ),
+              )
+              .toList(),
+        )
+        .listen(controller.add, onError: controller.addError);
   }
 
   Future<ChatRoomEntity?> findAnchoredRoom({

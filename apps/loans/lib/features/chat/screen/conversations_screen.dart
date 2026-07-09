@@ -16,11 +16,10 @@ class ConversationsScreen extends StatefulWidget {
 }
 
 class _ConversationsScreenState extends State<ConversationsScreen> {
-  @override
-  void initState() {
-    super.initState();
-    context.read<ConversationsBloc>().add(const SubscribeConversations());
-  }
+  // No SubscribeConversations dispatch here: the bloc auto-subscribes at
+  // construction (for the app-bar badge) and the stream is already a live
+  // snapshot listener — re-dispatching on every screen open just re-runs the
+  // query for nothing.
 
   @override
   Widget build(BuildContext context) {
@@ -100,43 +99,47 @@ class _ConversationRow extends StatelessWidget {
           ),
         ),
         title: Text(counterpart.displayName ?? 'Conversation'),
-        subtitle: Text(preview, maxLines: 1, overflow: TextOverflow.ellipsis),
-        // FittedBox: with time + unread badge + Awaiting chip stacked, the
-        // column exceeds the ListTile trailing height (28px overflow seen in
-        // the dev smoke test) — scale down instead of overflowing.
-        trailing: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(time, style: const TextStyle(fontSize: 11)),
-              if (unread > 0) ...[
-                const Gap(4),
-                _UnreadBadge(count: unread),
-              ],
-              if (myCompanyId != null &&
-                  isAwaitingResponse(room, myCompanyId!)) ...[
-                const Gap(4),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: AppColors.ubOrange.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Text(
-                    'Awaiting',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: AppColors.ubOrange,
-                      fontWeight: FontWeight.w600,
-                    ),
+        // The "Awaiting" chip lives on the subtitle line: stacking it in the
+        // trailing column with the time + unread badge exceeded the ListTile
+        // trailing height (28px overflow seen in the dev smoke test), and a
+        // FittedBox workaround shrank the text inconsistently per row.
+        subtitle: Row(
+          children: [
+            Flexible(
+              child:
+                  Text(preview, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+            if (myCompanyId != null &&
+                isAwaitingResponse(room, myCompanyId!)) ...[
+              const Gap(8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.ubOrange.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  'Awaiting',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: AppColors.ubOrange,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-              ],
+              ),
             ],
-          ),
+          ],
+        ),
+        trailing: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(time, style: const TextStyle(fontSize: 11)),
+            if (unread > 0) ...[
+              const Gap(4),
+              _UnreadBadge(count: unread),
+            ],
+          ],
         ),
         onTap: () => GoRouter.of(context)
             .go(Paths.chatRoom.replaceFirst(':roomId', room.id)),

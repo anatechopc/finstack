@@ -107,18 +107,25 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         );
   }
 
-  Future<void> _onSubscribe(
+  void _onSubscribe(
     SubscribeChat event,
     Emitter<ChatState> emit,
-  ) async {
+  ) {
+    // bloc's default transformer processes events CONCURRENTLY, and close()
+    // drains pending events — a handler that runs after close would attach a
+    // subscription nothing ever cancels. Guard, and keep the body fully
+    // synchronous (a sync handler cannot interleave with a second
+    // SubscribeChat or with close()).
+    if (isClosed) return;
     emit(state.copyWith(status: ChatStatus.loading));
+    // Cancel first (the old sub sits on the soon-to-be-orphaned controller;
+    // broadcast cancel takes effect immediately), then loadNext — which
+    // resets the controller backing `dataStream` — then listen to the NEW
+    // controller in the same synchronous turn. A subscription taken before
+    // loadNext (as this bloc originally did in the constructor) stays
+    // attached to the old, dead controller and never receives a message.
+    _msgSub?.cancel();
     _messages.loadNext(reset: true);
-    // Listen AFTER loadNext: loadNext(reset: true) calls
-    // resetStreamController(), which REPLACES the controller backing
-    // `dataStream`. A subscription taken before it (as this bloc originally
-    // did in the constructor) stays attached to the old, dead controller and
-    // never receives a message. Re-subscribed on every SubscribeChat.
-    await _msgSub?.cancel();
     _msgSub = _messages.dataStream.listen(
       (msgs) => add(_MessagesUpdated(msgs)),
       onError: (Object err) {
@@ -306,6 +313,9 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     _msgSub?.cancel();
     _roomSub?.cancel();
     _typingSub?.cancel();
+    // The MessageRepository (and its Firestore query listener) is created per
+    // room — tear it down with the bloc or it outlives every room visit.
+    _messages.dispose();
     return super.close();
   }
 }

@@ -5,9 +5,14 @@ import 'package:loooans_helpers/data_helpers.dart';
 
 class MessageRepository implements BaseRepository<Message> {
   MessageRepository({required String roomId, FirebaseFirestore? firestore})
-      : _service = MessageFirestoreService(roomId: roomId, firestore: firestore);
+      : _service =
+            MessageFirestoreService(roomId: roomId, firestore: firestore);
 
   final MessageFirestoreService _service;
+
+  /// Tears down the live messages query and stream. Call when the owning
+  /// bloc closes — this repository is created per room.
+  void dispose() => _service.dispose();
 
   @override
   Future<Message> add({required Message data}) =>
@@ -37,8 +42,8 @@ class MessageRepository implements BaseRepository<Message> {
           .then((list) => list.map((e) => e.toMessage()).toList());
 
   @override
-  Stream<List<Message>> get dataStream =>
-      _service.dataStream.map((list) => list.map((e) => e.toMessage()).toList());
+  Stream<List<Message>> get dataStream => _service.dataStream
+      .map((list) => list.map((e) => e.toMessage()).toList());
 
   @override
   void loadNext({
