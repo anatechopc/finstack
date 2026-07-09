@@ -91,6 +91,14 @@ class NotificationService {
       // store token on user document
       _log?.finest('token: $token');
       _storeFCMToken(token);
+    }).catchError((Object err) {
+      // On web, getToken itself awaits notification permission and REJECTS
+      // (messaging/permission-blocked) when the user denies. Since the
+      // permission prompt no longer blocks startup (bootstrap fires it
+      // unawaited after runApp), a logged-in user can reach getToken before
+      // answering the prompt — a denial must log, not surface as an
+      // unhandled async error. No token is the correct outcome for a denial.
+      _log?.warning('getToken failed (notification permission denied?): $err');
     });
     FirebaseMessaging.instance.onTokenRefresh.listen((token) {
       // store token on user document
