@@ -1,12 +1,12 @@
 module com.loooans.app/api
 
-go 1.23.0
+go 1.22
 
 require (
 	cloud.google.com/go/firestore v1.9.0
 	com.loooans.app/utils v0.0.0-00010101000000-000000000000
 	firebase.google.com/go/v4 v4.13.0
-	github.com/nyaruka/phonenumbers v1.8.1
+	github.com/nyaruka/phonenumbers v1.1.8
 	go.uber.org/zap v1.26.0
 	google.golang.org/api v0.114.0
 	google.golang.org/grpc v1.56.3
@@ -32,15 +32,15 @@ require (
 	go.uber.org/multierr v1.10.0 // indirect
 	golang.org/x/net v0.17.0 // indirect
 	golang.org/x/oauth2 v0.7.0 // indirect
-	golang.org/x/sync v0.12.0 // indirect
+	golang.org/x/sync v0.1.0 // indirect
 	golang.org/x/sys v0.13.0 // indirect
-	golang.org/x/text v0.23.0 // indirect
+	golang.org/x/text v0.13.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/appengine/v2 v2.0.2 // indirect
 	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
+	google.golang.org/protobuf v1.30.0 // indirect
 )
 
 replace com.loooans.app/types => ../types

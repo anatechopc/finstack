@@ -1,6 +1,6 @@
 module com.loooans.app
 
-go 1.23.0
+go 1.22.12
 
 require (
 	com.loooans.app/api v0.0.0-00010101000000-000000000000
@@ -10,7 +10,7 @@ require (
 	go.uber.org/zap v1.27.0
 )
 
-require github.com/nyaruka/phonenumbers v1.8.1 // indirect
+require github.com/nyaruka/phonenumbers v1.1.8 // indirect
 
 require (
 	cloud.google.com/go v0.111.0 // indirect
@@ -50,9 +50,9 @@ require (
 	golang.org/x/crypto v0.18.0 // indirect
 	golang.org/x/net v0.20.0 // indirect
 	golang.org/x/oauth2 v0.16.0 // indirect
-	golang.org/x/sync v0.12.0 // indirect
+	golang.org/x/sync v0.6.0 // indirect
 	golang.org/x/sys v0.16.0 // indirect
-	golang.org/x/text v0.23.0 // indirect
+	golang.org/x/text v0.15.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
 	google.golang.org/api v0.157.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
@@ -61,7 +61,7 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20240102182953-50ed04b92917 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240116215550-a9fa1716bcac // indirect
 	google.golang.org/grpc v1.60.1 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
+	google.golang.org/protobuf v1.33.0 // indirect
 )
 
 replace com.loooans.app/api => ./api
