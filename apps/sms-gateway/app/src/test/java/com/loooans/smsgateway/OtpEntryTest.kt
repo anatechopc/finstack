@@ -110,6 +110,7 @@ class OtpEntryTest {
             message = "OTP: 123456",
             objective = "mobile_number",
             smsStatus = "pending",
+            expireAt = null,
         )
         assertTrue(entry.shouldProcess())
     }
@@ -122,6 +123,7 @@ class OtpEntryTest {
             message = "OTP: 123456",
             objective = "email",
             smsStatus = "pending",
+            expireAt = null,
         )
         assertFalse(entry.shouldProcess())
     }
@@ -134,6 +136,7 @@ class OtpEntryTest {
             message = "OTP: 123456",
             objective = "mobile_number",
             smsStatus = "sent",
+            expireAt = null,
         )
         assertFalse(entry.shouldProcess())
     }
@@ -146,6 +149,7 @@ class OtpEntryTest {
             message = "OTP: 123456",
             objective = "mobile_number",
             smsStatus = "failed",
+            expireAt = null,
         )
         assertFalse(entry.shouldProcess())
     }
@@ -158,6 +162,7 @@ class OtpEntryTest {
             message = "OTP: 123456",
             objective = "mobile_number",
             smsStatus = null,
+            expireAt = null,
         )
         assertFalse(entry.shouldProcess())
     }
@@ -170,6 +175,7 @@ class OtpEntryTest {
             message = "OTP: 123456",
             objective = "push_notification",
             smsStatus = "pending",
+            expireAt = null,
         )
         assertFalse(entry.shouldProcess())
     }
@@ -182,6 +188,7 @@ class OtpEntryTest {
             message = "OTP: 123456",
             objective = "email",
             smsStatus = "sent",
+            expireAt = null,
         )
         assertFalse(entry.shouldProcess())
     }
@@ -190,11 +197,46 @@ class OtpEntryTest {
 
     @Test
     fun `data class equality works correctly`() {
-        val entry1 = OtpEntry("hash1", "+639171234567", "msg", "mobile_number", "pending")
-        val entry2 = OtpEntry("hash1", "+639171234567", "msg", "mobile_number", "pending")
-        val entry3 = OtpEntry("hash2", "+639171234567", "msg", "mobile_number", "pending")
+        val entry1 = OtpEntry("hash1", "+639171234567", "msg", "mobile_number", "pending", null)
+        val entry2 = OtpEntry("hash1", "+639171234567", "msg", "mobile_number", "pending", null)
+        val entry3 = OtpEntry("hash2", "+639171234567", "msg", "mobile_number", "pending", null)
 
         assertEquals(entry1, entry2)
         assertFalse(entry1 == entry3)
+    }
+
+    // --- expiry tests ---
+
+    @Test
+    fun `fromMap parses expire_at as Long`() {
+        val data = validOtpMap().toMutableMap().apply { put("expire_at", 1784877157691L) }
+        val entry = OtpEntry.fromMap("abc123", data)
+        assertEquals(1784877157691L, entry!!.expireAt)
+    }
+
+    @Test
+    fun `fromMap tolerates missing expire_at`() {
+        val entry = OtpEntry.fromMap("abc123", validOtpMap())
+        assertNull(entry!!.expireAt)
+    }
+
+    @Test
+    fun `isExpired is true past expire_at`() {
+        val data = validOtpMap().toMutableMap().apply { put("expire_at", 1_000L) }
+        val entry = OtpEntry.fromMap("abc123", data)!!
+        assertTrue(entry.isExpired(nowMillis = 1_001L))
+    }
+
+    @Test
+    fun `isExpired is false before expire_at`() {
+        val data = validOtpMap().toMutableMap().apply { put("expire_at", 1_000L) }
+        val entry = OtpEntry.fromMap("abc123", data)!!
+        assertFalse(entry.isExpired(nowMillis = 999L))
+    }
+
+    @Test
+    fun `isExpired is false when expire_at missing`() {
+        val entry = OtpEntry.fromMap("abc123", validOtpMap())!!
+        assertFalse(entry.isExpired(nowMillis = Long.MAX_VALUE))
     }
 }
