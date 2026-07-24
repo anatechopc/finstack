@@ -1,19 +1,27 @@
 package com.loooans.smsgateway
 
+import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.net.Uri
 import android.os.IBinder
 import android.telephony.SmsManager
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.google.firebase.database.ChildEventListener
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.ServerValue
 import kotlinx.coroutines.*
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 
 class SmsGatewayService : Service() {
 
@@ -25,6 +33,9 @@ class SmsGatewayService : Service() {
         const val EXTRA_STATUS = "status"
         const val EXTRA_LAST_SMS = "last_sms"
         const val EXTRA_SMS_COUNT = "sms_count"
+        private const val ACTION_SMS_SENT = "com.loooans.smsgateway.SMS_SENT"
+        private const val EXTRA_HASH = "hash"
+        private const val SEND_RESULT_TIMEOUT_MS = 60_000L
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -35,6 +46,26 @@ class SmsGatewayService : Service() {
     private val deviceId: String by lazy {
         android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID)
     }
+    private val trackers = ConcurrentHashMap<String, SendResultTracker>()
+
+    private val smsSentReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val hash = intent.getStringExtra(EXTRA_HASH) ?: return
+            val tracker = trackers[hash] ?: return
+            val isOk = resultCode == Activity.RESULT_OK
+            when (val outcome = tracker.record(isOk, smsResultErrorName(resultCode))) {
+                is SendResultTracker.Outcome.Sent -> {
+                    trackers.remove(hash)
+                    markSent(hash)
+                }
+                is SendResultTracker.Outcome.Failed -> {
+                    trackers.remove(hash)
+                    markFailed(hash, outcome.error)
+                }
+                null -> Unit // waiting for remaining parts, or already completed
+            }
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -42,6 +73,12 @@ class SmsGatewayService : Service() {
         super.onCreate()
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification("Starting..."))
+        ContextCompat.registerReceiver(
+            this,
+            smsSentReceiver,
+            IntentFilter(ACTION_SMS_SENT),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -66,6 +103,7 @@ class SmsGatewayService : Service() {
             FirebaseConfig.database.reference.child("otp").removeEventListener(it)
         }
         heartbeatJob?.cancel()
+        unregisterReceiver(smsSentReceiver)
         serviceScope.launch {
             FirebaseConfig.database.reference
                 .child("gateway_status")
@@ -112,53 +150,86 @@ class SmsGatewayService : Service() {
         val entry = OtpEntry.fromMap(snapshot.key, data) ?: return
         if (!entry.shouldProcess()) return
 
-        serviceScope.launch {
-            sendSms(entry.hash, entry.phone, entry.message)
+        serviceScope.launch { sendSms(entry) }
+    }
+
+    private fun sendSms(entry: OtpEntry) {
+        val hash = entry.hash
+        if (entry.isExpired(System.currentTimeMillis())) {
+            Log.i(TAG, "Skipping expired OTP entry $hash")
+            return
+        }
+        try {
+            val smsManager = getSystemService(SmsManager::class.java)
+            val parts = smsManager.divideMessage(entry.message)
+            val tracker = SendResultTracker(parts.size)
+            trackers[hash] = tracker
+
+            // One PendingIntent per part. The data Uri makes each intent
+            // unique (extras alone don't distinguish PendingIntents).
+            val sentIntents = ArrayList<PendingIntent>(parts.size)
+            for (i in 0 until parts.size) {
+                val intent = Intent(ACTION_SMS_SENT)
+                    .setPackage(packageName)
+                    .setData(Uri.parse("loooans-sms://$hash/$i"))
+                    .putExtra(EXTRA_HASH, hash)
+                sentIntents.add(
+                    PendingIntent.getBroadcast(
+                        this, 0, intent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                    ),
+                )
+            }
+
+            if (parts.size > 1) {
+                smsManager.sendMultipartTextMessage(entry.phone, null, parts, sentIntents, null)
+            } else {
+                smsManager.sendTextMessage(entry.phone, null, entry.message, sentIntents[0], null)
+            }
+            lastSmsSentTo = entry.phone
+            Log.i(TAG, "SMS handed to radio for $hash (${parts.size} part(s)), awaiting result")
+
+            serviceScope.launch {
+                delay(SEND_RESULT_TIMEOUT_MS)
+                tracker.timeout()?.let { outcome ->
+                    trackers.remove(hash)
+                    markFailed(hash, (outcome as SendResultTracker.Outcome.Failed).error)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send SMS for $hash", e)
+            trackers.remove(hash)
+            markFailed(hash, e.message ?: e.javaClass.simpleName)
         }
     }
 
-    private suspend fun sendSms(hash: String, phone: String, message: String) {
-        try {
-            val smsManager = getSystemService(SmsManager::class.java)
-            val parts = smsManager.divideMessage(message)
+    private fun markSent(hash: String) {
+        val updates = mapOf<String, Any?>(
+            "sms_status" to "sent",
+            "sent_at" to ServerValue.TIMESTAMP,
+            "error" to null,
+        )
+        FirebaseConfig.database.reference
+            .child("otp").child(hash)
+            .updateChildren(updates)
+            .addOnFailureListener { e -> Log.e(TAG, "Failed to update sms_status", e) }
 
-            if (parts.size > 1) {
-                smsManager.sendMultipartTextMessage(phone, null, parts, null, null)
-            } else {
-                smsManager.sendTextMessage(phone, null, message, null, null)
-            }
+        smsCount++
+        updateNotification("Online - Sent $smsCount SMS(s)")
+        broadcastStatus("online")
+        Log.i(TAG, "SMS confirmed sent for hash $hash")
+    }
 
-            // Update RTDB: mark as sent
-            val updates = mapOf<String, Any?>(
-                "sms_status" to "sent",
-                "sent_at" to ServerValue.TIMESTAMP,
-                "error" to null,
-            )
-            FirebaseConfig.database.reference
-                .child("otp")
-                .child(hash)
-                .updateChildren(updates)
-                .addOnFailureListener { e ->
-                    Log.e(TAG, "Failed to update sms_status", e)
-                }
-
-            smsCount++
-            lastSmsSentTo = phone
-            updateNotification("Online - Sent $smsCount SMS(s)")
-            broadcastStatus("online")
-            Log.i(TAG, "SMS sent to $phone for hash $hash")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to send SMS to $phone", e)
-
-            val updates = mapOf<String, Any?>(
-                "sms_status" to "failed",
-                "error" to e.message,
-            )
-            FirebaseConfig.database.reference
-                .child("otp")
-                .child(hash)
-                .updateChildren(updates)
-        }
+    private fun markFailed(hash: String, error: String) {
+        val updates = mapOf<String, Any?>(
+            "sms_status" to "failed",
+            "error" to error,
+        )
+        FirebaseConfig.database.reference
+            .child("otp").child(hash)
+            .updateChildren(updates)
+            .addOnFailureListener { e -> Log.e(TAG, "Failed to update sms_status", e) }
+        Log.w(TAG, "SMS failed for hash $hash: $error")
     }
 
     private fun startHeartbeat() {
