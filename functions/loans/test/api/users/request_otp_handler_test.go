@@ -73,9 +73,11 @@ func doRequest(t *testing.T, h http.Handler, method, body string) *httptest.Resp
 // closures inline.
 func minimumValidDeps(now time.Time) users.RequestOtpDeps {
 	return users.RequestOtpDeps{
-		GenerateOtp:      func() (string, string, error) { return "h-1", "111111", nil },
-		ReadUser:         (&fakes.UserReader{}).Read,
-		ReadUserAddress:  (&fakes.AddressReader{}).Read,
+		GenerateOtp: func() (string, string, error) { return "h-1", "111111", nil },
+		ReadUser: (&fakes.UserReader{Users: map[string]map[string]any{
+			"user-123": {"mobile_number": "9175551291"},
+		}}).Read,
+		ReadUserAddress:  func(context.Context, string) (string, error) { return "Philippines", nil },
 		GetAuthUserEmail: (&fakes.AuthEmailReader{Emails: map[string]string{"user-123": "u@x.com"}}).Read,
 		WriteOtp:         (&fakes.OtpWriter{}).Write,
 		SendEmail:        (&fakes.EmailSender{}).Send,
@@ -325,5 +327,55 @@ func TestRequestOtpHandler_PassesTargetUserIDAndReasonFromBody(t *testing.T) {
 	}
 	if got, _ := entry["reason"].(string); got != "payment" {
 		t.Errorf("expected entry.reason=payment (from body), got %v", entry["reason"])
+	}
+}
+
+func TestRequestOtpHandler_AddressMissing_Returns400(t *testing.T) {
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	deps := minimumValidDeps(now)
+	deps.ReadUserAddress = func(context.Context, string) (string, error) { return "", nil }
+	h := newHarness(t, "user-123", deps)
+
+	rec := doRequest(t, h.handler, http.MethodPost, `{"purpose":"mobile_number"}`)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "complete the user's address record") {
+		t.Errorf("unexpected body: %s", rec.Body.String())
+	}
+}
+
+func TestRequestOtpHandler_UnknownCountry_Returns400(t *testing.T) {
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	deps := minimumValidDeps(now)
+	deps.ReadUserAddress = func(context.Context, string) (string, error) { return "Narnia", nil }
+	h := newHarness(t, "user-123", deps)
+
+	rec := doRequest(t, h.handler, http.MethodPost, `{"purpose":"mobile_number"}`)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Cannot determine the country") {
+		t.Errorf("unexpected body: %s", rec.Body.String())
+	}
+}
+
+func TestRequestOtpHandler_InvalidPhone_Returns400(t *testing.T) {
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	deps := minimumValidDeps(now)
+	deps.ReadUser = func(context.Context, string) (map[string]any, error) {
+		return map[string]any{"mobile_number": "1234567890"}, nil
+	}
+	h := newHarness(t, "user-123", deps)
+
+	rec := doRequest(t, h.handler, http.MethodPost, `{"purpose":"mobile_number"}`)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "not a valid phone number") {
+		t.Errorf("unexpected body: %s", rec.Body.String())
 	}
 }

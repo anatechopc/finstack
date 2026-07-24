@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"go.uber.org/zap"
+	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"io"
@@ -296,6 +297,10 @@ func RequestOtpHandler(
 				http.Error(w, "User has no mobile number on record.", http.StatusBadRequest)
 			case errors.Is(err, ErrAuthUserMissingEmail):
 				http.Error(w, "User has no email on record.", http.StatusBadRequest)
+			case errors.Is(err, ErrAddressMissing), errors.Is(err, ErrCountryUnknown):
+				http.Error(w, "Cannot determine the country for the user's mobile number. Please complete the user's address record.", http.StatusBadRequest)
+			case errors.Is(err, ErrPhoneInvalid):
+				http.Error(w, "The mobile number on record is not a valid phone number for the user's country.", http.StatusBadRequest)
 			default:
 				log.Error("request otp error", zap.String("error", err.Error()))
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -354,6 +359,27 @@ func buildRealRequestOtpDeps(ctx context.Context) (RequestOtpDeps, func(), error
 				return nil, nil
 			}
 			return data, nil
+		},
+		ReadUserAddress: func(ctx context.Context, uid string) (string, error) {
+			iter := firestoreClient.Collection(collectionPrefix+"address").
+				Where("data_id", "==", uid).
+				Where("data_type", "==", "user").
+				Limit(1).
+				Documents(ctx)
+			defer iter.Stop()
+			snap, err := iter.Next()
+			if errors.Is(err, iterator.Done) {
+				return "", nil
+			}
+			if err != nil {
+				return "", err
+			}
+			data := snap.Data()
+			if data["deleted_at"] != nil {
+				return "", nil
+			}
+			country, _ := data["country"].(string)
+			return country, nil
 		},
 		GetAuthUserEmail: func(ctx context.Context, uid string) (string, error) {
 			authClient, err := app.Auth(ctx)
