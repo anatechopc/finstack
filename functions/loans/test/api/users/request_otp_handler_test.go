@@ -75,6 +75,7 @@ func minimumValidDeps(now time.Time) users.RequestOtpDeps {
 	return users.RequestOtpDeps{
 		GenerateOtp:      func() (string, string, error) { return "h-1", "111111", nil },
 		ReadUser:         (&fakes.UserReader{}).Read,
+		ReadUserAddress:  (&fakes.AddressReader{}).Read,
 		GetAuthUserEmail: (&fakes.AuthEmailReader{Emails: map[string]string{"user-123": "u@x.com"}}).Read,
 		WriteOtp:         (&fakes.OtpWriter{}).Write,
 		SendEmail:        (&fakes.EmailSender{}).Send,

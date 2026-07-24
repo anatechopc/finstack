@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -23,6 +24,11 @@ var (
 	ErrUserNotFound         = errors.New("user not found")
 	ErrMobileNumberMissing  = errors.New("user has no mobile_number")
 	ErrAuthUserMissingEmail = errors.New("auth user has no email")
+	// Phone-normalization failures (spec 2026-07-24): the OTP request is
+	// rejected rather than queueing an undeliverable SMS.
+	ErrAddressMissing = errors.New("user has no address record")
+	ErrCountryUnknown = errors.New("country not recognized")
+	ErrPhoneInvalid   = errors.New("mobile_number not valid for country")
 )
 
 const (
@@ -61,6 +67,11 @@ type RequestOtpDeps struct {
 	// ReadUser loads a Firestore user document by uid. Returns
 	// ErrUserNotFound or a transport error.
 	ReadUser func(ctx context.Context, uid string) (map[string]any, error)
+
+	// ReadUserAddress returns the `country` value on the user's address
+	// doc ({prefix}address where data_id == uid, data_type == 'user'),
+	// or ("", nil) when the user has no (non-deleted) address doc.
+	ReadUserAddress func(ctx context.Context, uid string) (string, error)
 
 	// GetAuthUserEmail returns the email on file in Firebase Auth for the
 	// uid. Returns "" if the user has no email on the auth record. Auth
@@ -136,7 +147,25 @@ func RequestOtpCore(ctx context.Context, p RequestOtpParams, deps RequestOtpDeps
 		if phone == "" {
 			return RequestOtpResult{}, ErrMobileNumberMissing
 		}
-		entry["phone"] = phone
+		country, err := deps.ReadUserAddress(ctx, targetUserID)
+		if err != nil {
+			return RequestOtpResult{}, err
+		}
+		normalized, err := service.NormalizePhoneE164(phone, country)
+		if err != nil {
+			switch {
+			case errors.Is(err, service.ErrCountryUnknown):
+				if strings.TrimSpace(country) == "" {
+					return RequestOtpResult{}, fmt.Errorf("%w: user %s", ErrAddressMissing, targetUserID)
+				}
+				return RequestOtpResult{}, fmt.Errorf("%w: %q", ErrCountryUnknown, country)
+			case errors.Is(err, service.ErrPhoneInvalid):
+				return RequestOtpResult{}, fmt.Errorf("%w: %v", ErrPhoneInvalid, err)
+			default:
+				return RequestOtpResult{}, err
+			}
+		}
+		entry["phone"] = normalized
 		entry["message"] = fmt.Sprintf(
 			"NEVER SHARE YOUR ONE-TIME PIN. Your Loooans OTP is %s. If you did not request for OTP, please contact support at support@loooans.com immediately.", otp)
 		entry["sms_status"] = "pending"

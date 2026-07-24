@@ -100,6 +100,23 @@ func (r *UserReader) Read(_ context.Context, uid string) (map[string]any, error)
 	return nil, nil
 }
 
+// AddressReader fake — returns Countries[uid] as the country on the user's
+// address doc. A uid absent from Countries yields ("", nil), the "no
+// address doc" signal that RequestOtpCore maps to ErrAddressMissing.
+type AddressReader struct {
+	Countries map[string]string
+	Err       error
+	ReadCalls []string
+}
+
+func (r *AddressReader) Read(_ context.Context, uid string) (string, error) {
+	r.ReadCalls = append(r.ReadCalls, uid)
+	if r.Err != nil {
+		return "", r.Err
+	}
+	return r.Countries[uid], nil
+}
+
 // AuthEmailReader fake — returns preconfigured Firebase Auth emails by uid.
 // Kept as plain string return (rather than *auth.UserRecord) so this package
 // stays free of the firebase.google.com/go dependency. Records every uid
