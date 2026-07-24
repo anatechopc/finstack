@@ -303,6 +303,10 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
           expireAt: response.expireAt,
         ),
       );
+    } on RequestOtpException catch (err) {
+      _log.severe('Request payment OTP rejected: $err', err);
+      emit(const PaymentState.loading());
+      emit(PaymentState.error(err.userMessage));
     } catch (err) {
       _log.severe('Request payment OTP error: $err', err);
       emit(const PaymentState.loading());

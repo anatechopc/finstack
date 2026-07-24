@@ -225,6 +225,10 @@ class AuthenticationBloc
         expireAt: response.expireAt,
         canResendAt: canResendAt,
       ),);
+    } on RequestOtpException catch (err) {
+      log.severe('Request OTP rejected: $err', err);
+      emit(const AuthenticationState.loading());
+      emit(AuthenticationState.error(message: err.userMessage));
     } catch (err) {
       log.severe('Something went wrong: $err', err);
       emit(const AuthenticationState.loading());
