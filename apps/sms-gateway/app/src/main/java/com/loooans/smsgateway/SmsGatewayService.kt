@@ -55,11 +55,11 @@ class SmsGatewayService : Service() {
             val isOk = resultCode == Activity.RESULT_OK
             when (val outcome = tracker.record(isOk, smsResultErrorName(resultCode))) {
                 is SendResultTracker.Outcome.Sent -> {
-                    trackers.remove(hash)
+                    trackers.remove(hash, tracker)
                     markSent(hash)
                 }
                 is SendResultTracker.Outcome.Failed -> {
-                    trackers.remove(hash)
+                    trackers.remove(hash, tracker)
                     markFailed(hash, outcome.error)
                 }
                 null -> Unit // waiting for remaining parts, or already completed
@@ -159,10 +159,16 @@ class SmsGatewayService : Service() {
             Log.i(TAG, "Skipping expired OTP entry $hash")
             return
         }
+        if (trackers.containsKey(hash)) {
+            Log.i(TAG, "Send already in flight for $hash, skipping duplicate")
+            return
+        }
+        var currentTracker: SendResultTracker? = null
         try {
             val smsManager = getSystemService(SmsManager::class.java)
             val parts = smsManager.divideMessage(entry.message)
             val tracker = SendResultTracker(parts.size)
+            currentTracker = tracker
             trackers[hash] = tracker
 
             // One PendingIntent per part. The data Uri makes each intent
@@ -192,13 +198,13 @@ class SmsGatewayService : Service() {
             serviceScope.launch {
                 delay(SEND_RESULT_TIMEOUT_MS)
                 tracker.timeout()?.let { outcome ->
-                    trackers.remove(hash)
+                    trackers.remove(hash, tracker)
                     markFailed(hash, (outcome as SendResultTracker.Outcome.Failed).error)
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send SMS for $hash", e)
-            trackers.remove(hash)
+            currentTracker?.let { trackers.remove(hash, it) }
             markFailed(hash, e.message ?: e.javaClass.simpleName)
         }
     }
