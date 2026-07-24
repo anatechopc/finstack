@@ -16,6 +16,30 @@ class SetPasswordException implements Exception {
   String toString() => 'SetPasswordException($statusCode): $body';
 }
 
+/// Thrown by [UserNetworkService.requestOtp] and [requestOtpForUser] for a
+/// non-2xx response, carrying the HTTP [statusCode] and raw [body] so blocs
+/// can show the server's 4xx reason verbatim (e.g. the phone-normalization
+/// rejections) instead of a generic failure.
+class RequestOtpException implements Exception {
+  RequestOtpException(this.statusCode, this.body);
+
+  final int statusCode;
+  final String body;
+
+  /// 4xx bodies are short actionable sentences written for end users;
+  /// anything else collapses to a generic message.
+  String get userMessage {
+    final trimmed = body.trim();
+    if (statusCode >= 400 && statusCode < 500 && trimmed.isNotEmpty) {
+      return trimmed;
+    }
+    return 'Cannot request OTP';
+  }
+
+  @override
+  String toString() => 'RequestOtpException($statusCode): $body';
+}
+
 /// user network services
 class UserNetworkService {
   /// Creates a user server-side (Firebase Auth account + Firestore doc) via the
@@ -88,7 +112,7 @@ class UserNetworkService {
     );
 
     if (response.statusCode > HttpStatus.noContent) {
-      throw HttpException('Request OTP error: ${response.statusCode} ${response.body}');
+      throw RequestOtpException(response.statusCode, response.body);
     }
 
     final body = jsonDecode(response.body) as Map<String, dynamic>;
@@ -115,9 +139,7 @@ class UserNetworkService {
     );
 
     if (response.statusCode > HttpStatus.noContent) {
-      throw HttpException(
-        'Request OTP for user error: ${response.statusCode} ${response.body}',
-      );
+      throw RequestOtpException(response.statusCode, response.body);
     }
 
     final body = jsonDecode(response.body) as Map<String, dynamic>;
