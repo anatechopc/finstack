@@ -86,6 +86,7 @@ Status is now written from the receiver, not immediately after the `sendTextMess
 
 1. **PR 1 — backend** (`functions/loans/`): normalization + tests. Deployable alone; strictly improves behavior (backend-first discipline).
 2. **PR 2 — gateway** (`apps/sms-gateway/`): sentIntent + expiry skip + tests; manual APK install on the gateway phone after merge.
+3. **PR 3 — Flutter** (`packages/core/user_repository` + `apps/loans`): §2's conditional resolved during planning — both blocs DO swallow the server message behind generic strings (`authentication_bloc.dart` `_handleRequestOtpEvent`, `payment_bloc.dart` `_handleRequestPaymentOtpEvent`), so a typed `RequestOtpException` + bloc catch updates are needed.
 
 ## Verification evidence for the diagnosis (2026-07-24)
 
