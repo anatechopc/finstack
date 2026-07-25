@@ -1074,6 +1074,15 @@ class PaymentCenterBloc
         otpExpireAt: response.expireAt,
         isLoading: false,
       ));
+    } on RequestOtpException catch (err) {
+      _log.severe('Request OTP rejected: $err', err);
+      emit(
+        state.copyWith(
+          status: PaymentCenterStatus.error,
+          message: err.userMessage,
+          isLoading: false,
+        ),
+      );
     } catch (err) {
       _log.severe('Request OTP error: $err', err);
       emit(state.copyWith(
