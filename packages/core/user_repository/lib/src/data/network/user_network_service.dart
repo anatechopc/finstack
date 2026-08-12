@@ -16,28 +16,70 @@ class SetPasswordException implements Exception {
   String toString() => 'SetPasswordException($statusCode): $body';
 }
 
-/// Thrown by [UserNetworkService.requestOtp] and [requestOtpForUser] for a
-/// non-2xx response, carrying the HTTP [statusCode] and raw [body] so blocs
-/// can show the server's 4xx reason verbatim (e.g. the phone-normalization
-/// rejections) instead of a generic failure.
-class RequestOtpException implements Exception {
-  RequestOtpException(this.statusCode, this.body);
+/// Base for OTP endpoint failures that may carry a server message written for
+/// end users.
+///
+/// Only **400** bodies are passed through. The endpoints reserve 400 for
+/// validation failures phrased for humans, while 401 comes from the shared
+/// request validator and carries developer-facing text — including raw
+/// Firebase/ADC SDK errors — that must never reach a snackbar.
+abstract class OtpApiException implements Exception {
+  OtpApiException(this.statusCode, this.body);
 
+  /// HTTP status of the failing response.
   final int statusCode;
+
+  /// Raw response body, unmodified.
   final String body;
 
-  /// 4xx bodies are short actionable sentences written for end users;
-  /// anything else collapses to a generic message.
-  String get userMessage {
+  /// Shown when the response carries nothing displayable.
+  String get fallbackMessage;
+
+  /// Message safe to show the user, using this exception's own fallback.
+  String get userMessage => userMessageOr(fallbackMessage);
+
+  /// Message safe to show the user, preferring [fallback] over the default
+  /// when the response carries no displayable server text. Lets each flow
+  /// keep its own wording (a payment screen says something different from
+  /// the sign-up screen) without re-implementing the status rules.
+  String userMessageOr(String fallback) {
     final trimmed = body.trim();
-    if (statusCode >= 400 && statusCode < 500 && trimmed.isNotEmpty) {
+    if (statusCode == 400 && trimmed.isNotEmpty) {
       return trimmed;
     }
-    return 'Cannot request OTP';
+    if (statusCode == 401) {
+      return 'Your session has expired. Please sign in again.';
+    }
+    return fallback;
   }
+}
+
+/// Thrown by [UserNetworkService.requestOtp] and
+/// [UserNetworkService.requestOtpForUser] for a non-2xx response, so blocs can
+/// show the server's reason (e.g. the phone-normalization rejections) instead
+/// of a generic failure.
+class RequestOtpException extends OtpApiException {
+  RequestOtpException(super.statusCode, super.body);
+
+  @override
+  String get fallbackMessage => 'Cannot request OTP';
 
   @override
   String toString() => 'RequestOtpException($statusCode): $body';
+}
+
+/// Thrown by [UserNetworkService.verifyOtp] for a non-2xx response. Shares the
+/// passthrough rules with [RequestOtpException]: the verify endpoint returns
+/// 400 "OTP expired" / "OTP not found", which are exactly the reasons a user
+/// needs to see.
+class VerifyOtpException extends OtpApiException {
+  VerifyOtpException(super.statusCode, super.body);
+
+  @override
+  String get fallbackMessage => 'Cannot verify OTP';
+
+  @override
+  String toString() => 'VerifyOtpException($statusCode): $body';
 }
 
 /// user network services
@@ -164,9 +206,7 @@ class UserNetworkService {
     );
 
     if (response.statusCode > HttpStatus.noContent) {
-      throw HttpException(
-        'Verify OTP error: ${response.statusCode} ${response.body}',
-      );
+      throw VerifyOtpException(response.statusCode, response.body);
     }
 
     final body = jsonDecode(response.body) as Map<String, dynamic>;

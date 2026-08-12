@@ -226,7 +226,10 @@ class AuthenticationBloc
         canResendAt: canResendAt,
       ),);
     } on RequestOtpException catch (err) {
-      log.severe('Request OTP rejected: $err', err);
+      // Expected user-input rejections (incomplete address, bad number,
+      // expired token) are warnings, not incidents — severe is reserved for
+      // the generic branch so it keeps signalling real backend failures.
+      log.warning('Request OTP rejected: $err', err);
       emit(const AuthenticationState.loading());
       emit(AuthenticationState.error(message: err.userMessage));
     } catch (err) {
@@ -269,10 +272,17 @@ class AuthenticationBloc
       // See _handleLoginEvent for why we yield before a routing emit.
       await Future<void>.delayed(Duration.zero);
       emit(const AuthenticationState.success(message: 'Verify success'));
+    } on VerifyOtpException catch (err) {
+      // "OTP expired" / "OTP not found" are actionable; the old generic catch
+      // rendered them as 'Cannot verify OTP: HttpException: ... 400 OTP
+      // expired'.
+      log.warning('Verify OTP rejected: $err', err);
+      emit(const AuthenticationState.loading());
+      emit(AuthenticationState.error(message: err.userMessage));
     } catch (err) {
       log.severe('Verify otp error: $err', err);
       emit(const AuthenticationState.loading());
-      emit(AuthenticationState.error(message: 'Cannot verify OTP: $err'));
+      emit(const AuthenticationState.error(message: 'Cannot verify OTP'));
     }
   }
 

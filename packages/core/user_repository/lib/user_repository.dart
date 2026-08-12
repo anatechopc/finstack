@@ -1,5 +1,9 @@
 export 'src/data/network/user_network_service.dart'
-    show RequestOtpException, SetPasswordException;
+    show
+        OtpApiException,
+        RequestOtpException,
+        SetPasswordException,
+        VerifyOtpException;
 export 'src/model/device.dart';
 export 'src/model/employment_details.dart';
 export 'src/model/employment_status.dart';

@@ -41,8 +41,9 @@ void main() {
       ).thenThrow(
         RequestOtpException(
           400,
-          "Cannot determine the country for the user's mobile number. "
-          "Please complete the user's address record.",
+          'No address is on file for this account, so the country of the '
+          'mobile number cannot be determined. Please add an address and '
+          'try again.',
         ),
       );
     },
@@ -58,8 +59,9 @@ void main() {
           .having(
             (s) => s.message,
             'message',
-            "Cannot determine the country for the user's mobile number. "
-            "Please complete the user's address record.",
+            'No address is on file for this account, so the country of the '
+            'mobile number cannot be determined. Please add an address and '
+            'try again.',
           ),
     ],
   );
