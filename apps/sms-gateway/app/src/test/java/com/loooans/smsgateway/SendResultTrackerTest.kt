@@ -1,7 +1,9 @@
 package com.loooans.smsgateway
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SendResultTrackerTest {
@@ -67,5 +69,29 @@ class SendResultTrackerTest {
         assertEquals("RESULT_ERROR_NO_SERVICE (4)", smsResultErrorName(4))
         assertEquals("RESULT_ERROR_LIMIT_EXCEEDED (5)", smsResultErrorName(5))
         assertEquals("RESULT_ERROR (99)", smsResultErrorName(99))
+    }
+
+    @Test
+    fun `request codes are unique across sends and parts`() {
+        // Guards the replacement for the setData() scheme: PendingIntent
+        // identity ignores extras, so if two in-flight sends could produce the
+        // same requestCode, FLAG_UPDATE_CURRENT would alias them and a result
+        // could be attributed to the wrong send.
+        val seen = mutableSetOf<Int>()
+        for (sendId in 1..500) {
+            for (part in 0 until MAX_SMS_PARTS) {
+                assertTrue(
+                    "duplicate requestCode for send=$sendId part=$part",
+                    seen.add(sendRequestCode(sendId, part)),
+                )
+            }
+        }
+        assertEquals(500 * MAX_SMS_PARTS, seen.size)
+    }
+
+    @Test
+    fun `request codes differ between consecutive sends of the same part`() {
+        assertNotEquals(sendRequestCode(1, 0), sendRequestCode(2, 0))
+        assertNotEquals(sendRequestCode(41, 3), sendRequestCode(42, 3))
     }
 }

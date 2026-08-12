@@ -10,7 +10,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.net.Uri
 import android.os.IBinder
 import android.telephony.SmsManager
 import android.util.Log
@@ -22,6 +21,7 @@ import com.google.firebase.database.ServerValue
 import kotlinx.coroutines.*
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 class SmsGatewayService : Service() {
 
@@ -35,8 +35,26 @@ class SmsGatewayService : Service() {
         const val EXTRA_SMS_COUNT = "sms_count"
         private const val ACTION_SMS_SENT = "com.loooans.smsgateway.SMS_SENT"
         private const val EXTRA_HASH = "hash"
+        private const val EXTRA_SEND_ID = "send_id"
         private const val SEND_RESULT_TIMEOUT_MS = 60_000L
+
+        // Terminal `error` strings written to /otp/<hash> when no radio result
+        // decided the outcome. Kept as constants so operators can grep them.
+        const val ERROR_EXPIRED = "otp expired before the gateway could send it"
+        const val ERROR_NO_PARTS = "message body produced no SMS parts"
+        const val ERROR_GATEWAY_STOPPED = "gateway stopped before the send result arrived"
     }
+
+    /**
+     * One in-flight send. [id] identifies this specific attempt so a late
+     * result from a previous attempt for the same hash cannot be recorded
+     * against its successor.
+     */
+    private data class InFlightSend(
+        val id: Int,
+        val tracker: SendResultTracker,
+        val phone: String,
+    )
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var otpListener: ChildEventListener? = null
@@ -46,23 +64,36 @@ class SmsGatewayService : Service() {
     private val deviceId: String by lazy {
         android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID)
     }
-    private val trackers = ConcurrentHashMap<String, SendResultTracker>()
+    private val trackers = ConcurrentHashMap<String, InFlightSend>()
+    private val sendIdCounter = AtomicInteger(0)
 
     private val smsSentReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            val hash = intent.getStringExtra(EXTRA_HASH) ?: return
-            val tracker = trackers[hash] ?: return
-            val isOk = resultCode == Activity.RESULT_OK
-            when (val outcome = tracker.record(isOk, smsResultErrorName(resultCode))) {
-                is SendResultTracker.Outcome.Sent -> {
-                    trackers.remove(hash, tracker)
-                    markSent(hash)
+            // Runs on the main thread; RTDB writes below are async, so this
+            // stays cheap. Guarded because an uncaught throw here would kill
+            // the process.
+            try {
+                val hash = intent.getStringExtra(EXTRA_HASH) ?: return
+                val sendId = intent.getIntExtra(EXTRA_SEND_ID, -1)
+                val inFlight = trackers[hash]
+                if (inFlight == null) {
+                    Log.w(TAG, "Send result for $hash (send $sendId) arrived with no tracker; result discarded")
+                    return
                 }
-                is SendResultTracker.Outcome.Failed -> {
-                    trackers.remove(hash, tracker)
-                    markFailed(hash, outcome.error)
+                if (inFlight.id != sendId) {
+                    Log.w(TAG, "Ignoring stale result for $hash from send $sendId (current is ${inFlight.id})")
+                    return
                 }
-                null -> Unit // waiting for remaining parts, or already completed
+                val isOk = resultCode == Activity.RESULT_OK
+                when (val outcome = inFlight.tracker.record(isOk, smsResultErrorName(resultCode))) {
+                    is SendResultTracker.Outcome.Sent ->
+                        if (trackers.remove(hash, inFlight)) markSent(hash, inFlight.phone)
+                    is SendResultTracker.Outcome.Failed ->
+                        if (trackers.remove(hash, inFlight)) markFailed(hash, outcome.error)
+                    null -> Unit // waiting for remaining parts, or already completed
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to handle SMS send result", e)
             }
         }
     }
@@ -103,14 +134,30 @@ class SmsGatewayService : Service() {
             FirebaseConfig.database.reference.child("otp").removeEventListener(it)
         }
         heartbeatJob?.cancel()
-        unregisterReceiver(smsSentReceiver)
-        serviceScope.launch {
-            FirebaseConfig.database.reference
-                .child("gateway_status")
-                .child(deviceId)
-                .child("status")
-                .setValue("offline")
+        try {
+            unregisterReceiver(smsSentReceiver)
+        } catch (e: IllegalArgumentException) {
+            // onCreate failed before registration; nothing to unregister.
+            Log.w(TAG, "SMS result receiver was not registered", e)
         }
+
+        // Cancelling serviceScope below kills the watchdog coroutines, so any
+        // send still awaiting a radio result would otherwise be left at
+        // "pending" forever. Give each one a terminal status first.
+        for (hash in trackers.keys.toList()) {
+            trackers.remove(hash)?.let { markFailed(hash, ERROR_GATEWAY_STOPPED) }
+        }
+
+        // Called directly rather than inside serviceScope: the launch below
+        // used to be cancelled by serviceScope.cancel() before it ever ran, so
+        // the device never actually went offline. Firebase manages its own
+        // threads, so this survives the cancellation.
+        FirebaseConfig.database.reference
+            .child("gateway_status")
+            .child(deviceId)
+            .child("status")
+            .setValue("offline")
+
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -156,32 +203,49 @@ class SmsGatewayService : Service() {
     private fun sendSms(entry: OtpEntry) {
         val hash = entry.hash
         if (entry.isExpired(System.currentTimeMillis())) {
+            // Must still write a terminal status: verify_otp only deletes the
+            // entry on success, so returning silently would leave it "pending"
+            // forever and poison the stuck-at-pending health check.
             Log.i(TAG, "Skipping expired OTP entry $hash")
+            markFailed(hash, ERROR_EXPIRED)
             return
         }
-        if (trackers.containsKey(hash)) {
-            Log.i(TAG, "Send already in flight for $hash, skipping duplicate")
-            return
-        }
-        var currentTracker: SendResultTracker? = null
+
+        var claimed: InFlightSend? = null
         try {
             val smsManager = getSystemService(SmsManager::class.java)
             val parts = smsManager.divideMessage(entry.message)
-            val tracker = SendResultTracker(parts.size)
-            currentTracker = tracker
-            trackers[hash] = tracker
+            if (parts.isNullOrEmpty()) {
+                markFailed(hash, ERROR_NO_PARTS)
+                return
+            }
 
-            // One PendingIntent per part. The data Uri makes each intent
-            // unique (extras alone don't distinguish PendingIntents).
+            val sendId = sendIdCounter.incrementAndGet()
+            val candidate = InFlightSend(sendId, SendResultTracker(parts.size), entry.phone)
+            // Atomic claim. A containsKey/put pair would let two concurrent
+            // deliveries of the same hash both pass and send a duplicate SMS.
+            if (trackers.putIfAbsent(hash, candidate) != null) {
+                Log.i(TAG, "Send already in flight for $hash, skipping duplicate")
+                return
+            }
+            claimed = candidate
+
+            // One PendingIntent per part, made unique by requestCode. Do NOT
+            // put a data Uri on these intents: a dynamically registered
+            // IntentFilter with no data scheme matches only intents that carry
+            // no data (IntentFilter.matchData), so a data Uri would stop the
+            // receiver from ever firing and every send would time out.
             val sentIntents = ArrayList<PendingIntent>(parts.size)
             for (i in 0 until parts.size) {
                 val intent = Intent(ACTION_SMS_SENT)
                     .setPackage(packageName)
-                    .setData(Uri.parse("loooans-sms://$hash/$i"))
                     .putExtra(EXTRA_HASH, hash)
+                    .putExtra(EXTRA_SEND_ID, sendId)
                 sentIntents.add(
                     PendingIntent.getBroadcast(
-                        this, 0, intent,
+                        this,
+                        sendRequestCode(sendId, i),
+                        intent,
                         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                     ),
                 )
@@ -192,24 +256,27 @@ class SmsGatewayService : Service() {
             } else {
                 smsManager.sendTextMessage(entry.phone, null, entry.message, sentIntents[0], null)
             }
-            lastSmsSentTo = entry.phone
-            Log.i(TAG, "SMS handed to radio for $hash (${parts.size} part(s)), awaiting result")
+            Log.i(TAG, "SMS handed to radio for $hash (${parts.size} part(s), send $sendId), awaiting result")
 
             serviceScope.launch {
                 delay(SEND_RESULT_TIMEOUT_MS)
-                tracker.timeout()?.let { outcome ->
-                    trackers.remove(hash, tracker)
-                    markFailed(hash, (outcome as SendResultTracker.Outcome.Failed).error)
+                candidate.tracker.timeout()?.let { outcome ->
+                    // Only the tracker that still owns the slot may write a
+                    // terminal status; otherwise a resend's success could be
+                    // clobbered by this attempt's watchdog.
+                    if (trackers.remove(hash, candidate)) {
+                        markFailed(hash, (outcome as SendResultTracker.Outcome.Failed).error)
+                    }
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send SMS for $hash", e)
-            currentTracker?.let { trackers.remove(hash, it) }
+            claimed?.let { trackers.remove(hash, it) }
             markFailed(hash, e.message ?: e.javaClass.simpleName)
         }
     }
 
-    private fun markSent(hash: String) {
+    private fun markSent(hash: String, phone: String) {
         val updates = mapOf<String, Any?>(
             "sms_status" to "sent",
             "sent_at" to ServerValue.TIMESTAMP,
@@ -220,6 +287,9 @@ class SmsGatewayService : Service() {
             .updateChildren(updates)
             .addOnFailureListener { e -> Log.e(TAG, "Failed to update sms_status", e) }
 
+        // Recorded on confirmation, not at radio hand-off, so the on-device
+        // status screen cannot report a failed send as the last successful one.
+        lastSmsSentTo = phone
         smsCount++
         updateNotification("Online - Sent $smsCount SMS(s)")
         broadcastStatus("online")
@@ -235,6 +305,9 @@ class SmsGatewayService : Service() {
             .child("otp").child(hash)
             .updateChildren(updates)
             .addOnFailureListener { e -> Log.e(TAG, "Failed to update sms_status", e) }
+        // Broadcast too, so the UI reflects failures instead of silently
+        // holding the last success.
+        broadcastStatus("online")
         Log.w(TAG, "SMS failed for hash $hash: $error")
     }
 

@@ -239,4 +239,24 @@ class OtpEntryTest {
         val entry = OtpEntry.fromMap("abc123", validOtpMap())!!
         assertFalse(entry.isExpired(nowMillis = Long.MAX_VALUE))
     }
+
+    @Test
+    fun `isExpired is false exactly at expire_at`() {
+        // Boundary: the comparison is strict (<), so an entry is still live on
+        // its expiry millisecond. Pinned so the comparison cannot silently flip.
+        val data = validOtpMap().toMutableMap().apply { put("expire_at", 1_000L) }
+        val entry = OtpEntry.fromMap("abc123", data)!!
+        assertFalse(entry.isExpired(nowMillis = 1_000L))
+    }
+
+    @Test
+    fun `expire_at of a non-numeric type fails open rather than expiring`() {
+        // RTDB should always hand back a Number for expire_at (int64 millis,
+        // house convention). If it ever does not, treating the entry as live is
+        // the safe direction: failing closed would silently stop all delivery.
+        val data = validOtpMap().toMutableMap().apply { put("expire_at", "1000") }
+        val entry = OtpEntry.fromMap("abc123", data)!!
+        assertNull(entry.expireAt)
+        assertFalse(entry.isExpired(nowMillis = Long.MAX_VALUE))
+    }
 }

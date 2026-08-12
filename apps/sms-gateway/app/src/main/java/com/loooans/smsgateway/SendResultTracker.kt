@@ -54,3 +54,19 @@ fun smsResultErrorName(code: Int): String = when (code) {
     5 -> "RESULT_ERROR_LIMIT_EXCEEDED (5)"
     else -> "RESULT_ERROR ($code)"
 }
+
+/** Highest number of message parts a single send may distinguish. */
+const val MAX_SMS_PARTS = 16
+
+/**
+ * Unique PendingIntent requestCode for one (send attempt, message part) pair.
+ *
+ * PendingIntent identity ignores extras, so two sends would otherwise collide
+ * and FLAG_UPDATE_CURRENT would alias them. The obvious alternative — making
+ * each Intent unique with setData() — is a trap: a dynamically registered
+ * IntentFilter that declares no data scheme matches *only* intents carrying no
+ * data (IntentFilter.matchData), so a data Uri stops the result receiver from
+ * ever firing and every send silently times out.
+ */
+fun sendRequestCode(sendId: Int, partIndex: Int): Int =
+    sendId * MAX_SMS_PARTS + (partIndex and (MAX_SMS_PARTS - 1))
