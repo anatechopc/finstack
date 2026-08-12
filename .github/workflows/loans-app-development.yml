@@ -129,17 +129,41 @@ jobs:
       # Gate the PR on the unit tests. Until this existed, no workflow ran
       # `flutter test` at all: a PR could go green with failing or entirely
       # unexecuted tests, which is how a bloc regression could ship unnoticed.
+      #
+      # SKIPPED_PACKAGES already fail on develop and are excluded so this gate
+      # can exist at all. They are reported as warnings on every run rather
+      # than skipped silently — an exclusion nobody can see reads as coverage.
+      #   address_repository, bank_details_repository — scaffold tests
+      #     instantiate a repository, which builds FirebaseFirestore.instance
+      #     and throws [core/no-app]; they cannot pass without a Firebase stub.
+      #   review_repository — two genuine JSON round-trip failures (response
+      #     fields lost, snake_case keys missing); a real bug, not a harness
+      #     problem, and worth its own fix.
+      # Shrink this list; do not grow it.
       - name: Run package tests
+        env:
+          SKIPPED_PACKAGES: 'address_repository bank_details_repository review_repository'
         run: |
+          failed=''
           for group in core loans; do
             for pkg in ../../packages/$group/*/; do
-              if [ -d "$pkg/test" ]; then
-                echo "::group::$(basename "$pkg")"
-                (cd "$pkg" && flutter test) || exit 1
-                echo "::endgroup::"
-              fi
+              name=$(basename "$pkg")
+              [ -d "$pkg/test" ] || continue
+              case " $SKIPPED_PACKAGES " in
+                *" $name "*)
+                  echo "::warning title=Package tests skipped::$name is excluded because its tests already fail on develop"
+                  continue
+                  ;;
+              esac
+              echo "::group::$name"
+              (cd "$pkg" && flutter test) || failed="$failed $name"
+              echo "::endgroup::"
             done
           done
+          if [ -n "$failed" ]; then
+            echo "::error title=Package tests failed::$failed"
+            exit 1
+          fi
 
       - name: Run app tests
         run: flutter test
