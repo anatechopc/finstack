@@ -1,6 +1,7 @@
 package users
 
 import (
+	"cloud.google.com/go/firestore"
 	"com.loooans.app/api/service"
 	utils2 "com.loooans.app/utils"
 	"context"
@@ -297,10 +298,16 @@ func RequestOtpHandler(
 				http.Error(w, "User has no mobile number on record.", http.StatusBadRequest)
 			case errors.Is(err, ErrAuthUserMissingEmail):
 				http.Error(w, "User has no email on record.", http.StatusBadRequest)
-			case errors.Is(err, ErrAddressMissing), errors.Is(err, ErrCountryUnknown):
-				http.Error(w, "Cannot determine the country for the user's mobile number. Please complete the user's address record.", http.StatusBadRequest)
+			// These strings are shown to end users verbatim. They stay neutral
+			// rather than second-person because the same endpoint serves the
+			// borrower (mobile verification) and a teller acting on a
+			// borrower's behalf (payment acknowledgement).
+			case errors.Is(err, ErrAddressMissing):
+				http.Error(w, "No address is on file for this account, so the country of the mobile number cannot be determined. Please add an address and try again.", http.StatusBadRequest)
+			case errors.Is(err, ErrCountryUnknown):
+				http.Error(w, "The country on the address record is not recognized, so the mobile number cannot be verified. Please set it to a supported country and try again.", http.StatusBadRequest)
 			case errors.Is(err, ErrPhoneInvalid):
-				http.Error(w, "The mobile number on record is not a valid phone number for the user's country.", http.StatusBadRequest)
+				http.Error(w, "The mobile number on record is not a valid mobile number for the address country. Please correct it and try again.", http.StatusBadRequest)
 			default:
 				log.Error("request otp error", zap.String("error", err.Error()))
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -361,25 +368,30 @@ func buildRealRequestOtpDeps(ctx context.Context) (RequestOtpDeps, func(), error
 			return data, nil
 		},
 		ReadUserAddress: func(ctx context.Context, uid string) (string, error) {
-			iter := firestoreClient.Collection(collectionPrefix+"address").
-				Where("data_id", "==", uid).
-				Where("data_type", "==", "user").
-				Limit(1).
-				Documents(ctx)
-			defer iter.Stop()
-			snap, err := iter.Next()
-			if errors.Is(err, iterator.Done) {
-				return "", nil
+			// A borrower's own address doc.
+			country, err := readAddressCountry(ctx, firestoreClient, collectionPrefix, uid, "user")
+			if err != nil || country != "" {
+				return country, err
 			}
+
+			// Company-affiliated users (lender staff and the founding admin)
+			// never get a data_type=="user" address: registration writes only
+			// a "provider" doc keyed on the company id, and the app resolves
+			// their address from there. Without this fallback they could never
+			// request a mobile OTP and would be stuck behind the verification
+			// gate with no way to act on the error.
+			snap, err := firestoreClient.Doc(collectionPrefix + "users/" + uid).Get(ctx)
 			if err != nil {
+				if status.Code(err) == codes.NotFound {
+					return "", nil
+				}
 				return "", err
 			}
-			data := snap.Data()
-			if data["deleted_at"] != nil {
+			companyID, _ := snap.Data()["company_id"].(string)
+			if companyID == "" {
 				return "", nil
 			}
-			country, _ := data["country"].(string)
-			return country, nil
+			return readAddressCountry(ctx, firestoreClient, collectionPrefix, companyID, "provider")
 		},
 		GetAuthUserEmail: func(ctx context.Context, uid string) (string, error) {
 			authClient, err := app.Auth(ctx)
@@ -401,6 +413,40 @@ func buildRealRequestOtpDeps(ctx context.Context) (RequestOtpDeps, func(), error
 		},
 		Now: time.Now,
 	}, cleanup, nil
+}
+
+// readAddressCountry returns the `country` of the first live address doc for
+// (dataID, dataType), or "" when there is none. Soft-deleted docs are skipped
+// rather than ending the search, so a stale deleted record cannot mask a live
+// address the way a Limit(1) query would.
+func readAddressCountry(
+	ctx context.Context,
+	fs *firestore.Client,
+	collectionPrefix, dataID, dataType string,
+) (string, error) {
+	iter := fs.Collection(collectionPrefix+"address").
+		Where("data_id", "==", dataID).
+		Where("data_type", "==", dataType).
+		Limit(10).
+		Documents(ctx)
+	defer iter.Stop()
+	for {
+		snap, err := iter.Next()
+		if errors.Is(err, iterator.Done) {
+			return "", nil
+		}
+		if err != nil {
+			return "", err
+		}
+		data := snap.Data()
+		if data["deleted_at"] != nil {
+			continue
+		}
+		country, _ := data["country"].(string)
+		if strings.TrimSpace(country) != "" {
+			return country, nil
+		}
+	}
 }
 
 // RequestOtp is the production-wired HTTP handler that GCF registers. The

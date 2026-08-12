@@ -341,7 +341,7 @@ func TestRequestOtpHandler_AddressMissing_Returns400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "complete the user's address record") {
+	if !strings.Contains(rec.Body.String(), "No address is on file for this account") {
 		t.Errorf("unexpected body: %s", rec.Body.String())
 	}
 }
@@ -357,8 +357,12 @@ func TestRequestOtpHandler_UnknownCountry_Returns400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "Cannot determine the country") {
+	if !strings.Contains(rec.Body.String(), "country on the address record is not recognized") {
 		t.Errorf("unexpected body: %s", rec.Body.String())
+	}
+	// The two failures must stay distinguishable: they need different remedies.
+	if strings.Contains(rec.Body.String(), "No address is on file") {
+		t.Errorf("unknown-country must not reuse the address-missing copy: %s", rec.Body.String())
 	}
 }
 
@@ -375,7 +379,12 @@ func TestRequestOtpHandler_InvalidPhone_Returns400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "not a valid phone number") {
+	if !strings.Contains(rec.Body.String(), "not a valid mobile number") {
 		t.Errorf("unexpected body: %s", rec.Body.String())
+	}
+	// The rejected number must never be echoed back: this body reaches logs
+	// and, via the client, end users.
+	if strings.Contains(rec.Body.String(), "1234567890") {
+		t.Errorf("400 body leaked the raw phone number: %s", rec.Body.String())
 	}
 }
