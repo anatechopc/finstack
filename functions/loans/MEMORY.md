@@ -179,3 +179,23 @@ The borrower submission flow writes `pending` payments that a teller later confi
 - **`paymentCreated` refactored to adapter+core** (was inline). While refactoring, **fixed the pre-existing `loan_id` bug**: it resolved the loan via the payment's schedule, but open-term payments are created with `loan_schedule_id = NO_ID` (backfilled just after), so the schedule lookup returned nothing and lenders weren't notified. Now resolves the loan via `loan_id` on the payment (denormalized by the Flutter side at every creation site) and falls back to the schedule for older docs that lack it.
 - **De-dup per `submission_id`**: Pay-in-full creates one payment per schedule, all sharing a `submission_id`. `paymentCreated` now notifies the lender **once per submission** instead of once per schedule. Payments with no `submission_id` (legacy/single) notify per-payment as before.
 - Same testing/deploy conventions as elsewhere: `CGO_ENABLED=0 go test ./...` locally on macOS; every new function registered in `init()` and added to `deploy_functions.sh`; `go mod tidy` per sub-module when deps change.
+
+---
+
+## Request OTP phone normalization — hardening after independent review (branch `feature/otp-phone-normalization`, finstack #89, 2026-08-12)
+
+`requestOtp` now normalizes `mobile_number` to E.164 using the country from the user's address before writing the RTDB entry. An independent review found five defects in the first implementation, **each reproduced by running the code**, not by reading the diff:
+
+- **`phonenumbers` v1.1.8 panicked** on RFC3966-shaped input (`"9175551291;phone-context=x tel:y"` → `slice bounds out of range`). `mobile_number` is written client-side straight to Firestore (`update_user.go` is a stub; the app's `digitsOnly`/`maxLength(10)` is UI-only), so any authenticated client could plant the value and turn every call into a 500. **Now on v1.5.0** — the newest release that keeps a `go 1.19` directive, so the **`go122` runtime is unaffected**. v1.6.0+ forces `go 1.23.0`; do not upgrade past v1.5.0 without also moving the runtime in `deploy_functions.sh` (~20 `--runtime go122` occurrences). A `recover` guards `NormalizePhoneE164` regardless.
+- **Keypad alpha-to-digit conversion**: `"0917LOOOANS"` normalized to `"+639175666267"` — a real, unrelated subscriber — and passed `IsValidNumber`, so the OTP was delivered to a stranger with a 200 response. This happens in **every** library version, so input is now screened for non-dialable characters *before* `Parse`. Screening, not a version bump, is the fix.
+- **Landlines passed validation**: `"0288887777"` → `"+63288887777"`, accepted, then silently undeliverable — the exact failure the feature exists to prevent. Now requires `GetNumberType` to be `MOBILE` or `FIXED_LINE_OR_MOBILE`.
+- **Company-affiliated users were permanently locked out**: the address query filtered on `data_type == "user"`, but registration writes only a `provider` doc keyed on `company_id`, and the app resolves those users' addresses from it (`session_loader.dart`). A lender's founding admin got a 400 telling them to complete an address record **no screen would ever create**. `ReadUserAddress` now falls back to the company's provider address.
+- **`country` is free text** in the profile editor (registration hardcodes it, the editor does not), so typing `"PH"` locked the user out. Common aliases and ISO codes now resolve. A country dropdown remains the durable fix.
+
+Also: `Limit(1)` let a soft-deleted address mask a live one (now skips deleted docs); `ErrAddressMissing` and `ErrCountryUnknown` produced byte-identical 400s despite needing different remedies (now distinct); and error text no longer echoes the raw phone number, which reaches both logs and the 400 body.
+
+**400 bodies are shown to end users verbatim** by the Flutter client (finstack #91), so they are written in neutral phrasing — the same endpoint serves a borrower verifying their own number and a teller acting for one. Changing these strings changes user-facing copy.
+
+**Not fixed, by decision**: the payment-acknowledgement path (`reason=payment`) shares the mobile branch and so inherits the address precondition — whether payments should be gated on address completeness is a product call.
+
+**Withdrawn finding**: "12 live PH prefixes rejected" was wrong — v1.8.1 rejects `0900-0904, 0913, 0940, 0941, 0980, 0982, 0984, 0990` identically, so it is not stale metadata.
