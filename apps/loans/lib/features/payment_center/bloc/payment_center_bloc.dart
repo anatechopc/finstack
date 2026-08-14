@@ -36,15 +36,15 @@ class PaymentCenterBloc
     AuthenticationService? authService,
     SettingsService? settingsService,
   })  : authService = authService ?? AuthenticationService.instance,
-        settingsService = settingsService ?? SettingsService.instance,
         loanRepository = context.read<LoanRepository>(),
         loanScheduleRepository = context.read<LoanScheduleRepository>(),
         paymentRepository = context.read<PaymentRepository>(),
-        cashPoolRepository = context.read<CashPoolRepository>(),
         storageRepository = context.read<StorageRepository>(),
         userRepository = context.read<UserRepository>(),
-        productRepository = context.read<ProductRepository>(),
         super(const PaymentCenterState()) {
+    this.settingsService = settingsService ?? SettingsService.instance;
+    cashPoolRepository = context.read<CashPoolRepository>();
+    productRepository = context.read<ProductRepository>();
     on<SearchBorrowersEvent>(_handleSearchBorrowersEvent);
     on<SelectBorrowerEvent>(_handleSelectBorrowerEvent);
     on<ClearBorrowerEvent>(_handleClearBorrowerEvent);
@@ -59,15 +59,57 @@ class PaymentCenterBloc
     on<RejectSubmissionEvent>(_handleRejectSubmission);
   }
 
+  /// Test seam mirroring `AuthenticationBloc.withDependencies`: lets unit
+  /// tests inject mocked collaborators without a [BuildContext].
+  ///
+  /// [cashPoolRepository] and [productRepository] are optional because they
+  /// are `final` classes and so cannot be mocked; the OTP handlers never touch
+  /// them, and a test that reaches a handler which does will fail loudly on
+  /// the unset late field rather than silently using a stand-in.
+  PaymentCenterBloc.withDependencies({
+    required this.userRepository,
+    required this.loanRepository,
+    required this.loanScheduleRepository,
+    required this.paymentRepository,
+    required this.storageRepository,
+    CashPoolRepository? cashPoolRepository,
+    ProductRepository? productRepository,
+    AuthenticationService? authService,
+    SettingsService? settingsService,
+  })  : authService = authService ?? AuthenticationService.instance,
+        super(const PaymentCenterState()) {
+    if (settingsService != null) {
+      this.settingsService = settingsService;
+    }
+    if (cashPoolRepository != null) {
+      this.cashPoolRepository = cashPoolRepository;
+    }
+    if (productRepository != null) {
+      this.productRepository = productRepository;
+    }
+    on<RequestOtpEvent>(_handleRequestOtpEvent);
+    on<VerifyOtpEvent>(_handleVerifyOtpEvent);
+  }
+
   final AuthenticationService authService;
-  final SettingsService settingsService;
+
+  /// `late` so the test seam can omit it (SettingsService.instance throws
+  /// until the app initializes it) — see
+  /// [PaymentCenterBloc.withDependencies].
+  late final SettingsService settingsService;
   final LoanRepository loanRepository;
   final LoanScheduleRepository loanScheduleRepository;
   final PaymentRepository paymentRepository;
-  final CashPoolRepository cashPoolRepository;
+
+  /// `late` so the test seam can omit it — see
+  /// [PaymentCenterBloc.withDependencies].
+  late final CashPoolRepository cashPoolRepository;
   final StorageRepository storageRepository;
   final UserRepository userRepository;
-  final ProductRepository productRepository;
+
+  /// `late` so the test seam can omit it — see
+  /// [PaymentCenterBloc.withDependencies].
+  late final ProductRepository productRepository;
 
   Future<void> _handleSearchBorrowersEvent(
     SearchBorrowersEvent event,
@@ -1074,10 +1116,19 @@ class PaymentCenterBloc
         otpExpireAt: response.expireAt,
         isLoading: false,
       ));
+    } on RequestOtpException catch (err) {
+      _log.warning('Request OTP rejected: $err', err);
+      emit(
+        state.copyWith(
+          status: PaymentCenterStatus.otpError,
+          message: err.userMessageOr('Failed to send OTP'),
+          isLoading: false,
+        ),
+      );
     } catch (err) {
       _log.severe('Request OTP error: $err', err);
       emit(state.copyWith(
-        status: PaymentCenterStatus.error,
+        status: PaymentCenterStatus.otpError,
         message: 'Failed to send OTP',
         isLoading: false,
       ));
@@ -1106,16 +1157,25 @@ class PaymentCenterBloc
         ));
       } else {
         emit(state.copyWith(
-          status: PaymentCenterStatus.error,
+          status: PaymentCenterStatus.otpError,
           message: 'Invalid OTP',
           isLoading: false,
         ));
       }
+    } on VerifyOtpException catch (err) {
+      _log.warning('Verify OTP rejected: $err', err);
+      emit(
+        state.copyWith(
+          status: PaymentCenterStatus.otpError,
+          message: err.userMessageOr('OTP verification failed'),
+          isLoading: false,
+        ),
+      );
     } catch (err) {
       _log.severe('Verify OTP error: $err', err);
       emit(state.copyWith(
-        status: PaymentCenterStatus.error,
-        message: 'OTP verification failed: $err',
+        status: PaymentCenterStatus.otpError,
+        message: 'OTP verification failed',
         isLoading: false,
       ));
     }
