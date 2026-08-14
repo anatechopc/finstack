@@ -29,6 +29,7 @@ func buildDeps(
 	now time.Time,
 	hash, otp string,
 	user *fakes.UserReader,
+	address *fakes.AddressReader,
 	authEmail *fakes.AuthEmailReader,
 	otpWriter *fakes.OtpWriter,
 	emailSender *fakes.EmailSender,
@@ -37,6 +38,7 @@ func buildDeps(
 	return users.RequestOtpDeps{
 		GenerateOtp:      gen,
 		ReadUser:         user.Read,
+		ReadUserAddress:  address.Read,
 		GetAuthUserEmail: authEmail.Read,
 		WriteOtp:         otpWriter.Write,
 		SendEmail:        emailSender.Send,
@@ -48,12 +50,13 @@ func TestRequestOtpCore_EmailObjective_ReadsRecipientFromAuth(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 
 	userReader := &fakes.UserReader{} // intentionally empty: email path must not need it
+	addressReader := &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}
 	authEmail := &fakes.AuthEmailReader{Emails: map[string]string{
 		"user-123": "user@example.com",
 	}}
 	otpWriter := &fakes.OtpWriter{}
 	emailSender := &fakes.EmailSender{}
-	deps, _ := buildDeps(now, "h-1", "111111", userReader, authEmail, otpWriter, emailSender)
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, addressReader, authEmail, otpWriter, emailSender)
 
 	res, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -84,6 +87,9 @@ func TestRequestOtpCore_EmailObjective_ReadsRecipientFromAuth(t *testing.T) {
 	if len(userReader.ReadCalls) != 0 {
 		t.Errorf("expected ReadUser to be skipped on email path, got %d calls: %v", len(userReader.ReadCalls), userReader.ReadCalls)
 	}
+	if len(addressReader.ReadCalls) != 0 {
+		t.Errorf("expected ReadUserAddress to be skipped on email path, got %d calls", len(addressReader.ReadCalls))
+	}
 
 	if res.Hash != "h-1" {
 		t.Errorf("expected result.Hash=h-1, got %q", res.Hash)
@@ -101,7 +107,7 @@ func TestRequestOtpCore_EmailObjective_NoAuthEmail_ReturnsError(t *testing.T) {
 	authEmail := &fakes.AuthEmailReader{Emails: map[string]string{"user-123": ""}}
 	otpWriter := &fakes.OtpWriter{}
 	emailSender := &fakes.EmailSender{}
-	deps, _ := buildDeps(now, "h-1", "111111", &fakes.UserReader{}, authEmail, otpWriter, emailSender)
+	deps, _ := buildDeps(now, "h-1", "111111", &fakes.UserReader{}, &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}, authEmail, otpWriter, emailSender)
 
 	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -121,7 +127,7 @@ func TestRequestOtpCore_EmailObjective_AuthFetchError_Propagates(t *testing.T) {
 	authEmail := &fakes.AuthEmailReader{Err: authFetchErr}
 	otpWriter := &fakes.OtpWriter{}
 	emailSender := &fakes.EmailSender{}
-	deps, _ := buildDeps(now, "h-1", "111111", &fakes.UserReader{}, authEmail, otpWriter, emailSender)
+	deps, _ := buildDeps(now, "h-1", "111111", &fakes.UserReader{}, &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}, authEmail, otpWriter, emailSender)
 
 	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -140,10 +146,11 @@ func TestRequestOtpCore_MobileObjective_ReadsMobileNumberFromFirestore(t *testin
 	userReader := &fakes.UserReader{Users: map[string]map[string]any{
 		"user-123": {"mobile_number": "+639171234567"},
 	}}
+	address := &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}
 	authEmail := &fakes.AuthEmailReader{}
 	otpWriter := &fakes.OtpWriter{}
 	emailSender := &fakes.EmailSender{}
-	deps, _ := buildDeps(now, "h-mob", "222222", userReader, authEmail, otpWriter, emailSender)
+	deps, _ := buildDeps(now, "h-mob", "222222", userReader, address, authEmail, otpWriter, emailSender)
 
 	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -183,7 +190,7 @@ func TestRequestOtpCore_MobileObjective_MissingMobileNumber_ReturnsError(t *test
 	}}
 	otpWriter := &fakes.OtpWriter{}
 	emailSender := &fakes.EmailSender{}
-	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AuthEmailReader{}, otpWriter, emailSender)
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}, &fakes.AuthEmailReader{}, otpWriter, emailSender)
 
 	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -201,7 +208,7 @@ func TestRequestOtpCore_MobileObjective_UserNotFound_ReturnsError(t *testing.T) 
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	userReader := &fakes.UserReader{} // no users at all
 	otpWriter := &fakes.OtpWriter{}
-	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
 
 	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -226,7 +233,7 @@ func TestRequestOtpCore_MobileObjective_ReadUserTransportError_Propagates(t *tes
 	transportErr := errors.New("firestore: rpc deadline exceeded")
 	userReader := &fakes.UserReader{Err: transportErr}
 	otpWriter := &fakes.OtpWriter{}
-	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
 
 	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -247,7 +254,7 @@ func TestRequestOtpCore_InvalidObjective_ReturnsError(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	otpWriter := &fakes.OtpWriter{}
 	emailSender := &fakes.EmailSender{}
-	deps, _ := buildDeps(now, "h-1", "111111", &fakes.UserReader{}, &fakes.AuthEmailReader{}, otpWriter, emailSender)
+	deps, _ := buildDeps(now, "h-1", "111111", &fakes.UserReader{}, &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}, &fakes.AuthEmailReader{}, otpWriter, emailSender)
 
 	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -264,7 +271,7 @@ func TestRequestOtpCore_InvalidObjective_ReturnsError(t *testing.T) {
 func TestRequestOtpCore_DefaultReason_Email(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	otpWriter := &fakes.OtpWriter{}
-	deps, _ := buildDeps(now, "h-1", "111111", &fakes.UserReader{}, &fakes.AuthEmailReader{Emails: map[string]string{"user-123": "u@x.com"}}, otpWriter, &fakes.EmailSender{})
+	deps, _ := buildDeps(now, "h-1", "111111", &fakes.UserReader{}, &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}, &fakes.AuthEmailReader{Emails: map[string]string{"user-123": "u@x.com"}}, otpWriter, &fakes.EmailSender{})
 
 	if _, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -281,10 +288,11 @@ func TestRequestOtpCore_DefaultReason_Email(t *testing.T) {
 func TestRequestOtpCore_DefaultReason_Mobile(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	userReader := &fakes.UserReader{Users: map[string]map[string]any{
-		"user-123": {"mobile_number": "+1"},
+		"user-123": {"mobile_number": "9175551291"},
 	}}
+	address := &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}
 	otpWriter := &fakes.OtpWriter{}
-	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, address, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
 
 	if _, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -301,10 +309,11 @@ func TestRequestOtpCore_DefaultReason_Mobile(t *testing.T) {
 func TestRequestOtpCore_ReasonOverride_Persists(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	userReader := &fakes.UserReader{Users: map[string]map[string]any{
-		"user-123": {"mobile_number": "+1"},
+		"user-123": {"mobile_number": "9175551291"},
 	}}
+	address := &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}
 	otpWriter := &fakes.OtpWriter{}
-	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, address, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
 
 	if _, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -322,10 +331,11 @@ func TestRequestOtpCore_ReasonOverride_Persists(t *testing.T) {
 func TestRequestOtpCore_TargetUserIDOverride(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	userReader := &fakes.UserReader{Users: map[string]map[string]any{
-		"user-456": {"mobile_number": "+2"},
+		"user-456": {"mobile_number": "9175551291"},
 	}}
+	address := &fakes.AddressReader{Countries: map[string]string{"user-456": "Philippines"}}
 	otpWriter := &fakes.OtpWriter{}
-	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, address, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
 
 	if _, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:       "user-123", // caller
@@ -352,7 +362,7 @@ func TestRequestOtpCore_RTDBWriteContents(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	authEmail := &fakes.AuthEmailReader{Emails: map[string]string{"user-123": "u@x.com"}}
 	otpWriter := &fakes.OtpWriter{}
-	deps, _ := buildDeps(now, "hash-xyz", "654321", &fakes.UserReader{}, authEmail, otpWriter, &fakes.EmailSender{})
+	deps, _ := buildDeps(now, "hash-xyz", "654321", &fakes.UserReader{}, &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}, authEmail, otpWriter, &fakes.EmailSender{})
 
 	if _, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -387,7 +397,7 @@ func TestRequestOtpCore_RTDBWriteContents(t *testing.T) {
 
 func TestRequestOtpCore_GenerateOtpCalledExactlyOnce(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
-	deps, calls := buildDeps(now, "h-1", "111111", &fakes.UserReader{}, &fakes.AuthEmailReader{Emails: map[string]string{"user-123": "u@x.com"}}, &fakes.OtpWriter{}, &fakes.EmailSender{})
+	deps, calls := buildDeps(now, "h-1", "111111", &fakes.UserReader{}, &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}, &fakes.AuthEmailReader{Emails: map[string]string{"user-123": "u@x.com"}}, &fakes.OtpWriter{}, &fakes.EmailSender{})
 
 	if _, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -405,7 +415,7 @@ func TestRequestOtpCore_RTDBWriteFails_PropagatesAndSkipsEmail(t *testing.T) {
 	writeErr := errors.New("rtdb: permission denied")
 	otpWriter := &fakes.OtpWriter{Err: writeErr}
 	emailSender := &fakes.EmailSender{}
-	deps, _ := buildDeps(now, "h-1", "111111", &fakes.UserReader{}, &fakes.AuthEmailReader{Emails: map[string]string{"user-123": "u@x.com"}}, otpWriter, emailSender)
+	deps, _ := buildDeps(now, "h-1", "111111", &fakes.UserReader{}, &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}, &fakes.AuthEmailReader{Emails: map[string]string{"user-123": "u@x.com"}}, otpWriter, emailSender)
 
 	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -471,7 +481,7 @@ func TestRequestOtpCore_SendEmailError_Propagates(t *testing.T) {
 	otpWriter := &fakes.OtpWriter{}
 	emailSender := &fakes.EmailSender{Err: sendErr}
 	authEmail := &fakes.AuthEmailReader{Emails: map[string]string{"user-123": "u@x.com"}}
-	deps, _ := buildDeps(now, "h-1", "111111", &fakes.UserReader{}, authEmail, otpWriter, emailSender)
+	deps, _ := buildDeps(now, "h-1", "111111", &fakes.UserReader{}, &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}, authEmail, otpWriter, emailSender)
 
 	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -488,10 +498,11 @@ func TestRequestOtpCore_SendEmailError_Propagates(t *testing.T) {
 func TestRequestOtpCore_EmptyTargetUserID_DefaultsToUserID(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	userReader := &fakes.UserReader{Users: map[string]map[string]any{
-		"user-123": {"mobile_number": "+1"},
+		"user-123": {"mobile_number": "9175551291"},
 	}}
+	address := &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}
 	otpWriter := &fakes.OtpWriter{}
-	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, address, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
 
 	if _, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:       "user-123",
@@ -516,10 +527,11 @@ func TestRequestOtpCore_EmptyTargetUserID_DefaultsToUserID(t *testing.T) {
 func TestRequestOtpCore_MobileEntry_HasNilNullableFields(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	userReader := &fakes.UserReader{Users: map[string]map[string]any{
-		"user-123": {"mobile_number": "+1"},
+		"user-123": {"mobile_number": "9175551291"},
 	}}
+	address := &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}
 	otpWriter := &fakes.OtpWriter{}
-	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, address, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
 
 	if _, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -548,10 +560,11 @@ func TestRequestOtpCore_MobileEntry_HasNilNullableFields(t *testing.T) {
 func TestRequestOtpCore_MobileEntry_HasCorrectObjectiveAndReason(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	userReader := &fakes.UserReader{Users: map[string]map[string]any{
-		"user-123": {"mobile_number": "+1"},
+		"user-123": {"mobile_number": "9175551291"},
 	}}
+	address := &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}
 	otpWriter := &fakes.OtpWriter{}
-	deps, _ := buildDeps(now, "h-mob", "654321", userReader, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
+	deps, _ := buildDeps(now, "h-mob", "654321", userReader, address, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
 
 	if _, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -576,7 +589,7 @@ func TestRequestOtpCore_MobileNumberWrongType_ReturnsError(t *testing.T) {
 		"user-123": {"mobile_number": 639171234567},
 	}}
 	otpWriter := &fakes.OtpWriter{}
-	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
 
 	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
 		UserID:    "user-123",
@@ -587,5 +600,119 @@ func TestRequestOtpCore_MobileNumberWrongType_ReturnsError(t *testing.T) {
 	}
 	if len(otpWriter.Writes) != 0 {
 		t.Errorf("expected no RTDB write on type mismatch, got %d", len(otpWriter.Writes))
+	}
+}
+
+func TestRequestOtpCore_Mobile_NormalizesPhoneToE164(t *testing.T) {
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	userReader := &fakes.UserReader{Users: map[string]map[string]any{
+		"user-123": {"mobile_number": "9175551291"},
+	}}
+	address := &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}
+	otpWriter := &fakes.OtpWriter{}
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, address, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
+
+	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
+		UserID: "user-123", Objective: "mobile_number", Subdomain: "dev.",
+	}, deps)
+	if err != nil {
+		t.Fatalf("RequestOtpCore returned error: %v", err)
+	}
+	if len(otpWriter.Writes) != 1 {
+		t.Fatalf("expected 1 OTP write, got %d", len(otpWriter.Writes))
+	}
+	if got := otpWriter.Writes[0].Entry["phone"]; got != "+639175551291" {
+		t.Errorf("expected normalized phone +639175551291, got %v", got)
+	}
+	if len(address.ReadCalls) != 1 || address.ReadCalls[0] != "user-123" {
+		t.Errorf("expected address read for user-123, got %v", address.ReadCalls)
+	}
+}
+
+func TestRequestOtpCore_Mobile_LegacyE164PassesThroughWithoutAddress(t *testing.T) {
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	userReader := &fakes.UserReader{Users: map[string]map[string]any{
+		"user-123": {"mobile_number": "+639175551291"},
+	}}
+	address := &fakes.AddressReader{} // no address doc at all
+	otpWriter := &fakes.OtpWriter{}
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, address, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
+
+	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
+		UserID: "user-123", Objective: "mobile_number", Subdomain: "dev.",
+	}, deps)
+	if err != nil {
+		t.Fatalf("expected legacy +63 number to pass through, got error: %v", err)
+	}
+	if got := otpWriter.Writes[0].Entry["phone"]; got != "+639175551291" {
+		t.Errorf("expected phone +639175551291, got %v", got)
+	}
+}
+
+func TestRequestOtpCore_Mobile_MissingAddress_ReturnsErrAddressMissing(t *testing.T) {
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	userReader := &fakes.UserReader{Users: map[string]map[string]any{
+		"user-123": {"mobile_number": "9175551291"},
+	}}
+	otpWriter := &fakes.OtpWriter{}
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, &fakes.AddressReader{}, &fakes.AuthEmailReader{}, otpWriter, &fakes.EmailSender{})
+
+	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
+		UserID: "user-123", Objective: "mobile_number", Subdomain: "dev.",
+	}, deps)
+	if !errors.Is(err, users.ErrAddressMissing) {
+		t.Fatalf("expected ErrAddressMissing, got %v", err)
+	}
+	if len(otpWriter.Writes) != 0 {
+		t.Errorf("no OTP entry may be written on failure, got %d writes", len(otpWriter.Writes))
+	}
+}
+
+func TestRequestOtpCore_Mobile_UnknownCountry_ReturnsErrCountryUnknown(t *testing.T) {
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	userReader := &fakes.UserReader{Users: map[string]map[string]any{
+		"user-123": {"mobile_number": "9175551291"},
+	}}
+	address := &fakes.AddressReader{Countries: map[string]string{"user-123": "Narnia"}}
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, address, &fakes.AuthEmailReader{}, &fakes.OtpWriter{}, &fakes.EmailSender{})
+
+	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
+		UserID: "user-123", Objective: "mobile_number", Subdomain: "dev.",
+	}, deps)
+	if !errors.Is(err, users.ErrCountryUnknown) {
+		t.Fatalf("expected ErrCountryUnknown, got %v", err)
+	}
+}
+
+func TestRequestOtpCore_Mobile_InvalidNumber_ReturnsErrPhoneInvalid(t *testing.T) {
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	userReader := &fakes.UserReader{Users: map[string]map[string]any{
+		"user-123": {"mobile_number": "1234567890"},
+	}}
+	address := &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, address, &fakes.AuthEmailReader{}, &fakes.OtpWriter{}, &fakes.EmailSender{})
+
+	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
+		UserID: "user-123", Objective: "mobile_number", Subdomain: "dev.",
+	}, deps)
+	if !errors.Is(err, users.ErrPhoneInvalid) {
+		t.Fatalf("expected ErrPhoneInvalid, got %v", err)
+	}
+}
+
+func TestRequestOtpCore_Mobile_AddressReadError_Propagates(t *testing.T) {
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	userReader := &fakes.UserReader{Users: map[string]map[string]any{
+		"user-123": {"mobile_number": "9175551291"},
+	}}
+	boom := errors.New("firestore unavailable")
+	address := &fakes.AddressReader{Err: boom}
+	deps, _ := buildDeps(now, "h-1", "111111", userReader, address, &fakes.AuthEmailReader{}, &fakes.OtpWriter{}, &fakes.EmailSender{})
+
+	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
+		UserID: "user-123", Objective: "mobile_number", Subdomain: "dev.",
+	}, deps)
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected transport error to propagate, got %v", err)
 	}
 }
