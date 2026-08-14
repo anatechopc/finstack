@@ -80,7 +80,7 @@ declare -A pids
 
 # Deploy each function in the background
 echo "Deploying requestOtp"
-gcloud functions deploy requestOtp_$environment --set-env-vars "$MS_GRAPH_ENV_VARS" --set-secrets "$MS_GRAPH_SECRETS" --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --service-account="$serviceAccount" --entry-point requestOtp &
+gcloud functions deploy requestOtp_$environment --set-env-vars "$MS_GRAPH_ENV_VARS" --set-secrets "$MS_GRAPH_SECRETS" --runtime go126 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --service-account="$serviceAccount" --entry-point requestOtp &
 pids[$!]="requestOtp"
 
 # NOTE: Old verifyPaymentOtp_<env> Cloud Run services are no longer redeployed
@@ -88,69 +88,69 @@ pids[$!]="requestOtp"
 # services should be deleted manually from the GCP console after the first
 # successful deploy on each environment.
 echo "Deploying verifyOtp"
-gcloud functions deploy verifyOtp_$environment --set-env-vars ENVIRONMENT=$environment --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --service-account="$serviceAccount" --entry-point verifyOtp &
+gcloud functions deploy verifyOtp_$environment --set-env-vars ENVIRONMENT=$environment --runtime go126 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --service-account="$serviceAccount" --entry-point verifyOtp &
 pids[$!]="verifyOtp"
 
 echo "Deploying sendEmail"
-gcloud functions deploy sendEmail_$environment --set-env-vars "$MS_GRAPH_ENV_VARS" --set-secrets "$MS_GRAPH_SECRETS" --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --service-account="$serviceAccount" --entry-point sendEmail &
+gcloud functions deploy sendEmail_$environment --set-env-vars "$MS_GRAPH_ENV_VARS" --set-secrets "$MS_GRAPH_SECRETS" --runtime go126 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --service-account="$serviceAccount" --entry-point sendEmail &
 pids[$!]="sendEmail"
 
 echo "Deploying addUser"
-gcloud functions deploy addUser_$environment --set-env-vars "$MS_GRAPH_ENV_VARS" --set-secrets "$MS_GRAPH_SECRETS" --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --service-account="$serviceAccount" --entry-point addUser &
+gcloud functions deploy addUser_$environment --set-env-vars "$MS_GRAPH_ENV_VARS" --set-secrets "$MS_GRAPH_SECRETS" --runtime go126 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --service-account="$serviceAccount" --entry-point addUser &
 pids[$!]="addUser"
 
 echo "Deploying sendPasswordSetupLink"
-gcloud functions deploy sendPasswordSetupLink_$environment --set-env-vars "$MS_GRAPH_ENV_VARS" --set-secrets "$MS_GRAPH_SECRETS" --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --service-account="$serviceAccount" --entry-point sendPasswordSetupLink &
+gcloud functions deploy sendPasswordSetupLink_$environment --set-env-vars "$MS_GRAPH_ENV_VARS" --set-secrets "$MS_GRAPH_SECRETS" --runtime go126 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --service-account="$serviceAccount" --entry-point sendPasswordSetupLink &
 pids[$!]="sendPasswordSetupLink"
 
 # setPassword does NOT send email, so unlike sendPasswordSetupLink it needs no
 # MS Graph secret — modelled on verifyOtp (env-var only).
 echo "Deploying setPassword"
-gcloud functions deploy setPassword_$environment --set-env-vars ENVIRONMENT=$environment --runtime go122 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --service-account="$serviceAccount" --entry-point setPassword &
+gcloud functions deploy setPassword_$environment --set-env-vars ENVIRONMENT=$environment --runtime go126 --trigger-http --project $project --region asia-east1 --allow-unauthenticated --gen2 --service-account="$serviceAccount" --entry-point setPassword &
 pids[$!]="setPassword"
 
 echo "Deploying UserCreated trigger"
-gcloud functions deploy userCreated_$environment --gen2 --service-account="$serviceAccount" --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=userCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}users/{uid}" --set-env-vars "$MS_GRAPH_ENV_VARS" --set-secrets "$MS_GRAPH_SECRETS" --project=$project &
+gcloud functions deploy userCreated_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=userCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}users/{uid}" --set-env-vars "$MS_GRAPH_ENV_VARS" --set-secrets "$MS_GRAPH_SECRETS" --project=$project &
 pids[$!]="userCreated"
 
 echo "Deploying LoanChanges trigger"
-gcloud functions deploy loanChanges_$environment --gen2 --service-account="$serviceAccount" --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=loanChanges --trigger-event-filters=type=google.cloud.firestore.document.v1.written --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}loans/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+gcloud functions deploy loanChanges_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=loanChanges --trigger-event-filters=type=google.cloud.firestore.document.v1.written --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}loans/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
 pids[$!]="loanChanges"
 
 echo "Deploying LoanScheduleChanges trigger"
-gcloud functions deploy loanScheduleChanges_$environment --gen2 --service-account="$serviceAccount" --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=loanScheduleChanges --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}loan_schedules/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+gcloud functions deploy loanScheduleChanges_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=loanScheduleChanges --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}loan_schedules/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
 pids[$!]="loanScheduleChanges"
 
 echo "Deploying CapitalCreated trigger"
-gcloud functions deploy capitalCreated_$environment --gen2 --service-account="$serviceAccount" --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=capitalCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}capital/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+gcloud functions deploy capitalCreated_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=capitalCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}capital/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
 pids[$!]="capitalCreated"
 
 echo "Deploying NotificationCreated trigger"
-gcloud functions deploy notificationCreated_$environment --gen2 --service-account="$serviceAccount" --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=notificationCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}notifications/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+gcloud functions deploy notificationCreated_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=notificationCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}notifications/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
 pids[$!]="notificationCreated"
 
 echo "Deploying ReviewCreated trigger"
-gcloud functions deploy reviewCreated_$environment --gen2 --service-account="$serviceAccount" --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=reviewCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}reviews/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+gcloud functions deploy reviewCreated_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=reviewCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}reviews/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
 pids[$!]="reviewCreated"
 
 echo "Deploying ReviewUpdated trigger"
-gcloud functions deploy reviewUpdated_$environment --gen2 --service-account="$serviceAccount" --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=reviewUpdated --trigger-event-filters=type=google.cloud.firestore.document.v1.updated --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}reviews/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+gcloud functions deploy reviewUpdated_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=reviewUpdated --trigger-event-filters=type=google.cloud.firestore.document.v1.updated --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}reviews/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
 pids[$!]="reviewUpdated"
 
 echo "Deploying PaymentCreated trigger"
-gcloud functions deploy paymentCreated_$environment --gen2 --service-account="$serviceAccount" --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=paymentCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}payments/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+gcloud functions deploy paymentCreated_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=paymentCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}payments/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
 pids[$!]="paymentCreated"
 
 echo "Deploying PaymentUpdated trigger"
-gcloud functions deploy paymentUpdated_$environment --gen2 --service-account="$serviceAccount" --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=paymentUpdated --trigger-event-filters=type=google.cloud.firestore.document.v1.updated --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}payments/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+gcloud functions deploy paymentUpdated_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=paymentUpdated --trigger-event-filters=type=google.cloud.firestore.document.v1.updated --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}payments/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
 pids[$!]="paymentUpdated"
 
 echo "Deploying UserChanges trigger"
-gcloud functions deploy userChanges_$environment --gen2 --service-account="$serviceAccount" --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=userChanges --trigger-event-filters=type=google.cloud.firestore.document.v1.updated --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}users/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+gcloud functions deploy userChanges_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=userChanges --trigger-event-filters=type=google.cloud.firestore.document.v1.updated --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}users/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
 pids[$!]="userChanges"
 
 echo "Deploying MessageWritten trigger"
-gcloud functions deploy messageWritten_$environment --gen2 --service-account="$serviceAccount" --runtime=go122 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=messageWritten --trigger-event-filters=type=google.cloud.firestore.document.v1.written --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}chat_rooms/{roomId}/messages/{messageId}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+gcloud functions deploy messageWritten_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=messageWritten --trigger-event-filters=type=google.cloud.firestore.document.v1.written --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}chat_rooms/{roomId}/messages/{messageId}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
 pids[$!]="messageWritten"
 
 echo ""

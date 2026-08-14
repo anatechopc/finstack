@@ -186,7 +186,7 @@ The borrower submission flow writes `pending` payments that a teller later confi
 
 `requestOtp` now normalizes `mobile_number` to E.164 using the country from the user's address before writing the RTDB entry. An independent review found five defects in the first implementation, **each reproduced by running the code**, not by reading the diff:
 
-- **`phonenumbers` v1.1.8 panicked** on RFC3966-shaped input (`"9175551291;phone-context=x tel:y"` → `slice bounds out of range`). `mobile_number` is written client-side straight to Firestore (`update_user.go` is a stub; the app's `digitsOnly`/`maxLength(10)` is UI-only), so any authenticated client could plant the value and turn every call into a 500. **Now on v1.5.0** — the newest release that keeps a `go 1.19` directive, so the **`go122` runtime is unaffected**. v1.6.0+ forces `go 1.23.0`; do not upgrade past v1.5.0 without also moving the runtime in `deploy_functions.sh` (~20 `--runtime go122` occurrences). A `recover` guards `NormalizePhoneE164` regardless.
+- **`phonenumbers` v1.1.8 panicked** on RFC3966-shaped input (`"9175551291;phone-context=x tel:y"` → `slice bounds out of range`). `mobile_number` is written client-side straight to Firestore (`update_user.go` is a stub; the app's `digitsOnly`/`maxLength(10)` is UI-only), so any authenticated client could plant the value and turn every call into a 500. **Now on v1.5.0** — the newest release that keeps a `go 1.19` directive, so the **`go122` runtime is unaffected**. v1.6.0+ forces `go 1.23.0`; do not upgrade past v1.5.0 without also moving the runtime in `deploy_functions.sh` (~20 `--runtime go122` occurrences). A `recover` guards `NormalizePhoneE164` regardless. **(Superseded 2026-08-14: `go122` was retired by GCF and the runtime is now `go126` — see the runtime section below. The v1.5.0 ceiling no longer applies; upgrading `phonenumbers` is now a free choice, though nothing requires it.)**
 - **Keypad alpha-to-digit conversion**: `"0917LOOOANS"` normalized to `"+639175666267"` — a real, unrelated subscriber — and passed `IsValidNumber`, so the OTP was delivered to a stranger with a 200 response. This happens in **every** library version, so input is now screened for non-dialable characters *before* `Parse`. Screening, not a version bump, is the fix.
 - **Landlines passed validation**: `"0288887777"` → `"+63288887777"`, accepted, then silently undeliverable — the exact failure the feature exists to prevent. Now requires `GetNumberType` to be `MOBILE` or `FIXED_LINE_OR_MOBILE`.
 - **Company-affiliated users were permanently locked out**: the address query filtered on `data_type == "user"`, but registration writes only a `provider` doc keyed on `company_id`, and the app resolves those users' addresses from it (`session_loader.dart`). A lender's founding admin got a 400 telling them to complete an address record **no screen would ever create**. `ReadUserAddress` now falls back to the company's provider address.
@@ -199,3 +199,52 @@ Also: `Limit(1)` let a soft-deleted address mask a live one (now skips deleted d
 **Not fixed, by decision**: the payment-acknowledgement path (`reason=payment`) shares the mobile branch and so inherits the address precondition — whether payments should be gated on address completeness is a product call.
 
 **Withdrawn finding**: "12 live PH prefixes rejected" was wrong — v1.8.1 rejects `0900-0904, 0913, 0940, 0941, 0980, 0982, 0984, 0990` identically, so it is not stale metadata.
+
+---
+
+## GCF runtime `go122` retired — every function deploy failing (2026-08-14)
+
+**Google removed `go122` from Cloud Functions 2nd gen.** Every deploy of the
+whole fleet failed on the `gcloud functions deploy` step:
+
+```
+ERROR: (gcloud.functions.deploy) Invalid value for [--runtime]:
+go122 is not a supported runtime on GCF 2nd gen
+```
+
+- **Build and Test passed** in the same runs — this is a deploy-time rejection
+  only, so a green check on the test job proves nothing about deployability.
+- **17 functions failed together**, i.e. all of them. The last successful
+  functions deploy was **2026-07-09**; every merge after that silently left the
+  backend frozen at that build. Nothing regressed — already-deployed functions
+  kept serving — but no backend change reached any environment for five weeks.
+- **First revealed by the docs-only merge of PR #92** (2026-08-13), then again by
+  PR #89 (2026-08-14). Neither PR caused it; the retirement did.
+
+**Fix**: `--runtime` moved to `go126` in `deploy_functions.sh` (17 occurrences —
+note **two flag spellings**, `--runtime go122` ×6 and `--runtime=go122` ×11; a
+grep for one form finds only a third of them). Available in `asia-east1` at the
+time: `go123` DEPRECATED, `go124`/`go125`/`go126` GA. `go126` chosen for the
+longest runway.
+
+`functions/loans/go.mod` still declares `go 1.22.12` and was deliberately left
+alone — the directive pins *language semantics*, not the build toolchain, so a
+newer runtime builds it unchanged.
+
+**Verified before merge** by building and testing under the real toolchain
+without installing it system-wide:
+
+```bash
+cd functions/loans
+GOTOOLCHAIN=go1.26.0 CGO_ENABLED=0 go build ./...   # exit 0
+GOTOOLCHAIN=go1.26.0 CGO_ENABLED=0 go test ./...    # all packages ok
+```
+
+`GOTOOLCHAIN` (Go 1.21+) downloads the requested toolchain on demand — use it to
+test a runtime bump instead of trusting that it will build server-side.
+
+**CI toolchain parity**: the three `loans-functions-*.yml` workflows pinned
+`go-version: '1.22'` while GCF built with the runtime's own Go. They now pin
+`'1.26'` so the tests run on the toolchain that actually builds the deploy.
+Keep these two in step — a drifted pair is the same blind spot as CI never
+running `flutter test`.
