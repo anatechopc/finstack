@@ -83,3 +83,96 @@ Full details in `apps/loans/MEMORY.md`. Cross-project notes:
 - **Toolchain floor raised on Android**: AGP 8.11.1, Kotlin 2.2.20, Gradle 8.14.3, compileSdk/targetSdk 36, Java 17. Required by plugin dependencies Flutter 3.44 brings.
 - **iOS Podfile.lock will need a refresh on a Mac** (plugin versions changed) — not verified locally because no CocoaPods on dev box.
 - The `org.gradle.jvmargs=-Xmx2048M` rule (from "Build / Test gotchas") needed to go higher: **4096M** at this toolchain. Update the rule accordingly when next touched.
+
+---
+
+## OTP SMS non-delivery — independent review + fixes (2026-08-12, PRs #89/#90/#91)
+
+Three PRs (backend #89, sms-gateway #90, Flutter #91) fixing OTP SMS non-delivery were declared "ready to merge, zero Critical/Important" by an in-run subagent review. An **independent multi-agent `/code-review` at xhigh later found 41 issues, including one that inverted an entire PR.** All blocking findings are fixed; the PRs are green and mergeable but **not yet merged**.
+
+### Process lesson (the important part)
+
+The in-run reviewers only ever read the diff and the implementer's own report — they never executed the code or consulted platform/SDK source, so they validated the work against the same assumptions that produced it. Do **not** treat an in-run review as a merge gate. Before calling a PR mergeable:
+
+1. Run a review that was **not** part of the implementation loop.
+2. **Execute** the code on real inputs rather than reasoning from the diff. (Two #89 bugs were only provable by running `NormalizePhoneE164`; #90's fatal bug was only provable from the android-35 `IntentFilter` source.)
+3. Check which workflow **actually runs** the tests instead of trusting a green check — see the CI section below.
+4. Design manual tests that distinguish "works" from "fails the same way as the bug". The planned airplane-mode gateway test expected `failed`, and the bug made *everything* `failed`, so it would have passed.
+5. Beware that **one review round's own fix can be the next round's bug**: pinning `phonenumbers` to v1.1.8 (to hold the `go 1.22` directive) was itself the source of a client-triggerable panic.
+
+### CI: `flutter test` never ran
+
+**No workflow ran `flutter test` at all.** Green checks only ever proved the web build compiled. `loans-app-development.yml` now runs package tests and app tests before the build, gating the PR.
+
+- The test step **must stay after the `Generate code` step**: `*.g.dart` is gitignored repo-wide and generated per build, so testing first asserts against stale or absent generated code.
+- That trap produced a wrong diagnosis mid-session: `review_repository` appeared to have "JSON round-trip bugs" when the local `*.g.dart` was simply stale (generated 16 Jun; the model gained four `response*` fields 19 Jun). After regeneration it passes 9/9. **When a package test fails locally, regenerate before believing it.**
+- `address_repository` and `bank_details_repository` each held one Very Good CLI scaffold test — `expect(SomeRepository(), isNotNull)` — which asserts nothing and can never pass, because constructing the repository builds `FirebaseFirestore.instance` and throws `[core/no-app]`. Both deleted; those packages now have no `test/` dir. The gate is unconditional — **keep it that way.**
+
+### SMS gateway (`apps/sms-gateway`, PR #90) — has no MEMORY.md of its own
+
+- **Fatal bug**: the sent-intents carried `setData("loooans-sms://<hash>/<i>")` to make each PendingIntent unique, but the receiver's `IntentFilter(ACTION_SMS_SENT)` declares no data scheme. Per `IntentFilter.matchData` (android-35 source, line 1739), a filter with null types **and** null schemes returns `NO_MATCH_DATA` for any intent carrying data. **The receiver could never fire**, so `markSent` was unreachable and every *delivered* OTP was written `failed: "timeout waiting for send result"`. PendingIntent uniqueness now lives in the `requestCode` (`sendRequestCode(sendId, partIndex)`); **never reintroduce `setData` on these intents.**
+- A per-attempt **send id** in the extras lets a late result from a timed-out attempt be recognised and ignored instead of credited to its successor.
+- Expired entries now write a terminal `failed` status instead of returning silently — returning silently left them `pending` forever and poisoned the "are OTP SMS stuck at pending?" health check.
+- `onDestroy` gives in-flight sends a terminal status before cancelling `serviceScope`.
+- **Pre-existing bug fixed**: the `gateway_status` "offline" write was launched into `serviceScope` and cancelled by `serviceScope.cancel()` on the very next line, so devices never went offline — the likely cause of the stale Pixel 10 / PJE110 entries.
+
+### Resume state (as of 2026-08-12)
+
+All three PRs are **pushed, mergeable, CI-green, and unmerged**. Merging auto-deploys, so it is a deliberate call.
+
+- **#89** `feature/otp-phone-normalization` — merge **first** (backend-first).
+- **#90** `feature/sms-gateway-delivery-status` — needs a manual APK build + `adb install` on the gateway phone (SM-S908E) after merge. **Re-test must include the happy path**: confirm a real send writes `sms_status: "sent"` with a non-null `sent_at`, *then* do the airplane-mode run and confirm `RESULT_ERROR_RADIO_OFF (2)` rather than `timeout waiting for send result`.
+- **#91** `feature/otp-error-surfacing` — also carries the CI test gate.
+
+Deliberately **not** fixed, needing a decision rather than a patch:
+- The payment-acknowledgement OTP path still inherits the borrower address/country precondition — a product call about whether payments should be gated on address completeness.
+- The backend-first gap: #89's new 400s reach production before an app release can display them.
+- `phonenumbers` adds a global-metadata load to every function's cold start in the shared binary (measure before restructuring).
+- `review_repository`'s tests pass, but its `response*` fields depend on codegen freshness — worth confirming the feature works end to end.
+
+**Withdrawn finding** (recorded so nobody re-chases it): "12 live PH prefixes rejected as invalid" was wrong. v1.8.1 rejects `0900-0904, 0913, 0940, 0941, 0980, 0982, 0984, 0990` identically, so it is not stale metadata and there is no evidence those prefixes are allocated.
+
+---
+
+## GCF retired `go122` — the backend deploy pipeline was broken (2026-08-14)
+
+**PR #89 is merged (`4a598a7`) but did not deploy.** Google removed `go122` from
+Cloud Functions 2nd gen, so `gcloud functions deploy` now rejects every function:
+
+```
+ERROR: (gcloud.functions.deploy) Invalid value for [--runtime]:
+go122 is not a supported runtime on GCF 2nd gen
+Failed functions: userChanges messageWritten verifyOtp requestOtp
+loanScheduleChanges paymentCreated reviewUpdated reviewCreated
+notificationCreated capitalCreated paymentUpdated sendPasswordSetupLink
+setPassword sendEmail addUser loanChanges userCreated
+```
+
+The **last successful functions deploy was 2026-07-09.** The dev backend sat
+frozen at that build for five weeks without anyone noticing, because *the Build
+and Test job stayed green the whole time* — only the deploy step failed, and
+nothing merged in between. It surfaced when the docs-only merge of PR #92
+(2026-08-13) happened to trigger a deploy.
+
+**Watch the deploy job, not just the PR check.** A merged PR with a green check
+is not a shipped change; on this repo the deploy runs *after* the merge, on
+`develop`, and its failure is invisible from the PR.
+
+Staging and production run the same `deploy_functions.sh`, so the first
+`release/*` or `master` deploy would have failed identically.
+
+Fix and verification details (flag spellings, `GOTOOLCHAIN` recipe, runtime
+availability): `functions/loans/MEMORY.md`. Summary: 17 `--runtime` flags moved
+to `go126`; the three `loans-functions-*.yml` workflows moved from
+`go-version: '1.22'` to `'1.26'` so CI compiles on the toolchain that builds the
+deploy; `go.mod` left at `go 1.22.12` deliberately.
+
+### OTP PR resume state (supersedes the 2026-08-12 table above)
+
+- **#89 `feature/otp-phone-normalization` — MERGED 2026-08-14** (`4a598a7`),
+  **not yet live**; it deploys on the first successful run after the runtime fix.
+- **#90 `feature/sms-gateway-delivery-status`** — open, mergeable, unaffected by
+  the runtime problem (Android APK, separate pipeline). Still needs the manual
+  APK build + `adb install` on the gateway phone, happy path asserted first.
+- **#91 `feature/otp-error-surfacing`** — open, mergeable. Surfaces the 400s that
+  #89 produces, so it is only meaningful once #89 is actually deployed.

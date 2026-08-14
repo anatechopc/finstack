@@ -26,26 +26,60 @@ final _log = Logger('payment_bloc');
 class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
   PaymentBloc(BuildContext context)
       : authService = AuthenticationService.instance,
-        settingsService = SettingsService.instance,
         loanRepository = context.read<LoanRepository>(),
         loanScheduleRepository = context.read<LoanScheduleRepository>(),
         storageRepository = context.read<StorageRepository>(),
         paymentRepository = context.read<PaymentRepository>(),
-        cashPoolRepository = context.read<CashPoolRepository>(),
         userRepository = context.read<UserRepository>(),
         super(const PaymentState()) {
+    cashPoolRepository = context.read<CashPoolRepository>();
+    settingsService = SettingsService.instance;
+    on<PayLoanScheduleEvent>(_handlePayLoanScheduleEvent);
+    on<RequestPaymentOtpEvent>(_handleRequestPaymentOtpEvent);
+    on<VerifyPaymentOtpEvent>(_handleVerifyPaymentOtpEvent);
+  }
+
+  /// Test seam mirroring `AuthenticationBloc.withDependencies`: lets unit
+  /// tests inject mocked collaborators without a [BuildContext].
+  ///
+  /// [cashPoolRepository] is optional because it is a `final` class and so
+  /// cannot be mocked; the OTP handlers never touch it, and any test that
+  /// reaches a handler which does will fail loudly on the unset late field
+  /// rather than silently using a stand-in.
+  PaymentBloc.withDependencies({
+    required this.userRepository,
+    required this.loanRepository,
+    required this.loanScheduleRepository,
+    required this.storageRepository,
+    required this.paymentRepository,
+    CashPoolRepository? cashPoolRepository,
+    AuthenticationService? authService,
+    SettingsService? settingsService,
+  })  : authService = authService ?? AuthenticationService.instance,
+        super(const PaymentState()) {
+    if (cashPoolRepository != null) {
+      this.cashPoolRepository = cashPoolRepository;
+    }
+    if (settingsService != null) {
+      this.settingsService = settingsService;
+    }
     on<PayLoanScheduleEvent>(_handlePayLoanScheduleEvent);
     on<RequestPaymentOtpEvent>(_handleRequestPaymentOtpEvent);
     on<VerifyPaymentOtpEvent>(_handleVerifyPaymentOtpEvent);
   }
 
   final AuthenticationService authService;
-  final SettingsService settingsService;
+
+  /// `late` so the test seam can omit it (SettingsService.instance throws
+  /// until the app initializes it) — see [PaymentBloc.withDependencies].
+  late final SettingsService settingsService;
   final LoanRepository loanRepository;
   final LoanScheduleRepository loanScheduleRepository;
   final StorageRepository storageRepository;
   final PaymentRepository paymentRepository;
-  final CashPoolRepository cashPoolRepository;
+
+  /// `late` so the test seam can omit it — see [PaymentBloc.withDependencies].
+  late final CashPoolRepository cashPoolRepository;
   final UserRepository userRepository;
 
   void makePayment({
@@ -303,6 +337,12 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
           expireAt: response.expireAt,
         ),
       );
+    } on RequestOtpException catch (err) {
+      _log.warning('Request payment OTP rejected: $err', err);
+      emit(const PaymentState.loading());
+      // Keep this flow's own wording when the server sent nothing
+      // displayable, rather than inheriting the auth flow's copy.
+      emit(PaymentState.error(err.userMessageOr('Failed to send OTP')));
     } catch (err) {
       _log.severe('Request payment OTP error: $err', err);
       emit(const PaymentState.loading());

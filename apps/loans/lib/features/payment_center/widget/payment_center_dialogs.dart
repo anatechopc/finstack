@@ -892,7 +892,11 @@ class _PaymentCenterOtpDialogState
           Navigator.of(context, rootNavigator: true).pop(
             {'verified': true, 'token': _token},
           );
-        } else if (state.status == PaymentCenterStatus.error) {
+        } else if (state.status == PaymentCenterStatus.otpError) {
+          // otpError, not error: the screen-level listener pops the topmost
+          // root route on error, which here is this dialog. Recoverable OTP
+          // failures must leave the dialog open so the user can resend or
+          // retype the code.
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(

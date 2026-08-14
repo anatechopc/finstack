@@ -126,6 +126,34 @@ jobs:
             echo "All packages restored from cache"
           fi
 
+      # Gate the PR on the unit tests. Until this existed, no workflow ran
+      # `flutter test` at all: a PR could go green with failing or entirely
+      # unexecuted tests, which is how a bloc regression could ship unnoticed.
+      #
+      # No exclusions: every package suite must pass. Runs after the codegen
+      # step above, which matters — these packages' *.g.dart files are
+      # gitignored and generated per build, so testing before codegen would
+      # assert against stale or absent generated code.
+      - name: Run package tests
+        run: |
+          failed=''
+          for group in core loans; do
+            for pkg in ../../packages/$group/*/; do
+              name=$(basename "$pkg")
+              [ -d "$pkg/test" ] || continue
+              echo "::group::$name"
+              (cd "$pkg" && flutter test) || failed="$failed $name"
+              echo "::endgroup::"
+            done
+          done
+          if [ -n "$failed" ]; then
+            echo "::error title=Package tests failed::$failed"
+            exit 1
+          fi
+
+      - name: Run app tests
+        run: flutter test
+
       - name: Build web
         run: flutter build web -t lib/main_development.dart --release
           --dart-define=ENVIRONMENT=development --output build/web/development

@@ -11,6 +11,14 @@ enum PaymentCenterStatus {
   otpLoading,
   otpRequested,
   otpVerified,
+
+  /// An OTP step failed but the flow is still recoverable — the user can
+  /// resend or correct the code. Kept distinct from [error] because the
+  /// screen-level listener pops the topmost root route on [error], which
+  /// during the OTP step is the OTP dialog itself: reporting a recoverable
+  /// OTP failure as [error] would tear down the payment the message is
+  /// telling the user how to fix.
+  otpError,
   error,
 }
 
