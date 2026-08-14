@@ -131,3 +131,48 @@ Deliberately **not** fixed, needing a decision rather than a patch:
 - `review_repository`'s tests pass, but its `response*` fields depend on codegen freshness — worth confirming the feature works end to end.
 
 **Withdrawn finding** (recorded so nobody re-chases it): "12 live PH prefixes rejected as invalid" was wrong. v1.8.1 rejects `0900-0904, 0913, 0940, 0941, 0980, 0982, 0984, 0990` identically, so it is not stale metadata and there is no evidence those prefixes are allocated.
+
+---
+
+## GCF retired `go122` — the backend deploy pipeline was broken (2026-08-14)
+
+**PR #89 is merged (`4a598a7`) but did not deploy.** Google removed `go122` from
+Cloud Functions 2nd gen, so `gcloud functions deploy` now rejects every function:
+
+```
+ERROR: (gcloud.functions.deploy) Invalid value for [--runtime]:
+go122 is not a supported runtime on GCF 2nd gen
+Failed functions: userChanges messageWritten verifyOtp requestOtp
+loanScheduleChanges paymentCreated reviewUpdated reviewCreated
+notificationCreated capitalCreated paymentUpdated sendPasswordSetupLink
+setPassword sendEmail addUser loanChanges userCreated
+```
+
+The **last successful functions deploy was 2026-07-09.** The dev backend sat
+frozen at that build for five weeks without anyone noticing, because *the Build
+and Test job stayed green the whole time* — only the deploy step failed, and
+nothing merged in between. It surfaced when the docs-only merge of PR #92
+(2026-08-13) happened to trigger a deploy.
+
+**Watch the deploy job, not just the PR check.** A merged PR with a green check
+is not a shipped change; on this repo the deploy runs *after* the merge, on
+`develop`, and its failure is invisible from the PR.
+
+Staging and production run the same `deploy_functions.sh`, so the first
+`release/*` or `master` deploy would have failed identically.
+
+Fix and verification details (flag spellings, `GOTOOLCHAIN` recipe, runtime
+availability): `functions/loans/MEMORY.md`. Summary: 17 `--runtime` flags moved
+to `go126`; the three `loans-functions-*.yml` workflows moved from
+`go-version: '1.22'` to `'1.26'` so CI compiles on the toolchain that builds the
+deploy; `go.mod` left at `go 1.22.12` deliberately.
+
+### OTP PR resume state (supersedes the 2026-08-12 table above)
+
+- **#89 `feature/otp-phone-normalization` — MERGED 2026-08-14** (`4a598a7`),
+  **not yet live**; it deploys on the first successful run after the runtime fix.
+- **#90 `feature/sms-gateway-delivery-status`** — open, mergeable, unaffected by
+  the runtime problem (Android APK, separate pipeline). Still needs the manual
+  APK build + `adb install` on the gateway phone, happy path asserted first.
+- **#91 `feature/otp-error-surfacing`** — open, mergeable. Surfaces the 400s that
+  #89 produces, so it is only meaningful once #89 is actually deployed.
