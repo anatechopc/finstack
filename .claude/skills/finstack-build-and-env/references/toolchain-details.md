@@ -67,10 +67,10 @@ Known debt (candidates for refile on finstack, none filed as of 2026-07-07):
 
 ## 5. fvm mechanics in this monorepo
 
-- The ONLY `.fvmrc` is `apps/loans/.fvmrc` (`{"flutter": "3.44.0"}`). `apps/loans/.fvm/` is gitignored.
-- fvm resolves the version by walking up from the CWD looking for a project config. `packages/**` has none, so `fvm flutter` there uses the **global default** (`~/fvm/default` symlink). All four `packages/*.sh` scripts therefore depend on `fvm global 3.44.0` being set. Verified live: with global = 3.44.0, `fvm flutter --version` inside `packages/core/loooans_helpers` resolves 3.44.0.
+- The ONLY `.fvmrc` is `apps/loans/.fvmrc` (`{"flutter": "3.44.9"}`). `apps/loans/.fvm/` is gitignored.
+- fvm resolves the version by walking up from the CWD looking for a project config. `packages/**` has none, so `fvm flutter` there uses the **global default** (`~/fvm/default` symlink). All four `packages/*.sh` scripts therefore depend on `fvm global 3.44.9` being set. Verified live: with global = 3.44.9, `fvm flutter --version` inside `packages/core/loooans_helpers` resolves 3.44.9. **Keep the global default and `.fvmrc` in step** — when they drifted (global 3.44.9, `.fvmrc` 3.44.0 uninstalled), every `fvm flutter` command in `apps/loans` silently blocked on an interactive "install it now?" prompt while `packages/**` kept working.
 - SDK cache lives at `~/fvm/versions/<version>`; `fvm install` inside `apps/loans` reads the pin.
-- Stale references you may still see: `ARCHITECTURE.md` and `apps/loans/MEMORY.md` "Key Notes" still say Flutter 3.38.4, and that MEMORY section also points at the pre-monorepo Go backend path. `.fvmrc` + both CLAUDE.md files are the truth (3.44.0).
+- Stale references you may still see: `ARCHITECTURE.md` and `apps/loans/MEMORY.md` "Key Notes" still say Flutter 3.38.4, and that MEMORY section also points at the pre-monorepo Go backend path. `.fvmrc` + both CLAUDE.md files are the truth (3.44.9).
 
 ## 6. sms-gateway specifics (apps/sms-gateway)
 
