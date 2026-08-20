@@ -5,12 +5,14 @@ import 'package:chat_repository/src/model/chat_room.dart';
 import 'package:chat_repository/src/model/participant.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:loooans_helpers/data_helpers.dart';
+import 'package:loooans_helpers/logging_helpers.dart';
 
 class ChatRoomRepository implements BaseRepository<ChatRoom> {
   ChatRoomRepository({FirebaseFirestore? firestore})
       : _service = ChatRoomFirestoreService(firestore: firestore);
 
   final ChatRoomFirestoreService _service;
+  final _log = Logger('chat_room_repository');
 
   /// Tears down the live rooms query and stream.
   void dispose() => _service.dispose();
@@ -107,11 +109,21 @@ class ChatRoomRepository implements BaseRepository<ChatRoom> {
       final incoming = contextLabel?.trim() ?? '';
       if (current.isEmpty && incoming.isNotEmpty) {
         unawaited(
-          _service
-              .setContextLabel(roomId: room.id, label: incoming)
-              .catchError((Object _) {}),
+          _service.setContextLabel(roomId: room.id, label: incoming).catchError(
+            (Object e) {
+              // Swallowed so the conversation still opens, but LOGGED: the
+              // chat_rooms rules are console-managed, so a rule that forbids
+              // this field would otherwise leave every pre-existing room stuck
+              // on the generic pill with no signal anywhere.
+              _log.warning('context_label backfill failed for ${room.id}: $e');
+            },
+          ),
         );
-        room.contextLabel = incoming; // render it now regardless
+        // Keep the returned model consistent with what was queued. Callers use
+        // only room.id today (they navigate, and the screens re-read from
+        // Firestore), so this is for correctness of the returned object rather
+        // than something the UI depends on.
+        room.contextLabel = incoming;
       }
       return room;
     }

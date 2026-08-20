@@ -83,20 +83,20 @@ void main() {
       roomWith(contextType: 'product', contextLabel: 'Business loan'),
     );
     expect(find.text('Business loan'), findsOneWidget);
-    expect(find.text('Product'), findsNothing);
+    expect(find.text('Offer'), findsNothing);
   });
 
   testWidgets('falls back to the context type when no label was stored',
       (tester) async {
     // Rooms created before context_label existed carry only the type.
     await pumpRoom(tester, roomWith(contextType: 'product'));
-    expect(find.text('Product'), findsOneWidget);
+    expect(find.text('Offer'), findsOneWidget);
   });
 
   testWidgets('renders no context pill for an unanchored room',
       (tester) async {
     await pumpRoom(tester, roomWith());
-    expect(find.text('Product'), findsNothing);
+    expect(find.text('Offer'), findsNothing);
     expect(find.text('Loan'), findsNothing);
     expect(find.text('Acme'), findsOneWidget);
   });
@@ -124,19 +124,20 @@ void main() {
     expect(find.text('Salary Loan'), findsOneWidget);
   });
 
-  testWidgets('a labelled awaiting row fits a 320dp phone without overflowing',
+  testWidgets('the context label is not squeezed on a real phone',
       (tester) async {
-    // The staff inbox renders BOTH pills. Sized intrinsically they exceed a
-    // narrow row and RenderFlex overflows — no other test reaches this case,
-    // because none sets myCompanyId and the default surface is 800dp wide.
-    await tester.binding.setSurfaceSize(const Size(320, 640));
+    // takeException()/find.text() cannot catch this: find.text matches the
+    // widget's data, not painted glyphs, and a Row whose children are all
+    // Flexible can never overflow. An earlier cut wrapped the label in
+    // Flexible, which CAPS a child at spacePerFlex * flex -- it rendered 34.6px
+    // of a 140px label on a 390dp phone and every test still passed. So
+    // measure the width instead of asserting the absence of an exception.
+    await tester.binding.setSurfaceSize(const Size(390, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    final room = roomWith(
-      contextType: 'product',
-      contextLabel: 'Emergency loan',
-    );
-    room.lastSeq = 5; // unhandled by the team => "Awaiting" renders
+    const label = 'Loan ₱50k · Business loan';
+    final room = roomWith(contextType: 'loan', contextLabel: label)
+      ..lastSeq = 5; // also renders the staff "Awaiting" pill
 
     when(() => bloc.state).thenReturn(
       ConversationsState(
@@ -148,8 +149,26 @@ void main() {
     );
     await tester.pumpApp(subject());
 
+    // The full label needs ~275px and the line has ~210px, so it ellipsizes.
+    // What must survive is the DISCRIMINATOR -- the kind and the amount -- so
+    // several loans of one product stay tellable apart. Assert that prefix
+    // fits, not the whole string.
+    final discriminator = TextPainter(
+      text: const TextSpan(
+        text: 'Loan ₱50k · ',
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final rendered = tester.getSize(find.text(label)).width;
+
+    expect(
+      rendered,
+      greaterThanOrEqualTo(discriminator.width),
+      reason: 'truncation is eating the amount, which is what tells a '
+          "borrower's loans apart",
+    );
     expect(find.text('Awaiting'), findsOneWidget);
-    expect(find.text('Emergency loan'), findsOneWidget);
-    expect(tester.takeException(), isNull); // no RenderFlex overflow
+    expect(tester.takeException(), isNull);
   });
 }

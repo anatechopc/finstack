@@ -1,7 +1,24 @@
 // ignore_for_file: prefer_const_constructors
 import 'package:chat_repository/chat_repository.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+/// Waits for the deliberately-unawaited backfill to land.
+///
+/// A single `Future.delayed(Duration.zero)` only works while the fake settles
+/// inside one microtask drain; any extra await inside setContextLabel would
+/// make it read the pre-write document intermittently.
+Future<Map<String, dynamic>?> awaitLabel(
+  DocumentReference<Map<String, dynamic>> doc,
+) async {
+  for (var i = 0; i < 50; i++) {
+    final data = (await doc.get()).data();
+    if (data != null && data['context_label'] != null) return data;
+    await Future<void>.delayed(Duration.zero);
+  }
+  return (await doc.get()).data();
+}
 
 void main() {
   test('ChatRoomRepository.findOrCreate reuses an existing anchored room',
@@ -62,9 +79,7 @@ void main() {
     expect(again.id, created.id); // still the same room
     expect(again.contextLabel, 'Business loan'); // rendered immediately
 
-    // The write is deliberately not awaited — let it land before asserting.
-    await Future<void>.delayed(Duration.zero);
-    final stored = (await doc.get()).data()!;
+    final stored = (await awaitLabel(doc))!;
     expect(stored['context_label'], 'Business loan');
     // The inbox orders by updated_at desc — backfilling must not float old
     // rooms to the top of everyone's list.
@@ -100,9 +115,8 @@ void main() {
 
     expect(again.id, created.id);
     expect(again.contextLabel, 'Business loan');
-    await Future<void>.delayed(Duration.zero);
     final stored =
-        (await fs.collection('dev_chat_rooms').doc(created.id).get()).data()!;
+        (await awaitLabel(fs.collection('dev_chat_rooms').doc(created.id)))!;
     expect(stored['context_label'], 'Business loan');
   });
 

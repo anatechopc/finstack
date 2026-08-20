@@ -10,6 +10,7 @@ import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loooans/app/routing/paths.dart';
+import 'package:loooans/features/chat/chat_context_label.dart';
 import 'package:loooans/features/chat/chat_participants.dart';
 import 'package:loooans/features/loans/bloc/additional_loan_bloc.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
@@ -223,17 +224,30 @@ class ClientDetailActionButtons extends StatelessWidget {
   Future<void> _openBorrowerChat(BuildContext context) async {
     final me = AuthenticationService.instance;
     final loansBloc = context.read<LoansBloc>();
+    // selectedUserLoanView is a bang-getter that THROWS when nothing is
+    // selected, so read it null-safely once and bail out visibly rather than
+    // letting the button do nothing.
+    final view = loansBloc.selectedUserLoanViewOrNull;
+    if (view == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Select a loan first.')),
+      );
+      return;
+    }
     final loan = loansBloc.selectedLoan;
     final seed = ChatParticipants.staffToBorrower(
       companyId: me.company.id,
       companyName: me.company.name,
       companyPhotoUrl: me.company.companyProfilePhotoUrl?.url,
       borrowerId: userId,
-      borrowerName: loansBloc.selectedUserLoanView?.userFullName ?? '',
+      borrowerName: view.userFullName,
       borrowerPhotoUrl: null,
       contextType: 'loan',
       contextId: loan.id,
-      contextLabel: loansBloc.selectedUserLoanView.loanType,
+      contextLabel: loanContextLabel(
+        loanType: view.loanType,
+        amount: view.amount,
+      ),
     );
     final room = await context.read<ChatRoomRepository>().findOrCreate(
           participants: seed.participants,

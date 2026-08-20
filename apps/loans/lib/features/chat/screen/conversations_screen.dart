@@ -108,24 +108,42 @@ class _ConversationRow extends StatelessWidget {
         // trailing column with the time + unread badge exceeded the ListTile
         // trailing height (28px overflow seen in the dev smoke test), and a
         // FittedBox workaround shrank the text inconsistently per row.
-        subtitle: Row(
+        // Three-line row: counterpart, what the conversation is about, then
+        // the message preview. The anchor gets its own full-width line because
+        // sharing the preview's line left it ~47px on a 320dp phone — far
+        // narrower than a label needs.
+        isThreeLine: pill != null,
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            if (pill != null) ...[
-              Flexible(child: _Pill(text: pill, color: AppColors.green1_6)),
-              const Gap(8),
-            ],
-            Flexible(
-              flex: 3,
-              child:
-                  Text(preview, maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
-            if (myCompanyId != null &&
-                isAwaitingResponse(room, myCompanyId!)) ...[
-              const Gap(8),
-              const Flexible(
-                child: _Pill(text: 'Awaiting', color: AppColors.ubOrange),
+            if (pill != null)
+              Text(
+                pill,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.green1_6,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ],
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    preview,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (myCompanyId != null &&
+                    isAwaitingResponse(room, myCompanyId!)) ...[
+                  const Gap(8),
+                  const _Pill(text: 'Awaiting', color: AppColors.ubOrange),
+                ],
+              ],
+            ),
           ],
         ),
         trailing: Column(
@@ -148,13 +166,15 @@ class _ConversationRow extends StatelessWidget {
 
 /// Small rounded label used on the subtitle line.
 ///
-/// Every child of that Row is Flexible, so the row can never exceed its
-/// constraints: on a narrow phone the pills shrink and ellipsize rather than
-/// overflowing. The preview carries the largest flex, so it yields first and
-/// the labels stay readable. An earlier cut sized the pills intrinsically and
-/// let only the preview shrink, which overflows once both pills render — the
-/// staff inbox case. This row has form: see the 28px trailing-column overflow
-/// in apps/loans/MEMORY.md.
+/// Sized to its content, capped by the caller, and ellipsized if it hits the
+/// cap. The preview beside it is Expanded and absorbs the remainder, so the
+/// row cannot overflow while the labels stay readable.
+///
+/// It is tempting to wrap these in Flexible instead — don't. A flexible child
+/// is CAPPED at spacePerFlex * flex, so flexing the pills shrank a 140px label
+/// to 17px on a 320dp phone, and because nothing overflowed, no test caught it.
+/// This row has form: see the 28px trailing-column overflow in
+/// apps/loans/MEMORY.md.
 class _Pill extends StatelessWidget {
   const _Pill({required this.text, required this.color});
 

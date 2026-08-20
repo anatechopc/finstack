@@ -86,7 +86,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
               children: [
                 Text(counterpart ?? 'Conversation'),
                 Text(
-                  'Re: $anchorLabel',
+                  anchorLabel,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   // Explicit weight/colour: the inherited titleTextStyle is

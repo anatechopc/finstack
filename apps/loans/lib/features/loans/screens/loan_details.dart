@@ -9,6 +9,7 @@ import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loooans/app/routing/paths.dart';
+import 'package:loooans/features/chat/chat_context_label.dart';
 import 'package:loooans/features/chat/chat_participants.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
 import 'package:loooans/features/payments/widget/submit_payment_dialog.dart';
@@ -599,7 +600,10 @@ class _LoanDetailsState extends State<LoanDetails> {
       companyPhotoUrl: null,
       contextType: 'loan',
       contextId: loan.id,
-      contextLabel: userLoanView.loanType,
+      contextLabel: loanContextLabel(
+        loanType: userLoanView.loanType,
+        amount: userLoanView.amount,
+      ),
     );
     final room = await context.read<ChatRoomRepository>().findOrCreate(
           participants: seed.participants,

@@ -53,6 +53,13 @@ final class ChatRoomFirestoreService
     'last_message',
     'reads',
     'team_reads',
+    // Write-once anchor metadata. context_type/context_id are the dedup key
+    // (roomMatchesAnchor): a stale client model erasing them makes
+    // findAnchoredRoom miss and forks a duplicate room for the same product —
+    // data corruption, not a cosmetic pill. context_label is merely cosmetic
+    // but has no trigger to repair it either.
+    'context_type',
+    'context_id',
     'context_label',
   ];
 

@@ -6,6 +6,7 @@ import 'package:flutter_svg/svg.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loooans/app/routing/paths.dart';
+import 'package:loooans/features/chat/chat_context_label.dart';
 import 'package:loooans/features/chat/chat_participants.dart';
 import 'package:loooans/features/products/bloc/product_bloc.dart';
 import 'package:loooans/features/products/bloc/product_status.dart';
@@ -207,7 +208,7 @@ class LoanOfferDetail extends StatelessWidget {
       companyPhotoUrl: productView.companyProfilePhotoUrl?.url,
       contextType: 'product',
       contextId: productView.productId,
-      contextLabel: productView.loanType,
+      contextLabel: productContextLabel(productView.loanType),
     );
     final room = await context.read<ChatRoomRepository>().findOrCreate(
           participants: seed.participants,

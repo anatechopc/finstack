@@ -506,7 +506,17 @@ every widget test still passed — they build `ChatRoom.create` directly and nev
 round-trip through Firestore. Same shape as the dead-stream-subscription bug
 above: green under test doubles, blank in the running app. Regression test:
 `toChatRoom carries context_label`. **When adding a room field, update the
-entity, the `props` list, `create`, AND `toChatRoom`.**
+entity, `create`, AND `toChatRoom`** — `toChatRoom` is the one that actually
+bites, because rooms reach widgets as `ChatRoom`.
+
+**`props` is inert repo-wide — do not rely on it.** `BaseEntity` *implements*
+Equatable rather than extending it (`base_entity.dart:7`) and no entity defines
+`operator ==`, so every entity uses Object identity equality and the `props`
+list is never consulted. Two consequences: two byte-identical rooms compare
+unequal, and `buildWhen: (a, b) => a.room != b.room`
+(`chat_room_screen.dart`) is always true, so it suppresses nothing. Keep `props`
+updated for consistency, but a `.distinct()` or a `buildWhen` written against
+entity equality will silently no-op.
 
 **Codegen is per-checkout, and `.g.dart` is gitignored — so it does NOT follow
 you across branches.** Running `packages/build_models.sh` while on a branch
