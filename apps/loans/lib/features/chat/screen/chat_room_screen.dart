@@ -78,10 +78,10 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
               return Text(counterpart ?? 'Conversation');
             }
             // The app theme sets centerTitle: true, so the title box is
-            // centred as a block — the lines must be centred too or they read
-            // as misaligned against every other screen.
+            // centred as a block — the lines must be centred within it too, or
+            // they read as misaligned against every other screen. Column
+            // centres by default; do not switch this to start.
             return Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(counterpart ?? 'Conversation'),

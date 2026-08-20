@@ -233,7 +233,7 @@ class ClientDetailActionButtons extends StatelessWidget {
       borrowerPhotoUrl: null,
       contextType: 'loan',
       contextId: loan.id,
-      contextLabel: loansBloc.selectedUserLoanView?.loanType,
+      contextLabel: loansBloc.selectedUserLoanView.loanType,
     );
     final room = await context.read<ChatRoomRepository>().findOrCreate(
           participants: seed.participants,

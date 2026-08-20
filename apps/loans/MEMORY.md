@@ -508,6 +508,14 @@ above: green under test doubles, blank in the running app. Regression test:
 `toChatRoom carries context_label`. **When adding a room field, update the
 entity, the `props` list, `create`, AND `toChatRoom`.**
 
+**Codegen is per-checkout, and `.g.dart` is gitignored — so it does NOT follow
+you across branches.** Running `packages/build_models.sh` while on a branch
+without this field regenerated `chat_room_entity.g.dart` without
+`context_label`; switching back to the feature branch left that stale file in
+place, and the two round-trip tests failed with the field apparently missing.
+Regenerate after ANY branch switch that changes a model, and re-read the
+`.g.dart` before believing a serialization failure.
+
 **Constraint worth knowing:** neither `ProductView` nor `Product` has a name or
 title field — `loanType` is the best human-readable label available at the
 product entry point. It is **free text** (`product_entity.dart:74
