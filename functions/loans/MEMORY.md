@@ -248,3 +248,50 @@ test a runtime bump instead of trusting that it will build server-side.
 `'1.26'` so the tests run on the toolchain that actually builds the deploy.
 Keep these two in step — a drifted pair is the same blind spot as CI never
 running `flutter test`.
+
+---
+
+## OTP SMS was carrier-filtered on the support address (2026-08-20)
+
+**Every OTP SMS this system ever sent was dropped by the carrier**, independently
+of the two code bugs fixed in #89/#90. The 149-char template carried
+`support@loooans.com`, and PH carriers filter link-bearing person-to-person SMS.
+
+**The failure was structurally invisible.** The gateway passes
+`deliveryIntent = null` (`SmsGatewayService.kt:255,257`), so the only signal is
+`sentIntent` → `Activity.RESULT_OK`, meaning *the radio accepted it*. A message
+accepted by the radio and dropped by the SMSC is written `sms_status: "sent"`
+with a `sent_at`, identical to a real delivery. Do not read "sent" as "delivered".
+
+**Evidence (six variants through the live dev gateway to one handset, same SIM,
+same recipient, spaced ~30s):**
+
+| Body | Result |
+|---|---|
+| `test` | delivered |
+| `Your Loooans OTP is 123456` | delivered |
+| warning prefix + OTP | delivered |
+| full template **minus** the address | delivered |
+| full template **with** the address | **dropped** |
+| full template with the address (repeat) | **dropped** |
+
+All six were recorded `sms_status: "sent"`. The address was the only difference.
+The real OTP sent that morning (same template) also never arrived.
+
+**Rule: no email address, URL, or link-like token in the SMS body.** Guarded by
+`TestRequestOtpCore_MobileObjective_SmsBodyHasNoLinkTokens`, which asserts the
+body contains none of `@`, `http`, `www.`, `.com`, `.ph`. The **email** OTP body
+is unaffected and still carries the support address.
+
+**Ruled out while diagnosing** (so nobody re-chases them): dual-SIM /
+subscription selection — the phone has exactly one active subscription
+(Smart PH, subId 8, slot 0, default for SMS, `IN_SERVICE`, `HOME`, unbarred);
+multipart splitting — every body is one GSM-7 segment; prepaid credit and the
+IMS/IWLAN path — both excluded once plain text delivered on the same SIM.
+
+**Still open:** the gateway requests no delivery report, so a future copy edit
+that re-trips the filter would again be silent. Passing a real `deliveryIntent`
+is the only way to distinguish `sent` (radio accepted) from `delivered`
+(handset acknowledged). Also latent: the body is 11 chars below the 160-char
+GSM-7 limit, so a single non-ASCII character (curly apostrophe, en dash, peso
+sign) flips it to UCS-2 and 3 concatenated parts.

@@ -716,3 +716,51 @@ func TestRequestOtpCore_Mobile_AddressReadError_Propagates(t *testing.T) {
 		t.Fatalf("expected transport error to propagate, got %v", err)
 	}
 }
+
+// The OTP SMS body must contain no email address, URL, or other link-like
+// token. Philippine carriers filter link-bearing person-to-person SMS, and a
+// filtered message is invisible to us: the gateway requests no delivery report,
+// so the radio reports RESULT_OK and the entry is recorded sms_status="sent"
+// whether or not it ever reaches the handset.
+//
+// Established empirically on 2026-08-20 by sending six variants through the
+// live dev gateway to one handset. Every variant WITHOUT the support address
+// arrived (plain text; "Your Loooans OTP is 123456"; the warning prefix; the
+// full template minus the address). Both variants WITH it were dropped, as was
+// the real OTP sent that morning. The address was the only difference.
+//
+// This applies to the SMS body only. The email OTP body is unaffected and may
+// still carry the support address.
+func TestRequestOtpCore_MobileObjective_SmsBodyHasNoLinkTokens(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	userReader := &fakes.UserReader{Users: map[string]map[string]any{
+		"user-123": {"mobile_number": "+639171234567"},
+	}}
+	address := &fakes.AddressReader{Countries: map[string]string{"user-123": "Philippines"}}
+	authEmail := &fakes.AuthEmailReader{}
+	otpWriter := &fakes.OtpWriter{}
+	emailSender := &fakes.EmailSender{}
+	deps, _ := buildDeps(now, "h-mob", "222222", userReader, address, authEmail, otpWriter, emailSender)
+
+	_, err := users.RequestOtpCore(context.Background(), users.RequestOtpParams{
+		UserID:    "user-123",
+		Objective: "mobile_number",
+	}, deps)
+	if err != nil {
+		t.Fatalf("RequestOtpCore returned error: %v", err)
+	}
+	if len(otpWriter.Writes) != 1 {
+		t.Fatalf("expected exactly 1 RTDB write, got %d", len(otpWriter.Writes))
+	}
+
+	msg, _ := otpWriter.Writes[0].Entry["message"].(string)
+	if msg == "" {
+		t.Fatal("SMS body is empty")
+	}
+	for _, token := range []string{"@", "http", "www.", ".com", ".ph"} {
+		if strings.Contains(strings.ToLower(msg), token) {
+			t.Errorf("SMS body contains link-like token %q, which PH carriers filter; "+
+				"keep support contact details in the email body only. Body: %q", token, msg)
+		}
+	}
+}
