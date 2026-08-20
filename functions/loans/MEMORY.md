@@ -248,3 +248,68 @@ test a runtime bump instead of trusting that it will build server-side.
 `'1.26'` so the tests run on the toolchain that actually builds the deploy.
 Keep these two in step — a drifted pair is the same blind spot as CI never
 running `flutter test`.
+---
+
+## OTP SMS was carrier-filtered on the support address (2026-08-20)
+
+**Every OTP SMS this system ever sent was dropped by the carrier**, independently
+of the two code bugs fixed in #89/#90. The 149-char template carried
+`support@loooans.com`, and PH carriers filter link-bearing person-to-person SMS.
+
+**The failure was structurally invisible.** The gateway passes
+`deliveryIntent = null` (`SmsGatewayService.kt:255,257`), so the only signal is
+`sentIntent` -> `Activity.RESULT_OK`, meaning *the radio accepted it*. A message
+accepted by the radio and dropped by the SMSC is written `sms_status: "sent"`
+with a `sent_at`, identical to a real delivery. Do not read "sent" as "delivered".
+
+**Evidence - seven variants through the live dev gateway to one handset, same
+SIM, same recipient, ~30s apart, listed in the order sent:**
+
+| # | Body | Result |
+|---|---|---|
+| 1 | `test` | delivered |
+| 2 | `Your Loooans OTP is 123456` | delivered |
+| 3 | full template **with** the address | **dropped** |
+| 4 | full template **minus** the address | delivered |
+| 5 | warning prefix + OTP | delivered |
+| 6 | full template **with** the address (repeat) | **dropped** |
+| 7 | shipped body, app CTA | delivered |
+
+All seven were recorded `sms_status: "sent"`. The real OTP sent that morning
+(same template) also never arrived.
+
+**Order matters and excludes throttling**: the first drop is #3, and #4 and #5
+were delivered *after* it. A cumulative rate-limit would degrade with each send,
+not recover - so the discriminator is content, not volume.
+
+**Rule: no email address, URL, or link-like token in the SMS body; ASCII only;
+one 160-char GSM-7 segment.** Guarded by
+`TestRequestOtpCore_MobileObjective_SmsBodyIsCarrierSafe`, with the detector
+itself pinned by `TestSmsBodyLinkDetector` (a substring denylist was the first
+attempt and was too narrow - `loooans.net`, `bit.ly/x`, `loooans://verify` all
+passed it, while `1.Complete` false-positived).
+
+**There is no support address anywhere in the OTP flow, and there never was.**
+`support@loooans.com` appeared exactly once in the whole repo - the SMS line
+removed here - and the email OTP body has never carried one (`createHtmlBody`
+closes with "please do not reply"). The app's only real support address is
+`support@anaheimtechnologies.com` (`app_footer_widget.dart:49`), a **different
+domain**, so the removed address may never have been a live mailbox. The SMS CTA
+therefore names the app ("contact us in the Loooans app") - actionable, and
+link-free so it survives the filter.
+
+**Ruled out while diagnosing** (so nobody re-chases them): dual-SIM /
+subscription selection - the phone has exactly one active subscription
+(Smart PH, subId 8, slot 0, default for SMS, `IN_SERVICE`, `HOME`, unbarred);
+multipart splitting - every body is one GSM-7 segment; prepaid credit and the
+IMS/IWLAN path - both excluded once plain text delivered on the same SIM;
+client-side coupling - no Dart code reads, parses, or autofills an SMS anywhere
+in the monorepo, so the body is human-read copy, not a parsed contract.
+
+**Still open:** the gateway requests no delivery report, so a future copy edit
+that re-trips the filter is again silent. Passing a real `deliveryIntent` is the
+only way to separate `sent` (radio accepted) from `delivered` (handset
+acknowledged). Also: the guard runs in CI against one call site - a second SMS
+body added elsewhere would be ungated until validation moves to the write
+boundary (`deps.WriteOtp`). Current headroom: the shipped body is 140 chars,
+20 below the GSM-7 limit; one non-ASCII rune makes it 3 UCS-2 parts.

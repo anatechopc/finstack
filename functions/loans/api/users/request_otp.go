@@ -168,8 +168,21 @@ func RequestOtpCore(ctx context.Context, p RequestOtpParams, deps RequestOtpDeps
 			}
 		}
 		entry["phone"] = normalized
+		// This SMS body must carry no email address, URL, or other link-like
+		// token, must stay ASCII, and must stay within one 160-char GSM-7
+		// segment. PH carriers filter link-bearing person-to-person SMS, and the
+		// gateway requests no delivery report, so a filtered message is still
+		// recorded sms_status="sent" — the failure is silent. Full incident and
+		// evidence: functions/loans/MEMORY.md, "OTP SMS was carrier-filtered on
+		// the support address (2026-08-20)".
+		// Guarded by TestRequestOtpCore_MobileObjective_SmsBodyIsCarrierSafe.
+		//
+		// The CTA names the app deliberately: it is actionable without a link,
+		// and no support address exists in the OTP flow (the email body has
+		// never carried one).
 		entry["message"] = fmt.Sprintf(
-			"NEVER SHARE YOUR ONE-TIME PIN. Your Loooans OTP is %s. If you did not request for OTP, please contact support at support@loooans.com immediately.", otp)
+			"NEVER SHARE YOUR ONE-TIME PIN. Your Loooans OTP is %s. "+
+				"If you did not request for OTP, please contact us in the Loooans app immediately.", otp)
 		entry["sms_status"] = "pending"
 		entry["sent_at"] = nil
 		entry["error"] = nil
