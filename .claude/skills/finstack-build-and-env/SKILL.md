@@ -23,7 +23,7 @@ Day-to-day build/test/analyze commands are already in the auto-loaded `CLAUDE.md
 
 | World | Path | Stack | Build entry |
 |---|---|---|---|
-| Flutter app + shared packages | `apps/loans/`, `packages/core/`, `packages/loans/` | Dart/Flutter 3.44.0 via fvm | `fvm flutter ...`, `packages/*.sh` |
+| Flutter app + shared packages | `apps/loans/`, `packages/core/`, `packages/loans/` | Dart/Flutter 3.44.9 via fvm | `fvm flutter ...`, `packages/*.sh` |
 | Cloud Functions | `functions/loans/` | Go multi-module (root `com.loooans.app`) | `go build -v ./...` |
 | SMS gateway | `apps/sms-gateway/` | Kotlin / Jetpack Compose, standalone Gradle | `./gradlew assembleDebug` |
 
@@ -36,7 +36,7 @@ Reference dev box on 2026-07-07: macOS 26.2 (Darwin 25), Apple Silicon.
 | Tool | Required | Verify | On ref box |
 |---|---|---|---|
 | fvm | 3.x/4.x | `fvm --version` | 4.0.4 |
-| Flutter | **3.44.0 exactly** (pinned in `apps/loans/.fvmrc`) | `cd apps/loans && fvm flutter --version` | 3.44.0 / Dart 3.12.0 |
+| Flutter | **3.44.9 exactly** (pinned in `apps/loans/.fvmrc`) | `cd apps/loans && fvm flutter --version` | 3.44.9 / Dart 3.12.2 |
 | Go | 1.22.x (`functions/loans/go.mod` says `go 1.22.12`; CI uses `go-version: '1.22'`) | `go version` | go1.22.12 |
 | Java (JDK) | 17 (Android builds + sms-gateway CI) | `java -version` | OpenJDK 17.0.17 (Homebrew) |
 | gcloud | recent | `gcloud --version` | 549.0.0 |

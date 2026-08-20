@@ -176,3 +176,32 @@ deploy; `go.mod` left at `go 1.22.12` deliberately.
   APK build + `adb install` on the gateway phone, happy path asserted first.
 - **#91 `feature/otp-error-surfacing`** — open, mergeable. Surfaces the 400s that
   #89 produces, so it is only meaningful once #89 is actually deployed.
+
+---
+
+## Flutter pin moved 3.44.0 → 3.44.9, and the drift that hid it (2026-08-20)
+
+`apps/loans/.fvmrc` pinned **3.44.0, which was not installed on the dev machine**,
+while the fvm **global default was 3.44.9**. fvm resolves per-directory, so:
+
+- `packages/**` (no `.fvmrc`, uses the global default) worked normally.
+- **Every `fvm flutter` command in `apps/loans` silently blocked forever** on an
+  interactive prompt — `? Would you like to install it now? (y/n)` — with no TTY
+  to answer it. One `flutter test` sat 85 minutes before anyone checked `etime`.
+
+The prompt is invisible if you pipe the command into `tail`/`head`, which buffers
+until exit. **Redirect to a file and tail the file** when a build command seems
+slow; you see partial output immediately.
+
+**All three `loans-app-*.yml` workflows read the version out of `.fvmrc`**
+(`get_flutter_version` → `flutter-version:`), so `.fvmrc` IS the CI pin — editing
+it changes every build. There is no hardcoded Flutter version in the workflows.
+
+Verified on 3.44.9 before merging: `flutter --version` resolves, `pub get` exits 0,
+**87/87 app tests pass in 10s**.
+
+Second trap hit on the way: 26 test files failed to load with
+`Error when reading '..._entity.g.dart': No such file or directory`. That is the
+gitignored-codegen trap, not a toolchain fault — `packages/build_models.sh`
+regenerates all 21 packages (CI does this in its "Generate code" step). A fresh
+clone cannot run `apps/loans` tests until it runs.
