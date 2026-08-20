@@ -164,15 +164,17 @@ class _ConversationRow extends StatelessWidget {
   }
 }
 
-/// Small rounded label used on the subtitle line.
+/// The "Awaiting" tag on the preview line.
 ///
-/// Sized to its content, capped by the caller, and ellipsized if it hits the
-/// cap. The preview beside it is Expanded and absorbs the remainder, so the
-/// row cannot overflow while the labels stay readable.
+/// Sized to its content: it is a non-flex child of a Row, so it is laid out
+/// unbounded and the preview beside it (Expanded) absorbs the remainder.
+/// That is safe only because the text is a short constant — pass a variable
+/// label and a narrow phone will overflow the row.
 ///
-/// It is tempting to wrap these in Flexible instead — don't. A flexible child
-/// is CAPPED at spacePerFlex * flex, so flexing the pills shrank a 140px label
-/// to 17px on a 320dp phone, and because nothing overflowed, no test caught it.
+/// Do NOT reach for Flexible to make that safe. A flexible child is CAPPED at
+/// spacePerFlex * flex, so an earlier cut that flexed the tags rendered 17px of
+/// a 140px label on a 320dp phone — and since nothing overflowed, no test
+/// caught it. Anchor labels live on their own line above for this reason.
 /// This row has form: see the 28px trailing-column overflow in
 /// apps/loans/MEMORY.md.
 class _Pill extends StatelessWidget {

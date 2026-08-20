@@ -28,10 +28,26 @@ void main() {
 
   test('returns null for an unanchored or unrecognised room — no pill', () {
     expect(contextPillText(), isNull);
-    expect(contextPillText(contextType: null), isNull);
     // 'company' appears in the spec's type list but no entry point creates one;
     // an unknown type must not render a raw enum string at the user.
     expect(contextPillText(contextType: 'company'), isNull);
+  });
+
+  test('a blank loanType does not leave a dangling separator', () {
+    // Product.loanType is `late String` free text, not an enum, so the "others"
+    // path can save it blank. 'Offer · ' would be written once and never
+    // repairable: the backfill only fills an EMPTY label, and the field is
+    // write-protected.
+    expect(productContextLabel(''), 'Offer');
+    expect(productContextLabel('   '), 'Offer');
+    expect(loanContextLabel(loanType: '', amount: 50000), 'Loan ₱50k');
+  });
+
+  test('compactAmount rounds before choosing the magnitude', () {
+    // Choosing the unit first and rounding after gave ₱999,999 -> '₱1000.0k'.
+    expect(compactAmount(999999), '₱1m');
+    expect(compactAmount(1999999), '₱2m');
+    expect(compactAmount(999), '₱999');
   });
 
   test('labels lead with the kind so product and loan rooms differ', () {

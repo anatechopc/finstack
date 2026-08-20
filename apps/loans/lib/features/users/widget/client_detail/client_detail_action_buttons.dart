@@ -224,16 +224,12 @@ class ClientDetailActionButtons extends StatelessWidget {
   Future<void> _openBorrowerChat(BuildContext context) async {
     final me = AuthenticationService.instance;
     final loansBloc = context.read<LoansBloc>();
-    // selectedUserLoanView is a bang-getter that THROWS when nothing is
-    // selected, so read it null-safely once and bail out visibly rather than
-    // letting the button do nothing.
-    final view = loansBloc.selectedUserLoanViewOrNull;
-    if (view == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Select a loan first.')),
-      );
-      return;
-    }
+    // Both of these are bang-getters that throw when nothing is selected, and
+    // that is safe here: this button only renders under LoansStatus.selected
+    // (see the early return in build), which is emitted after both fields are
+    // assigned and neither is ever reset to null. build() already dereferences
+    // selectedLoan on the same assumption.
+    final view = loansBloc.selectedUserLoanView;
     final loan = loansBloc.selectedLoan;
     final seed = ChatParticipants.staffToBorrower(
       companyId: me.company.id,
@@ -242,7 +238,7 @@ class ClientDetailActionButtons extends StatelessWidget {
       borrowerId: userId,
       borrowerName: view.userFullName,
       borrowerPhotoUrl: null,
-      contextType: 'loan',
+      contextType: contextTypeLoan,
       contextId: loan.id,
       contextLabel: loanContextLabel(
         loanType: view.loanType,

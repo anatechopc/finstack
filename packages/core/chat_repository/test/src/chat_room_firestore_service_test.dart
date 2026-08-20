@@ -80,4 +80,63 @@ void main() {
     expect((team['c1'] as Map<String, dynamic>)['last_handled_seq'], 4);
     expect((team['c1'] as Map<String, dynamic>)['handled_by'], 'staff1');
   });
+
+  test('update() cannot erase the anchor — it is the dedup key', () async {
+    // Erasing context_type/context_id makes findAnchoredRoom miss and forks a
+    // duplicate room per product: corruption, not a cosmetic pill. Nothing
+    // asserted this before, so a change to _protectedRoomFields would have
+    // compiled and passed.
+    final fs = FakeFirebaseFirestore();
+    final service = ChatRoomFirestoreService(firestore: fs);
+    final saved = await service.add(
+      data: ChatRoom.create(
+        participants: [
+          Participant(id: 'u1', type: ParticipantType.user),
+          Participant(id: 'c1', type: ParticipantType.company),
+        ],
+        createdBy: 'u1',
+        contextType: 'product',
+        contextId: 'p1',
+        contextLabel: 'Offer · Business loan',
+      ),
+    );
+
+    // A stale client model, as a caller of the generic update() would hold.
+    final stale = saved.toChatRoom()
+      ..contextType = null
+      ..contextId = null
+      ..contextLabel = null;
+    await service.update(data: stale);
+
+    final doc =
+        (await fs.collection('dev_chat_rooms').doc(saved.id).get()).data()!;
+    expect(doc['context_type'], 'product');
+    expect(doc['context_id'], 'p1');
+    expect(doc['context_label'], 'Offer · Business loan');
+  });
+
+  test('setContextLabel writes only that field', () async {
+    final fs = FakeFirebaseFirestore();
+    final service = ChatRoomFirestoreService(firestore: fs);
+    final saved = await service.add(
+      data: ChatRoom.create(
+        participants: [Participant(id: 'u1', type: ParticipantType.user)],
+        createdBy: 'u1',
+        contextType: 'loan',
+        contextId: 'l1',
+      ),
+    );
+    final before =
+        (await fs.collection('dev_chat_rooms').doc(saved.id).get()).data()!;
+
+    await service.setContextLabel(roomId: saved.id, label: 'Loan ₱50k');
+
+    final after =
+        (await fs.collection('dev_chat_rooms').doc(saved.id).get()).data()!;
+    expect(after['context_label'], 'Loan ₱50k');
+    // updated_at must NOT move: the inbox orders by updated_at desc, so a
+    // backfill would otherwise float old rooms to the top of every inbox.
+    expect(after['updated_at'], before['updated_at']);
+    expect(after['last_seq'], before['last_seq']);
+  });
 }

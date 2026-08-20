@@ -30,18 +30,6 @@ void main() {
         child: const ChatRoomScreen(roomId: 'r1'),
       );
 
-  // pumpApp builds a bare MaterialApp with no theme, so the app-bar tests below
-  // would otherwise run against default Material styling — not the app's
-  // centerTitle: true / headlineLarge title, which is what the two-line title
-  // is laid out against.
-  Widget themedSubject() => MaterialApp(
-        theme: buildAppTheme(),
-        home: BlocProvider<ChatBloc>.value(
-          value: bloc,
-          child: const ChatRoomScreen(roomId: 'r1'),
-        ),
-      );
-
   testWidgets('renders messages and a composer', (tester) async {
     when(() => bloc.state).thenReturn(
       ChatState(
@@ -88,7 +76,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpWidget(themedSubject());
+    await tester.pumpApp(subject(), theme: buildAppTheme());
     expect(find.text('Acme'), findsOneWidget);
     expect(find.text('Offer · Business loan'), findsOneWidget);
   });
@@ -101,7 +89,7 @@ void main() {
         room: anchoredRoom(contextType: 'loan'),
       ),
     );
-    await tester.pumpWidget(themedSubject());
+    await tester.pumpApp(subject(), theme: buildAppTheme());
     expect(find.text('Loan'), findsOneWidget);
   });
 
@@ -110,7 +98,7 @@ void main() {
     when(() => bloc.state).thenReturn(
       ChatState(status: ChatStatus.loaded, room: anchoredRoom()),
     );
-    await tester.pumpWidget(themedSubject());
+    await tester.pumpApp(subject(), theme: buildAppTheme());
     expect(find.text('Acme'), findsOneWidget);
     expect(find.text('Loan'), findsNothing);
     expect(find.text('Offer'), findsNothing);

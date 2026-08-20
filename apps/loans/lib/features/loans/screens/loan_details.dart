@@ -598,7 +598,7 @@ class _LoanDetailsState extends State<LoanDetails> {
       companyId: userLoanView.companyId,
       companyName: userLoanView.companyName,
       companyPhotoUrl: null,
-      contextType: 'loan',
+      contextType: contextTypeLoan,
       contextId: loan.id,
       contextLabel: loanContextLabel(
         loanType: userLoanView.loanType,

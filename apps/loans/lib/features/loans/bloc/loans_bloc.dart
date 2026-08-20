@@ -82,11 +82,6 @@ class LoansBloc extends Bloc<LoansEvent, LoansState> {
 
   UserLoanView get selectedUserLoanView => _selectedUserLoanView!;
 
-  /// Null-safe view of the same field. [selectedUserLoanView] throws when
-  /// nothing is selected — reachable state, guarded against elsewhere in this
-  /// bloc — so callers that can run before a selection should use this.
-  UserLoanView? get selectedUserLoanViewOrNull => _selectedUserLoanView;
-
   final List<UserLoanView> _selectedBorrowerLoanViews = [];
 
   List<UserLoanView> get selectedBorrowerLoanViews =>

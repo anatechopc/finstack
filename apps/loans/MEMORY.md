@@ -469,9 +469,10 @@ those fields (`conversations_screen.dart` built each row from
   trade-off as `participant.display_name` — never refreshed if the product is
   renamed.
 - Inbox pill (`contextPillText`): the label when present, else a human name for
-  the type (`Loan`/`Product`), else no pill. Pre-`context_label` rooms therefore
+  the kind (`Loan`/`Offer`), else no line. Pre-`context_label` rooms therefore
   degrade to the type rather than showing nothing.
-- Room screen gained the `Re: <label>` line — spec §8.2 called for this context
+- Room screen gained the anchor line under the counterpart name, rendered bare
+  (the label already leads with its kind) — spec §8.2 called for this context
   chip and it was silently dropped during planning (absent from both plans'
   coverage checklists AND from the explicit deferred list).
 
@@ -535,12 +536,22 @@ suggested labels plus an "others" path. Dev data holds four distinct values
 with no collisions, but two products from one company COULD share a label and
 their rooms would stay ambiguous. If that shows up, compose the label from
 `term`/`interestRate`/`maxLoanableAmount`, which `ProductView` already carries.
+**Row layout: the anchor gets its OWN LINE, and do not flex the tags.** The row
+is three lines — counterpart, anchor label, preview (with the staff "Awaiting"
+tag on the preview line). An earlier cut put the label inline and wrapped the
+tags in `Flexible`, which is backwards: **a flexible child is CAPPED at
+`spacePerFlex * flex`**, so giving the preview `flex: 3` gave the *preview* more
+room and squeezed the label to **17px at 320dp / 34.6px at 390dp against a 140px
+natural width** — about one glyph. Nothing overflowed, so nothing failed.
 
-**Row layout, again.** The subtitle Row now holds up to three children and
-**every one is Flexible**. Sizing the pills intrinsically and letting only the
-preview shrink overflows as soon as both pills render — the staff inbox case —
-because non-flex children are laid out at full width regardless of the row's
-constraints. The preview carries the largest flex so it yields first. No
-existing test could catch this: they all leave `myCompanyId` unset (so the
-"Awaiting" pill never renders) and run at the default 800dp surface. The new
-test pins a 320dp surface with both pills present.
+**A "no overflow" test cannot catch that.** With every child `Flexible` a
+RenderFlex overflow is impossible by construction, and `find.text()` matches the
+widget's `data`, not painted glyphs — so the test passed while the label was
+unreadable. Assert **rendered width** instead
+(`tester.getSize(find.text(...)).width` against a laid-out `TextPainter`). That
+is the test that then caught the label format itself being too long.
+
+Widths worth knowing: the anchor line has ~210px at 390dp, and
+`Loan ₱50k · Business loan` needs ~275px, so it ellipsizes — which is why the
+**amount precedes the product type**. Truncation must not eat the discriminator
+that tells a borrower's several loans apart.

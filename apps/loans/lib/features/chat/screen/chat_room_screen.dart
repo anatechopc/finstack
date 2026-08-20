@@ -49,13 +49,24 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   Widget build(BuildContext context) {
     final myUserId = AuthenticationService.instance.user.id;
     final myCompanyId = AuthenticationService.instance.user.companyId;
+    final room = context.select((ChatBloc b) => b.state.room);
+    final hasContextLine = contextPillText(
+          contextType: room?.contextType,
+          contextLabel: room?.contextLabel,
+        ) !=
+        null;
     return Scaffold(
       appBar: AppBar(
         backgroundColor: AppColors.green1,
-        // Two-line title (name + "Re: <anchor>") needs more than the 56px
-        // default: AppBar clamps the title box to kToolbarHeight and centres
-        // it, so a taller child paints outside the bar.
-        toolbarHeight: 72,
+        // A two-line title needs more than the 56px default: AppBar lays the
+        // title out under maxHeight == toolbarHeight and centres it, so a
+        // taller child paints outside the bar. Scale with the user's text size
+        // — a fixed 72 overflows again at large accessibility scales — and only
+        // when there IS a second line, so unanchored rooms keep the standard
+        // bar height like every other screen.
+        toolbarHeight: hasContextLine
+            ? 72 * MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.34)
+            : null,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => GoRouter.of(context).go('/'),
@@ -68,8 +79,9 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                 .map((p) => p.displayName)
                 .firstOrNull;
             // Spec section 8.2's context line: which product or loan this
-            // conversation is about. Two rooms with the same counterpart are
-            // otherwise indistinguishable once you are inside one.
+            // conversation is about, rendered bare (the label already leads
+            // with its kind, e.g. "Offer · Business loan"). Two rooms with the
+            // same counterpart are otherwise indistinguishable from inside.
             final anchorLabel = contextPillText(
               contextType: state.room?.contextType,
               contextLabel: state.room?.contextLabel,

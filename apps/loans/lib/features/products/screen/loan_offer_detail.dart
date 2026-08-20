@@ -206,7 +206,7 @@ class LoanOfferDetail extends StatelessWidget {
       companyId: productView.companyId,
       companyName: productView.companyName,
       companyPhotoUrl: productView.companyProfilePhotoUrl?.url,
-      contextType: 'product',
+      contextType: contextTypeProduct,
       contextId: productView.productId,
       contextLabel: productContextLabel(productView.loanType),
     );
