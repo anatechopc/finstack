@@ -3,6 +3,7 @@ import 'package:chat_repository/chat_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:loooans/app/theme.dart';
 import 'package:loooans/features/chat/bloc/chat_bloc.dart';
 import 'package:loooans/features/chat/screen/chat_room_screen.dart';
 import 'package:loooans/services/authentication_service.dart';
@@ -47,5 +48,59 @@ void main() {
     await tester.pumpApp(subject());
     expect(find.text('hello there'), findsOneWidget);
     expect(find.byType(TextField), findsOneWidget);
+  });
+
+  ChatRoom anchoredRoom({String? contextType, String? contextLabel}) =>
+      ChatRoom.create(
+        participants: [
+          Participant(id: 'u1', type: ParticipantType.user, displayName: 'Me'),
+          Participant(
+            id: 'c1',
+            type: ParticipantType.company,
+            displayName: 'Acme',
+          ),
+        ],
+        createdBy: 'u1',
+        contextType: contextType,
+        contextId: contextType == null ? null : 'x1',
+        contextLabel: contextLabel,
+      )..id = 'r1';
+
+  testWidgets('app bar names what the conversation is about', (tester) async {
+    when(() => bloc.state).thenReturn(
+      ChatState(
+        status: ChatStatus.loaded,
+        room: anchoredRoom(
+          contextType: 'product',
+          contextLabel: 'Offer · Business loan',
+        ),
+      ),
+    );
+    await tester.pumpApp(subject(), theme: buildAppTheme());
+    expect(find.text('Acme'), findsOneWidget);
+    expect(find.text('Offer · Business loan'), findsOneWidget);
+  });
+
+  testWidgets('app bar falls back to the context type without a label',
+      (tester) async {
+    when(() => bloc.state).thenReturn(
+      ChatState(
+        status: ChatStatus.loaded,
+        room: anchoredRoom(contextType: 'loan'),
+      ),
+    );
+    await tester.pumpApp(subject(), theme: buildAppTheme());
+    expect(find.text('Loan'), findsOneWidget);
+  });
+
+  testWidgets('app bar shows only the counterpart for an unanchored room',
+      (tester) async {
+    when(() => bloc.state).thenReturn(
+      ChatState(status: ChatStatus.loaded, room: anchoredRoom()),
+    );
+    await tester.pumpApp(subject(), theme: buildAppTheme());
+    expect(find.text('Acme'), findsOneWidget);
+    expect(find.text('Loan'), findsNothing);
+    expect(find.text('Offer'), findsNothing);
   });
 }

@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:jiffy/jiffy.dart';
 import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/chat/bloc/conversations_bloc.dart';
+import 'package:loooans/features/chat/chat_context_label.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 
 class ConversationsScreen extends StatefulWidget {
@@ -84,6 +85,10 @@ class _ConversationRow extends StatelessWidget {
     );
     final unread = unreadFor(room, myUserId);
     final preview = room.lastMessage?.text ?? '';
+    final pill = contextPillText(
+      contextType: room.contextType,
+      contextLabel: room.contextLabel,
+    );
     final time = room.lastMessage == null
         ? ''
         : Jiffy.parseFromDateTime(room.lastMessage!.createdAt).fromNow();
@@ -103,31 +108,42 @@ class _ConversationRow extends StatelessWidget {
         // trailing column with the time + unread badge exceeded the ListTile
         // trailing height (28px overflow seen in the dev smoke test), and a
         // FittedBox workaround shrank the text inconsistently per row.
-        subtitle: Row(
+        // Three-line row: counterpart, what the conversation is about, then
+        // the message preview. The anchor gets its own full-width line because
+        // sharing the preview's line left it ~47px on a 320dp phone — far
+        // narrower than a label needs.
+        isThreeLine: pill != null,
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Flexible(
-              child:
-                  Text(preview, maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
-            if (myCompanyId != null &&
-                isAwaitingResponse(room, myCompanyId!)) ...[
-              const Gap(8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: AppColors.ubOrange.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Text(
-                  'Awaiting',
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: AppColors.ubOrange,
-                    fontWeight: FontWeight.w600,
-                  ),
+            if (pill != null)
+              Text(
+                pill,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.green1_6,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-            ],
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    preview,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (myCompanyId != null &&
+                    isAwaitingResponse(room, myCompanyId!)) ...[
+                  const Gap(8),
+                  const _Pill(text: 'Awaiting', color: AppColors.ubOrange),
+                ],
+              ],
+            ),
           ],
         ),
         trailing: Column(
@@ -143,6 +159,47 @@ class _ConversationRow extends StatelessWidget {
         ),
         onTap: () => GoRouter.of(context)
             .go(Paths.chatRoom.replaceFirst(':roomId', room.id)),
+      ),
+    );
+  }
+}
+
+/// The "Awaiting" tag on the preview line.
+///
+/// Sized to its content: it is a non-flex child of a Row, so it is laid out
+/// unbounded and the preview beside it (Expanded) absorbs the remainder.
+/// That is safe only because the text is a short constant — pass a variable
+/// label and a narrow phone will overflow the row.
+///
+/// Do NOT reach for Flexible to make that safe. A flexible child is CAPPED at
+/// spacePerFlex * flex, so an earlier cut that flexed the tags rendered 17px of
+/// a 140px label on a 320dp phone — and since nothing overflowed, no test
+/// caught it. Anchor labels live on their own line above for this reason.
+/// This row has form: see the 28px trailing-column overflow in
+/// apps/loans/MEMORY.md.
+class _Pill extends StatelessWidget {
+  const _Pill({required this.text, required this.color});
+
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 10,
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }

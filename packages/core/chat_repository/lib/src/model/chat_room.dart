@@ -12,6 +12,7 @@ class ChatRoom extends ChatRoomEntity implements BaseModel<ChatRoomEntity> {
     required String createdBy,
     String? contextType,
     String? contextId,
+    String? contextLabel,
   }) {
     final now = DateTime.timestamp();
     return ChatRoom()
@@ -20,6 +21,7 @@ class ChatRoom extends ChatRoomEntity implements BaseModel<ChatRoomEntity> {
       ..memberIds = participants.map((p) => p.id).toList()
       ..contextType = contextType
       ..contextId = contextId
+      ..contextLabel = contextLabel
       ..lastSeq = 0
       ..lastMessage = null
       ..reads = <String, ReadState>{}

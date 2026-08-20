@@ -30,6 +30,17 @@ class ChatRoomEntity implements BaseEntity {
   @JsonKey(name: 'context_id')
   String? contextId;
 
+  /// Human-readable name of the anchor (the product's or loan's `loanType`),
+  /// denormalized at creation so the inbox can label a room without a second
+  /// fetch. A snapshot: it is never refreshed if the product is renamed, the
+  /// same trade-off as [Participant.displayName].
+  ///
+  /// Deliberately NOT part of the dedup key — see `roomMatchesAnchor`.
+  /// Null on rooms created before this field existed; callers fall back to
+  /// [contextType].
+  @JsonKey(name: 'context_label')
+  String? contextLabel;
+
   @JsonKey(name: 'last_seq', defaultValue: 0)
   late int lastSeq;
 
@@ -84,7 +95,7 @@ class ChatRoomEntity implements BaseEntity {
 
   @override
   List<Object?> get props => [
-        id, participants, memberIds, contextType, contextId, lastSeq,
+        id, participants, memberIds, contextType, contextId, contextLabel, lastSeq,
         lastMessage, reads, teamReads, createdBy, createdAt, updatedAt, deletedAt,
       ];
 
@@ -100,6 +111,7 @@ class ChatRoomEntity implements BaseEntity {
       ..memberIds = memberIds
       ..contextType = contextType
       ..contextId = contextId
+      ..contextLabel = contextLabel
       ..lastSeq = lastSeq
       ..lastMessage = lastMessage
       ..reads = reads

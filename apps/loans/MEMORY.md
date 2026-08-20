@@ -446,3 +446,112 @@ The Go OTP endpoints return 400s written for end users; this branch surfaces the
 
 - **`PaymentBloc.withDependencies` / `PaymentCenterBloc.withDependencies`** added, mirroring `AuthenticationBloc`/`RegistrationBloc`. Neither bloc could be constructed without a `BuildContext`, so neither had *any* test. `cashPoolRepository`, `productRepository` (final classes — unmockable) and `settingsService` (`SettingsService.instance` throws until app init) are optional and `late`, so a test that reaches a handler needing them fails loudly rather than using a stand-in.
 - **No workflow ran `flutter test` before this branch** — the green checks proved only that the web build compiled. `loans-app-development.yml` now gates on package + app tests. See root `MEMORY.md` for the codegen-ordering constraint and the two deleted scaffold tests.
+
+---
+
+## Chat inbox: rooms are labelled with what they are about (2026-08-20)
+
+Three conversations with the same lender rendered identically — counterpart name
+plus last-message preview — so a loan enquiry, a product enquiry and a second
+product enquiry were indistinguishable.
+
+**The anchor already existed.** Rooms carry `context_type`/`context_id`, set at
+all three creation sites (`'product'` + productId from the offer detail,
+`'loan'` + loan.id from the borrower loan detail and the staff client detail),
+and the anchor is **part of the dedup key** (`roomMatchesAnchor`) — which is why
+separate rooms exist per product in the first place. The inbox simply never read
+those fields (`conversations_screen.dart` built each row from
+`participant.display_name` + `last_message.text` only).
+
+**What changed:**
+- New `context_label` on the room: the anchor's `loanType`, denormalized at
+  creation so the inbox can name a room without a second fetch. Same snapshot
+  trade-off as `participant.display_name` — never refreshed if the product is
+  renamed.
+- Inbox pill (`contextPillText`): the label when present, else a human name for
+  the kind (`Loan`/`Offer`), else no line. Pre-`context_label` rooms therefore
+  degrade to the type rather than showing nothing.
+- Room screen gained the anchor line under the counterpart name, rendered bare
+  (the label already leads with its kind) — spec §8.2 called for this context
+  chip and it was silently dropped during planning (absent from both plans'
+  coverage checklists AND from the explicit deferred list).
+
+**`context_label` is deliberately NOT in the dedup key.** If `roomMatchesAnchor`
+compared it, a renamed product — or any label drift between two clients — would
+fork a second room against the same anchor instead of reusing the conversation.
+Guarded by a test.
+
+**Backfill on reuse — fire-and-forget, and a surgical write.** `findOrCreate`
+returns an existing room without writing, so rooms created before this change
+would keep the generic pill *forever*. It now writes the label on the first
+reuse. Two constraints, both learned the hard way in review:
+
+- **Never awaited, never allowed to throw** (`unawaited(...).catchError`). This
+  sits on the "Message lender"/"Message borrower" hot path, and no call site
+  wraps it in a try/catch. Awaiting a rejected write — denied rules, offline —
+  made the button do nothing at all, *permanently*: an unwritten label leaves
+  the guard true, so every retry re-attempts the same failing write. A missing
+  label costs a generic pill; a thrown one costs the conversation.
+- **`setContextLabel`, NOT the generic `update()`**, because the inbox orders by
+  `updated_at desc` — bumping that timestamp would float every backfilled room
+  to the top of every member's inbox. `update()` sets `updatedAt` on every call.
+
+`context_label` was also added to the service's protected-field list, so a
+full-entity client `update()` can't erase a stored label with a stale null.
+
+**TRAP — `ChatRoomEntity.toChatRoom()` copies field-by-field.** A new field that
+is not added there is written to Firestore correctly and then dropped on the way
+to the UI, because rooms reach widgets as `ChatRoom`, never as the entity. This
+version of the feature was briefly a silent no-op for exactly that reason, and
+every widget test still passed — they build `ChatRoom.create` directly and never
+round-trip through Firestore. Same shape as the dead-stream-subscription bug
+above: green under test doubles, blank in the running app. Regression test:
+`toChatRoom carries context_label`. **When adding a room field, update the
+entity, `create`, AND `toChatRoom`** — `toChatRoom` is the one that actually
+bites, because rooms reach widgets as `ChatRoom`.
+
+**`props` is inert repo-wide — do not rely on it.** `BaseEntity` *implements*
+Equatable rather than extending it (`base_entity.dart:7`) and no entity defines
+`operator ==`, so every entity uses Object identity equality and the `props`
+list is never consulted. Two consequences: two byte-identical rooms compare
+unequal, and `buildWhen: (a, b) => a.room != b.room`
+(`chat_room_screen.dart`) is always true, so it suppresses nothing. Keep `props`
+updated for consistency, but a `.distinct()` or a `buildWhen` written against
+entity equality will silently no-op.
+
+**Codegen is per-checkout, and `.g.dart` is gitignored — so it does NOT follow
+you across branches.** Running `packages/build_models.sh` while on a branch
+without this field regenerated `chat_room_entity.g.dart` without
+`context_label`; switching back to the feature branch left that stale file in
+place, and the two round-trip tests failed with the field apparently missing.
+Regenerate after ANY branch switch that changes a model, and re-read the
+`.g.dart` before believing a serialization failure.
+
+**Constraint worth knowing:** neither `ProductView` nor `Product` has a name or
+title field — `loanType` is the best human-readable label available at the
+product entry point. It is **free text** (`product_entity.dart:74
+`late String loanType`), not an enum: `CommonProducts` only supplies three
+suggested labels plus an "others" path. Dev data holds four distinct values
+("Business loan", "Open Term Loan", "Personal loan open", "Fix - OneRequirement")
+with no collisions, but two products from one company COULD share a label and
+their rooms would stay ambiguous. If that shows up, compose the label from
+`term`/`interestRate`/`maxLoanableAmount`, which `ProductView` already carries.
+**Row layout: the anchor gets its OWN LINE, and do not flex the tags.** The row
+is three lines — counterpart, anchor label, preview (with the staff "Awaiting"
+tag on the preview line). An earlier cut put the label inline and wrapped the
+tags in `Flexible`, which is backwards: **a flexible child is CAPPED at
+`spacePerFlex * flex`**, so giving the preview `flex: 3` gave the *preview* more
+room and squeezed the label to **17px at 320dp / 34.6px at 390dp against a 140px
+natural width** — about one glyph. Nothing overflowed, so nothing failed.
+
+**A "no overflow" test cannot catch that.** With every child `Flexible` a
+RenderFlex overflow is impossible by construction, and `find.text()` matches the
+widget's `data`, not painted glyphs — so the test passed while the label was
+unreadable. Assert **rendered width** instead
+(`tester.getSize(find.text(...)).width` against a laid-out `TextPainter`). That
+is the test that then caught the label format itself being too long.
+
+Widths worth knowing: the anchor line has ~210px at 390dp, and
+`Loan ₱50k · Business loan` needs ~275px, so it ellipsizes — which is why the
+**amount precedes the product type**. Truncation must not eat the discriminator
+that tells a borrower's several loans apart.

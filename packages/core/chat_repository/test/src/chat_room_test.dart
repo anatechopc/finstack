@@ -23,6 +23,54 @@ void main() {
     expect(room.createdAt, room.updatedAt);
   });
 
+  test('ChatRoom.create carries context_label and it round-trips', () {
+    final room = ChatRoom.create(
+      participants: [borrower, company],
+      createdBy: 'u1',
+      contextType: 'product',
+      contextId: 'p1',
+      contextLabel: 'Business loan',
+    );
+    expect(room.contextLabel, 'Business loan');
+
+    final json = room.toJson();
+    expect(json['context_label'], 'Business loan');
+    expect(ChatRoomEntity.fromJson(json).contextLabel, 'Business loan');
+  });
+
+  test('toChatRoom carries context_label — the inbox reads the model, not the entity',
+      () {
+    // Rooms reach the UI as ChatRoom via toChatRoom(). A field dropped in that
+    // conversion is invisible in tests that build ChatRoom.create directly and
+    // silently blank in the running app.
+    final entity = ChatRoomEntity.fromJson(
+      ChatRoom.create(
+        participants: [borrower, company],
+        createdBy: 'u1',
+        contextType: 'product',
+        contextId: 'p1',
+        contextLabel: 'Business loan',
+      ).toJson(),
+    );
+    expect(entity.toChatRoom().contextLabel, 'Business loan');
+  });
+
+  test('context_label is optional — rooms written before it existed still parse', () {
+    final room = ChatRoom.create(
+      participants: [borrower, company],
+      createdBy: 'u1',
+      contextType: 'product',
+      contextId: 'p1',
+    );
+    expect(room.contextLabel, isNull);
+
+    // A room document created before this field was introduced has no
+    // context_label key at all. The inbox falls back to the context type for
+    // these, so parsing must not throw or invent a value.
+    final legacy = room.toJson()..remove('context_label');
+    expect(ChatRoomEntity.fromJson(legacy).contextLabel, isNull);
+  });
+
   test('ChatRoom round-trips participants, reads map, team_reads map, last_message', () {
     final room = ChatRoom.create(
       participants: [borrower, company],

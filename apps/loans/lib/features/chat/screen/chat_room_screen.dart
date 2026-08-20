@@ -8,6 +8,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loooans/features/chat/bloc/chat_bloc.dart';
+import 'package:loooans/features/chat/chat_context_label.dart';
 import 'package:loooans/features/chat/chat_status.dart';
 import 'package:loooans/features/chat/widget/message_bubble.dart';
 import 'package:loooans/services/authentication_service.dart';
@@ -48,9 +49,24 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   Widget build(BuildContext context) {
     final myUserId = AuthenticationService.instance.user.id;
     final myCompanyId = AuthenticationService.instance.user.companyId;
+    final room = context.select((ChatBloc b) => b.state.room);
+    final hasContextLine = contextPillText(
+          contextType: room?.contextType,
+          contextLabel: room?.contextLabel,
+        ) !=
+        null;
     return Scaffold(
       appBar: AppBar(
         backgroundColor: AppColors.green1,
+        // A two-line title needs more than the 56px default: AppBar lays the
+        // title out under maxHeight == toolbarHeight and centres it, so a
+        // taller child paints outside the bar. Scale with the user's text size
+        // — a fixed 72 overflows again at large accessibility scales — and only
+        // when there IS a second line, so unanchored rooms keep the standard
+        // bar height like every other screen.
+        toolbarHeight: hasContextLine
+            ? 72 * MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.34)
+            : null,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => GoRouter.of(context).go('/'),
@@ -62,7 +78,40 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                 .where((p) => p.id != myUserId && p.id != myCompanyId)
                 .map((p) => p.displayName)
                 .firstOrNull;
-            return Text(counterpart ?? 'Conversation');
+            // Spec section 8.2's context line: which product or loan this
+            // conversation is about, rendered bare (the label already leads
+            // with its kind, e.g. "Offer · Business loan"). Two rooms with the
+            // same counterpart are otherwise indistinguishable from inside.
+            final anchorLabel = contextPillText(
+              contextType: state.room?.contextType,
+              contextLabel: state.room?.contextLabel,
+            );
+            if (anchorLabel == null) {
+              return Text(counterpart ?? 'Conversation');
+            }
+            // The app theme sets centerTitle: true, so the title box is
+            // centred as a block — the lines must be centred within it too, or
+            // they read as misaligned against every other screen. Column
+            // centres by default; do not switch this to start.
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(counterpart ?? 'Conversation'),
+                Text(
+                  anchorLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  // Explicit weight/colour: the inherited titleTextStyle is
+                  // headlineLarge/w600, which renders this as a second heading
+                  // rather than a de-emphasised context line.
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w400,
+                    color: AppColors.lightBlack,
+                  ),
+                ),
+              ],
+            );
           },
         ),
       ),
