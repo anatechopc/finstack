@@ -599,12 +599,14 @@ class _LoanDetailsState extends State<LoanDetails> {
       companyPhotoUrl: null,
       contextType: 'loan',
       contextId: loan.id,
+      contextLabel: userLoanView.loanType,
     );
     final room = await context.read<ChatRoomRepository>().findOrCreate(
           participants: seed.participants,
           createdBy: me.id,
           contextType: seed.contextType,
           contextId: seed.contextId,
+          contextLabel: seed.contextLabel,
         );
     if (!context.mounted) return;
     GoRouter.of(context).go(Paths.chatRoom.replaceFirst(':roomId', room.id));

@@ -48,4 +48,57 @@ void main() {
     expect(find.text('hello there'), findsOneWidget);
     expect(find.byType(TextField), findsOneWidget);
   });
+
+  ChatRoom anchoredRoom({String? contextType, String? contextLabel}) =>
+      ChatRoom.create(
+        participants: [
+          Participant(id: 'u1', type: ParticipantType.user, displayName: 'Me'),
+          Participant(
+            id: 'c1',
+            type: ParticipantType.company,
+            displayName: 'Acme',
+          ),
+        ],
+        createdBy: 'u1',
+        contextType: contextType,
+        contextId: contextType == null ? null : 'x1',
+        contextLabel: contextLabel,
+      )..id = 'r1';
+
+  testWidgets('app bar names what the conversation is about', (tester) async {
+    when(() => bloc.state).thenReturn(
+      ChatState(
+        status: ChatStatus.loaded,
+        room: anchoredRoom(
+          contextType: 'product',
+          contextLabel: 'Business loan',
+        ),
+      ),
+    );
+    await tester.pumpApp(subject());
+    expect(find.text('Acme'), findsOneWidget);
+    expect(find.text('Re: Business loan'), findsOneWidget);
+  });
+
+  testWidgets('app bar falls back to the context type without a label',
+      (tester) async {
+    when(() => bloc.state).thenReturn(
+      ChatState(
+        status: ChatStatus.loaded,
+        room: anchoredRoom(contextType: 'loan'),
+      ),
+    );
+    await tester.pumpApp(subject());
+    expect(find.text('Re: Loan'), findsOneWidget);
+  });
+
+  testWidgets('app bar shows only the counterpart for an unanchored room',
+      (tester) async {
+    when(() => bloc.state).thenReturn(
+      ChatState(status: ChatStatus.loaded, room: anchoredRoom()),
+    );
+    await tester.pumpApp(subject());
+    expect(find.text('Acme'), findsOneWidget);
+    expect(find.textContaining('Re:'), findsNothing);
+  });
 }

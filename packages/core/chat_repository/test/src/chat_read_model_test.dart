@@ -115,4 +115,21 @@ void main() {
       isFalse,
     );
   });
+
+  test('roomMatchesAnchor ignores context_label', () {
+    // The label is a denormalized snapshot of the product/loan name taken at
+    // creation. If it participated in the dedup key, renaming the product (or
+    // any drift between two clients) would fork a second room against the same
+    // anchor instead of reusing the existing conversation.
+    final relabelled = room()..contextLabel = 'Business loan';
+    expect(
+      roomMatchesAnchor(
+        relabelled,
+        memberIds: {'u1', 'c1'},
+        contextType: 'loan',
+        contextId: 'l1',
+      ),
+      isTrue,
+    );
+  });
 }

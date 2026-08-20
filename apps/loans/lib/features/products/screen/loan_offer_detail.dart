@@ -207,12 +207,14 @@ class LoanOfferDetail extends StatelessWidget {
       companyPhotoUrl: productView.companyProfilePhotoUrl?.url,
       contextType: 'product',
       contextId: productView.productId,
+      contextLabel: productView.loanType,
     );
     final room = await context.read<ChatRoomRepository>().findOrCreate(
           participants: seed.participants,
           createdBy: me.id,
           contextType: seed.contextType,
           contextId: seed.contextId,
+          contextLabel: seed.contextLabel,
         );
     if (!context.mounted) return;
     GoRouter.of(context).go(Paths.chatRoom.replaceFirst(':roomId', room.id));

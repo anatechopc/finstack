@@ -8,6 +8,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loooans/features/chat/bloc/chat_bloc.dart';
+import 'package:loooans/features/chat/chat_context_label.dart';
 import 'package:loooans/features/chat/chat_status.dart';
 import 'package:loooans/features/chat/widget/message_bubble.dart';
 import 'package:loooans/services/authentication_service.dart';
@@ -51,6 +52,10 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: AppColors.green1,
+        // Two-line title (name + "Re: <anchor>") needs more than the 56px
+        // default: AppBar clamps the title box to kToolbarHeight and centres
+        // it, so a taller child paints outside the bar.
+        toolbarHeight: 72,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => GoRouter.of(context).go('/'),
@@ -62,7 +67,39 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                 .where((p) => p.id != myUserId && p.id != myCompanyId)
                 .map((p) => p.displayName)
                 .firstOrNull;
-            return Text(counterpart ?? 'Conversation');
+            // Spec section 8.2's context line: which product or loan this
+            // conversation is about. Two rooms with the same counterpart are
+            // otherwise indistinguishable once you are inside one.
+            final anchorLabel = contextPillText(
+              contextType: state.room?.contextType,
+              contextLabel: state.room?.contextLabel,
+            );
+            if (anchorLabel == null) {
+              return Text(counterpart ?? 'Conversation');
+            }
+            // The app theme sets centerTitle: true, so the title box is
+            // centred as a block — the lines must be centred too or they read
+            // as misaligned against every other screen.
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(counterpart ?? 'Conversation'),
+                Text(
+                  'Re: $anchorLabel',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  // Explicit weight/colour: the inherited titleTextStyle is
+                  // headlineLarge/w600, which renders this as a second heading
+                  // rather than a de-emphasised context line.
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w400,
+                    color: AppColors.lightBlack,
+                  ),
+                ),
+              ],
+            );
           },
         ),
       ),

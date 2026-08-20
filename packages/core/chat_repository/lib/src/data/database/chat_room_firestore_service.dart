@@ -42,22 +42,25 @@ final class ChatRoomFirestoreService
     return ChatRoomEntity.fromJson(doc.data()! as Map<String, dynamic>);
   }
 
-  // Fields owned by the messageWritten trigger (last_seq/last_message) or written
-  // surgically per-user (reads/team_reads). A full-entity update from a client
-  // model would reset them to stale/empty values, so they're stripped here —
-  // use markRead/markDelivered/markHandled for read state.
-  static const _triggerOwnedRoomFields = [
+  // Fields a full-entity client update must never write. Two kinds:
+  // trigger-owned (last_seq/last_message, written by messageWritten) or written
+  // surgically per-user (reads/team_reads) — use markRead/markDelivered/
+  // markHandled for those; and write-once anchor metadata (context_label),
+  // which a client model holding a stale null would otherwise erase with no
+  // trigger to repair it.
+  static const _protectedRoomFields = [
     'last_seq',
     'last_message',
     'reads',
     'team_reads',
+    'context_label',
   ];
 
   @override
   Future<ChatRoomEntity> update({required ChatRoomEntity data}) async {
     data.updatedAt = DateTime.timestamp();
     final json = data.toJson()
-      ..removeWhere((k, _) => _triggerOwnedRoomFields.contains(k));
+      ..removeWhere((k, _) => _protectedRoomFields.contains(k));
     await root.doc(data.id).update(json);
     return data;
   }
@@ -66,7 +69,7 @@ final class ChatRoomFirestoreService
   Future<ChatRoomEntity> delete({required ChatRoomEntity data}) async {
     final updated = data..deletedAt = DateTime.timestamp();
     final json = updated.toJson()
-      ..removeWhere((k, _) => _triggerOwnedRoomFields.contains(k));
+      ..removeWhere((k, _) => _protectedRoomFields.contains(k));
     await root.doc(data.id).update(json);
     return updated;
   }
@@ -181,6 +184,19 @@ final class ChatRoomFirestoreService
       'reads.$userId.last_delivered_seq': seq,
       'reads.$userId.last_delivered_at': now,
     });
+  }
+
+  /// Backfills the denormalized anchor label on a room created before
+  /// `context_label` existed.
+  ///
+  /// Deliberately a surgical single-field write rather than [update]: the inbox
+  /// orders by `updated_at desc`, so bumping that timestamp would shuffle old
+  /// rooms to the top of every member's inbox the moment they were backfilled.
+  Future<void> setContextLabel({
+    required String roomId,
+    required String label,
+  }) async {
+    await root.doc(roomId).update(<String, Object?>{'context_label': label});
   }
 
   Future<void> markRead({
