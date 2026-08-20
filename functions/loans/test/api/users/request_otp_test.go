@@ -3,6 +3,7 @@ package users_test
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -717,21 +718,24 @@ func TestRequestOtpCore_Mobile_AddressReadError_Propagates(t *testing.T) {
 	}
 }
 
-// The OTP SMS body must contain no email address, URL, or other link-like
-// token. Philippine carriers filter link-bearing person-to-person SMS, and a
-// filtered message is invisible to us: the gateway requests no delivery report,
-// so the radio reports RESULT_OK and the entry is recorded sms_status="sent"
-// whether or not it ever reaches the handset.
+// linkLikeToken matches a bare domain with a known TLD, preceded by a non-space
+// character so ordinary copy ("OTP. If you did not...") does not trip it while
+// "loooans.net", "bit.ly/help" and "m.me/loooans" do.
+var linkLikeToken = regexp.MustCompile(
+	`(?i)[a-z0-9][a-z0-9-]*\.(com|net|org|io|co|ph|app|ly|me|dev|xyz|info|biz|link|site|online|shop)\b`)
+
+// The OTP SMS body is delivery-critical, and every way of breaking it fails
+// silently: PH carriers filter link-bearing person-to-person SMS, and the
+// gateway requests no delivery report, so a filtered or truncated message is
+// still recorded sms_status="sent" with a sent_at. Full incident and evidence:
+// functions/loans/MEMORY.md, "OTP SMS was carrier-filtered on the support
+// address (2026-08-20)".
 //
-// Established empirically on 2026-08-20 by sending six variants through the
-// live dev gateway to one handset. Every variant WITHOUT the support address
-// arrived (plain text; "Your Loooans OTP is 123456"; the warning prefix; the
-// full template minus the address). Both variants WITH it were dropped, as was
-// the real OTP sent that morning. The address was the only difference.
-//
-// This applies to the SMS body only. The email OTP body is unaffected and may
-// still carry the support address.
-func TestRequestOtpCore_MobileObjective_SmsBodyHasNoLinkTokens(t *testing.T) {
+// Three invariants, each a silent-failure mode if broken:
+//   - no link-like token — the carrier drops it
+//   - ASCII only — one non-ASCII rune flips the body to UCS-2 at 67 chars/part
+//   - one GSM-7 segment — multipart needs every part to be delivered
+func TestRequestOtpCore_MobileObjective_SmsBodyIsCarrierSafe(t *testing.T) {
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 	userReader := &fakes.UserReader{Users: map[string]map[string]any{
 		"user-123": {"mobile_number": "+639171234567"},
@@ -757,10 +761,74 @@ func TestRequestOtpCore_MobileObjective_SmsBodyHasNoLinkTokens(t *testing.T) {
 	if msg == "" {
 		t.Fatal("SMS body is empty")
 	}
-	for _, token := range []string{"@", "http", "www.", ".com", ".ph"} {
+
+	// Carriers drop link-bearing SMS. Keep contact details link-free: name the
+	// app, or a phone number — never an address, domain, or URL scheme.
+	if strings.Contains(msg, "@") {
+		t.Errorf("SMS body contains %q (email address); carriers drop link-bearing SMS. Body: %q", "@", msg)
+	}
+	for _, token := range []string{"://", "www."} {
 		if strings.Contains(strings.ToLower(msg), token) {
-			t.Errorf("SMS body contains link-like token %q, which PH carriers filter; "+
-				"keep support contact details in the email body only. Body: %q", token, msg)
+			t.Errorf("SMS body contains %q (URL); carriers drop link-bearing SMS. Body: %q", token, msg)
 		}
+	}
+	if hit := linkLikeToken.FindString(msg); hit != "" {
+		t.Errorf("SMS body contains %q (domain); carriers drop link-bearing SMS. Body: %q", hit, msg)
+	}
+
+	// A single non-ASCII rune (curly apostrophe, en dash, peso sign) switches
+	// the encoding to UCS-2, cutting the per-part budget from 160 to 67.
+	for _, r := range msg {
+		if r > 127 {
+			t.Errorf("SMS body contains non-ASCII %q, which forces UCS-2 encoding. Body: %q", r, msg)
+			break
+		}
+	}
+
+	// One GSM-7 segment. Beyond 160 the gateway sends multipart, and every part
+	// must succeed for the message to arrive.
+	if len(msg) > 160 {
+		t.Errorf("SMS body is %d chars, over the 160-char single-segment limit. Body: %q", len(msg), msg)
+	}
+}
+
+// Verifies the link detector itself. The first version of this guard was a
+// plain substring denylist ("@", "http", "www.", ".com", ".ph") which let every
+// other URL form through and false-positived on ordinary copy — so the detector
+// is pinned against both here.
+func TestSmsBodyLinkDetector(t *testing.T) {
+	linkLike := func(s string) bool {
+		return strings.Contains(s, "@") ||
+			strings.Contains(strings.ToLower(s), "://") ||
+			strings.Contains(strings.ToLower(s), "www.") ||
+			linkLikeToken.MatchString(s)
+	}
+
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"email address", "contact support at support@loooans.com", true},
+		{"dot-net domain", "see loooans.net for help", true},
+		{"dot-io domain", "help at loooans.io now", true},
+		{"shortener", "details at bit.ly/loooans-help", true},
+		{"messenger", "reach us at m.me/loooans", true},
+		{"deep link", "open loooans://verify?vid=abc", true},
+		{"www prefix", "go to www.loooans.com", true},
+		{"https url", "visit https://loooans.com/help", true},
+
+		{"shipped body", "NEVER SHARE YOUR ONE-TIME PIN. Your Loooans OTP is 123456. " +
+			"If you did not request for OTP, please contact us in the Loooans app immediately.", false},
+		{"sentence boundary", "Your OTP is 123456. If you did not request it, tell us.", false},
+		{"numbered list run-on", "1.Complete your verification in the app", false},
+		{"currency run-on", "Confirm your payment.PHP 5,000 is due today", false},
+		{"hotline", "Reply HELP. Phone support 24/7 at 0917 555 1234", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := linkLike(tc.body); got != tc.want {
+				t.Errorf("linkLike(%q) = %v, want %v", tc.body, got, tc.want)
+			}
+		})
 	}
 }
