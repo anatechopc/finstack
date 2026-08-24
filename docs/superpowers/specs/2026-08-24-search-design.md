@@ -91,11 +91,22 @@ David Andrew Francis Duldulao -> 22 prefix entries, plus the full value
   likely teller action — returns **nothing**, because the split happens before matching.
   This is the failure mode the rule exists to prevent.
 
-**Phone normalization.** Reuse `NormalizePhoneE164`
-(`functions/loans/api/service/phone_service.go:55`, already tested). `0917…`, `+63917…`
-and `63917…` must collapse to one canonical form, or a client is findable by one
-spelling of their own number and not another. Also index the **last 4 digits** as a
-discrete token; staff often have only the tail, and prefix expansion cannot match a suffix.
+**Phone normalization.** `0917…`, `+63917…` and `63917…` must collapse to one canonical
+form, or a client is findable by one spelling of their own number and not another. Also
+index the **last 4 digits** as a discrete token; staff often have only the tail, and
+prefix expansion cannot match a suffix.
+
+Tokens use a plain digit canonicalization — strip non-digits, then a leading `63`, then a
+leading `0` — applied identically when indexing and when querying.
+
+> **Revised 2026-08-24 during planning.** This section originally said to reuse
+> `NormalizePhoneE164` (`functions/loans/api/service/phone_service.go:55`). Planning
+> found two blockers: it requires a country, read from the user's address
+> (`request_otp.go:152`), which costs an extra read on every user write; and it returns
+> `ErrCountryUnknown` when the address is incomplete, which would silently leave those
+> users unfindable by phone. Search needs **consistency, not validity** — two spellings
+> must produce the same token, but the number does not have to be a real one.
+> `NormalizePhoneE164` stays in the OTP path, where validity is the whole point.
 
 **Symmetric normalization.** The query passes through the same normalizer as the index.
 The query planner branches on input shape: contains `@` → email path; predominantly
