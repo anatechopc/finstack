@@ -1,0 +1,20 @@
+{
+  "description": "Shared golden vectors for search tokenization. Asserted by Go (functions/loans/test/utils/search) and Dart (apps/loans/test/features/search). If these two disagree, search breaks invisibly - a client simply cannot be found - so any change here must be made in both places in the same PR.",
+  "cases": [
+    { "input": ["Go"], "tokens": ["go"] },
+    { "input": ["Cruz"], "tokens": ["cr", "cru", "cruz"] },
+    { "input": ["Peña"], "tokens": ["pe", "pen", "pena"] },
+    {
+      "input": ["O'Brien"],
+      "tokens": ["br", "bri", "brie", "brien", "o", "o'brien", "ob", "obr", "obri", "obrie", "obrien"]
+    },
+    {
+      "input": ["Mary-Jane"],
+      "tokens": [
+        "ja", "jan", "jane",
+        "ma", "mar", "mary", "mary-jane",
+        "maryj", "maryja", "maryjan", "maryjane"
+      ]
+    }
+  ]
+}
