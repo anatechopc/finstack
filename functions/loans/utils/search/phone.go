@@ -25,9 +25,16 @@ func CanonicalPhone(raw string) string {
 	}
 
 	value := digits.String()
-	value = strings.TrimPrefix(value, "63")
-	value = strings.TrimPrefix(value, "0")
-	return value
+	for {
+		switch {
+		case strings.HasPrefix(value, "63"):
+			value = strings.TrimPrefix(value, "63")
+		case strings.HasPrefix(value, "0"):
+			value = strings.TrimPrefix(value, "0")
+		default:
+			return value
+		}
+	}
 }
 
 // PhoneTokens returns the token set for a phone number: the canonical form,

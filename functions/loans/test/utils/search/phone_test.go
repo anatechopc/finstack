@@ -20,6 +20,8 @@ func TestCanonicalPhone(t *testing.T) {
 		{"country code, no plus", "639175550142", "9175550142"},
 		{"spaced and punctuated", "0917 555-0142", "9175550142"},
 		{"already bare", "9175550142", "9175550142"},
+		{"international access code prefix", "0639175550142", "9175550142"},
+		{"doubled international access code prefix", "00639175550142", "9175550142"},
 		{"empty", "", ""},
 		{"no digits", "not a number", ""},
 	}
