@@ -21,6 +21,19 @@ func depsWithBoth(
 	}
 }
 
+// withMatchingTokens seeds after["search_tokens"] with the value
+// SearchTokensForUser would already compute from after's own fields. Most of
+// the tests below exercise the mobile-verification or name-cascade path in
+// isolation; without this, HandleUserChangedCore's own (correct) search_tokens
+// backfill would pad updater.Updates with an extra call these tests don't
+// expect. TestSearchTokensForUser_* in user_search_tokens_test.go covers the
+// token-diffing behavior itself.
+func withMatchingTokens(after map[string]any) map[string]any {
+	tokens, _ := triggers.SearchTokensForUser(after)
+	after["search_tokens"] = toAnySlice(tokens)
+	return after
+}
+
 func TestHandleUserChangedCore_MobileChanged_ClearsVerification(t *testing.T) {
 	updater := &fakes.UserUpdater{}
 	names := &fakes.LoanViewNameUpdater{}
@@ -31,11 +44,11 @@ func TestHandleUserChangedCore_MobileChanged_ClearsVerification(t *testing.T) {
 		"mobile_number":      "9171234567",
 		"verificationStatus": int64(2),
 	}
-	after := map[string]any{
+	after := withMatchingTokens(map[string]any{
 		"id":                 "user-1",
 		"mobile_number":      "9170000000",
 		"verificationStatus": int64(2),
-	}
+	})
 
 	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps); err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -73,13 +86,13 @@ func TestHandleUserChangedCore_NameChanged_CascadesFullName(t *testing.T) {
 		"middle_name":   "Santos",
 		"mobile_number": "9171234567",
 	}
-	after := map[string]any{
+	after := withMatchingTokens(map[string]any{
 		"id":            "user-1",
 		"first_name":    "Juan Carlos",
 		"last_name":     "Dela Cruz",
 		"middle_name":   "Santos",
 		"mobile_number": "9171234567",
-	}
+	})
 
 	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps); err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -134,12 +147,12 @@ func TestHandleUserChangedCore_NameUnchanged_NoCascade(t *testing.T) {
 		"last_name":     "Dela Cruz",
 		"mobile_number": "9171234567",
 	}
-	after := map[string]any{
+	after := withMatchingTokens(map[string]any{
 		"id":            "user-1",
 		"first_name":    "Juan",
 		"last_name":     "Dela Cruz",
 		"mobile_number": "9170000000",
-	}
+	})
 
 	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps); err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -170,7 +183,7 @@ func TestHandleUserChangedCore_MobileUnchanged_NoOp(t *testing.T) {
 	updater := &fakes.UserUpdater{}
 	deps := triggers.UserChangesDeps{UpdateUser: updater.Update}
 	before := map[string]any{"mobile_number": "9171234567"}
-	after := map[string]any{"mobile_number": "9171234567"}
+	after := withMatchingTokens(map[string]any{"mobile_number": "9171234567"})
 
 	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps); err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -192,7 +205,8 @@ func TestHandleUserChangedCore_MissingValues_NoCrashNoUpdate(t *testing.T) {
 	}
 
 	// missing mobile_number on either side -> also no-op
-	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", map[string]any{}, map[string]any{"mobile_number": "9170000000"}, deps); err != nil {
+	after := withMatchingTokens(map[string]any{"mobile_number": "9170000000"})
+	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", map[string]any{}, after, deps); err != nil {
 		t.Fatalf("err on missing-before: %v", err)
 	}
 	if len(updater.Updates) != 0 {

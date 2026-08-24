@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 
+	"cloud.google.com/go/firestore"
 	"com.loooans.app/utils"
+	firebase "firebase.google.com/go/v4"
 	"github.com/cloudevents/sdk-go/v2/event"
 	"github.com/golang/protobuf/proto"
 	"github.com/googleapis/google-cloudevents-go/cloud/firestoredata"
@@ -102,6 +104,19 @@ func UserCreated(ctx context.Context, event event.Event) error {
 		return errAuthClient
 	}
 
+	// Write search_tokens for the new user unconditionally — including
+	// admin-provisioned users that skip the welcome email below. Done here
+	// rather than in HandleUserCreatedCore so that skip decision (which only
+	// governs the welcome email) can't also make a user unfindable in
+	// search. Best-effort: a failure degrades search but must not fail the
+	// trigger, which also carries the (more important) welcome email and
+	// would otherwise retry it too.
+	if tokens, needsWrite := SearchTokensForUser(flattenFields(data.GetValue().GetFields())); needsWrite {
+		if err := writeUserSearchTokens(ctx, app, uid, tokens); err != nil {
+			log.Sugar().Warnf("user_created: write search tokens for %s: %v", uid, err)
+		}
+	}
+
 	deps := UserCreatedDeps{
 		GetUserEmail: func(ctx context.Context, uid string) (string, error) {
 			u, gErr := authClient.GetUser(ctx, uid)
@@ -116,4 +131,17 @@ func UserCreated(ctx context.Context, event event.Event) error {
 	}
 
 	return HandleUserCreatedCore(ctx, uid, ShouldSkipWelcomeEmail(data.GetValue().GetFields()), deps)
+}
+
+// writeUserSearchTokens merges the given search_tokens onto users/{uid}.
+func writeUserSearchTokens(ctx context.Context, app *firebase.App, uid string, tokens []string) error {
+	fs, fsErr := app.Firestore(ctx)
+	if fsErr != nil {
+		return fmt.Errorf("firestore client: %w", fsErr)
+	}
+	defer fs.Close()
+
+	docRef := fs.Doc(utils.GetCollectionPrefix() + "users/" + uid)
+	_, err := docRef.Set(ctx, map[string]any{"search_tokens": tokens}, firestore.MergeAll)
+	return err
 }

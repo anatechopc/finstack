@@ -7,6 +7,7 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"com.loooans.app/utils"
+	"com.loooans.app/utils/search"
 	"github.com/cloudevents/sdk-go/v2/event"
 	"github.com/golang/protobuf/proto"
 	"github.com/googleapis/google-cloudevents-go/cloud/firestoredata"
@@ -51,20 +52,101 @@ func HandleUserChangedCore(ctx context.Context, uid string, before, after map[st
 
 	beforeMobile, _ := before["mobile_number"].(string)
 	afterMobile, _ := after["mobile_number"].(string)
-	if beforeMobile == afterMobile {
-		return nil
-	}
-	if beforeMobile == "" {
-		// No prior mobile to invalidate — first time setting a number.
-		return nil
-	}
 	// beforeMobile != afterMobile AND beforeMobile != "" — clear verification.
 	// Includes the case where afterMobile == "" (user cleared their number).
-	fields := map[string]any{
-		"verificationStatus_andNot": verificationBitMobileNumber,
-		"mobile_verified_at":        nil,
+	// beforeMobile == "" is skipped: no prior mobile to invalidate, first
+	// time setting a number.
+	if beforeMobile != afterMobile && beforeMobile != "" {
+		fields := map[string]any{
+			"verificationStatus_andNot": verificationBitMobileNumber,
+			"mobile_verified_at":        nil,
+		}
+		if err := deps.UpdateUser(ctx, uid, fields); err != nil {
+			return err
+		}
 	}
-	return deps.UpdateUser(ctx, uid, fields)
+
+	// Keep search_tokens in sync with the fields it's derived from. Runs
+	// independently of the two paths above so a name-only or mobile-only
+	// edit still refreshes findability. SearchTokensForUser reports
+	// needsWrite=false once the document's own search_tokens field already
+	// matches, which is what stops this from re-firing on its own write.
+	if tokens, needsWrite := SearchTokensForUser(after); needsWrite {
+		if err := deps.UpdateUser(ctx, uid, map[string]any{
+			"search_tokens": tokens,
+		}); err != nil {
+			// Propagate like the paths above so the platform retries the
+			// delivery — a token write failure otherwise degrades search
+			// findability silently.
+			return err
+		}
+	}
+
+	return nil
+}
+
+// SearchTokensForUser computes the search_tokens array for a user document and
+// reports whether it differs from what the document already carries.
+//
+// The bool return is load-bearing: this trigger fires on document writes, so
+// writing tokens unconditionally would fire it again on its own write. When
+// the tokens already match, the caller must skip the write.
+func SearchTokensForUser(after map[string]any) ([]string, bool) {
+	if after == nil {
+		return nil, false
+	}
+
+	str := func(key string) string {
+		value, _ := after[key].(string)
+		return value
+	}
+
+	tokens := search.UserTokens(
+		str("first_name"),
+		str("middle_name"),
+		str("last_name"),
+		str("mobile_number"),
+		str("email_address"),
+	)
+
+	existing := stringSliceFrom(after["search_tokens"])
+	if equalStringSlices(existing, tokens) {
+		return nil, false
+	}
+	return tokens, true
+}
+
+// stringSliceFrom reads a []any of strings (the shape a Firestore array field
+// takes once flattened into a map[string]any) back into a []string. Anything
+// else — absent key, wrong type, non-string elements — yields nil.
+func stringSliceFrom(raw any) []string {
+	values, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if s, ok := value.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// equalStringSlices compares two token slices for exact (order-sensitive)
+// equality. search.UserTokens always returns a sorted slice and the stored
+// search_tokens field is whatever a prior call wrote, so order-sensitivity is
+// safe and cheaper than a set comparison.
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // userFullNameFrom composes the borrower's display name from a flattened user
@@ -134,6 +216,9 @@ func UserChanges(ctx context.Context, ev event.Event) error {
 				if _, ok := fields["mobile_verified_at"]; ok {
 					update["mobile_verified_at"] = nil
 				}
+				if v, ok := fields["search_tokens"]; ok {
+					update["search_tokens"] = v
+				}
 				return tx.Set(docRef, update, firestore.MergeAll)
 			})
 		},
@@ -192,7 +277,7 @@ func flattenFields(fields map[string]*firestoredata.Value) map[string]any {
 	out := map[string]any{}
 	for k, v := range fields {
 		switch k {
-		case "mobile_number", "first_name", "last_name", "middle_name":
+		case "mobile_number", "first_name", "last_name", "middle_name", "email_address":
 			out[k] = v.GetStringValue()
 		case "verificationStatus":
 			out[k] = v.GetIntegerValue()
@@ -203,6 +288,20 @@ func flattenFields(fields map[string]*firestoredata.Value) map[string]any {
 			}
 		case "id":
 			out[k] = v.GetStringValue()
+		case "search_tokens":
+			// Carried through as []any (string elements) — the same shape
+			// SearchTokensForUser's stringSliceFrom expects, and the shape a
+			// prior write to this same field produced. Parsing this is what
+			// lets SearchTokensForUser see the document's current tokens and
+			// recognise a no-op, which is what stops this trigger recursing
+			// on its own search_tokens write.
+			if arr := v.GetArrayValue(); arr != nil {
+				tokens := make([]any, 0, len(arr.GetValues()))
+				for _, tv := range arr.GetValues() {
+					tokens = append(tokens, tv.GetStringValue())
+				}
+				out[k] = tokens
+			}
 		}
 	}
 	return out
