@@ -98,9 +98,16 @@ void main() {
       for (final entry in cases.cast<Map<String, dynamic>>()) {
         final input = (entry['input'] as List<dynamic>).cast<String>();
         final expected = (entry['tokens'] as List<dynamic>).cast<String>();
+        // Compared as SETS, deliberately. Go sorts byte-wise over UTF-8;
+        // Dart's List.sort() compares UTF-16 code units. Those orders can
+        // diverge for non-BMP codepoints even when the token sets are
+        // identical, which would fail this test for no functional reason:
+        // Dart never writes tokens, it only builds one query token, so
+        // ordering carries no meaning on this side. Membership is the
+        // actual contract.
         expect(
-          SearchTokenizer.tokenize(input),
-          expected,
+          SearchTokenizer.tokenize(input).toSet(),
+          expected.toSet(),
           reason: 'tokenization drifted from Go for $input',
         );
       }
