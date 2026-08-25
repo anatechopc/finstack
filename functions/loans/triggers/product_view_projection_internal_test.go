@@ -98,6 +98,41 @@ func TestFlattenProductFields_DeletedAtShapes(t *testing.T) {
 	}
 }
 
+// created_at reaches this trigger in the same shapes as deleted_at: int millis
+// from Dart's handleDateTimeToJson, and a Firestore Timestamp from anything Go
+// wrote. Dropping it in the flattener is SILENT — the create path simply falls
+// back to projection time — which is precisely why it is pinned here rather
+// than left to the builder test.
+func TestFlattenProductFields_CreatedAtShapes(t *testing.T) {
+	const nowMillis = int64(1755000000000)
+	createdAt := time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC)
+
+	cases := []struct {
+		name  string
+		field *firestoredata.Value
+		want  any
+	}{
+		{name: "absent falls back to now", field: nil, want: nowMillis},
+		{name: "epoch millis", field: integerValue(1600000000000), want: int64(1600000000000)},
+		{name: "firestore timestamp", field: timestampValue(createdAt), want: createdAt.UnixMilli()},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fields := map[string]*firestoredata.Value{"id": stringValue("prod-1")}
+			if tc.field != nil {
+				fields["created_at"] = tc.field
+			}
+
+			view := BuildProductViewCreate("prod-1", flattenProductFields(fields), nil, nowMillis)
+
+			if view["created_at"] != tc.want {
+				t.Errorf("created_at = %v (%T), want %v", view["created_at"], view["created_at"], tc.want)
+			}
+		})
+	}
+}
+
 func integerValue(n int64) *firestoredata.Value {
 	return &firestoredata.Value{ValueType: &firestoredata.Value_IntegerValue{IntegerValue: n}}
 }

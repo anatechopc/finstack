@@ -32,8 +32,6 @@ type ProductViewDeps struct {
 	CreateView func(ctx context.Context, viewId string, view map[string]any) error
 	// UpdateView merges the projected fields onto an existing document.
 	UpdateView func(ctx context.Context, viewId string, fields map[string]any) error
-	// NewViewID allocates a document ID without writing anything.
-	NewViewID func() string
 	// Now returns the current time as epoch milliseconds.
 	Now func() int64
 }
@@ -47,14 +45,18 @@ type ProductViewDeps struct {
 // `add` path is dead code — so this trigger is the only creator, which is why
 // the create payload below has to be complete rather than merely sufficient.
 //
-// The lookup is by `product_id` field rather than by document ID. Legacy
+// The LOOKUP is by `product_id` field rather than by document ID. Legacy
 // documents were created with auto-generated IDs carrying product_id as a
 // field, and the Dart service still reads them with
-// `where('product_id', isEqualTo: …)`. Writing to product_views/{productId}
+// `where('product_id', isEqualTo: …)`. Looking up product_views/{productId}
 // instead would give every already-projected product a second document, with
 // both appearing in every listing. The query is equality-only, so it is served
 // by the automatic single-field index; product_views is small and product
 // writes are rare, so a read per write is negligible.
+//
+// A CREATE, on the other hand, keys the new document on the product ID — see
+// the comment on that branch below. The two are not in tension: the field
+// query still finds every legacy auto-ID document, so no existing ID changes.
 func HandleProductWrittenCore(ctx context.Context, product map[string]any, deps ProductViewDeps) error {
 	productId, _ := product["id"].(string)
 	if productId == "" {
@@ -82,9 +84,18 @@ func HandleProductWrittenCore(ctx context.Context, product map[string]any, deps 
 	now := deps.Now()
 
 	if len(viewIds) == 0 {
-		viewId := deps.NewViewID()
+		// The created document is keyed on the product ID, not on a freshly
+		// allocated random one. Firestore triggers are delivered at-least-once,
+		// so the same product write can arrive twice; two deliveries (or two
+		// rapid edits) that both query before either write lands each see zero
+		// views. With a random ID each would create its own document, leaving
+		// one product with two views — the exact duplication the field lookup
+		// exists to prevent, and one the update-every-duplicate loop below
+		// would then keep permanently in sync so nobody ever notices. A
+		// deterministic ID makes concurrent creates converge on one document.
+		viewId := productId
 		if err := deps.CreateView(ctx, viewId, BuildProductViewCreate(viewId, product, company, now)); err != nil {
-			return fmt.Errorf("create product_view %s for product %s: %w", viewId, productId, err)
+			return fmt.Errorf("create product_view for product %s: %w", productId, err)
 		}
 		return nil
 	}
@@ -104,21 +115,28 @@ func HandleProductWrittenCore(ctx context.Context, product map[string]any, deps 
 // BuildProductViewCreate returns the complete product_views document for a
 // product that has no view yet.
 //
-// ProductViewEntity declares twelve fields `late` and non-nullable, so its
-// fromJson throws — crashing the offers list — if any is absent. The create
-// payload therefore carries every one of them, including the two the review
-// flow owns thereafter (review_rating_avg, review_count), seeded from the
-// company. deleted_at is written as an explicit null because Firestore's
-// `isNull: true` filter, which both Dart read paths use, matches only
-// documents where the field exists.
+// ProductViewEntity declares fourteen fields `late` (twelve of them without a
+// defaultValue), so its fromJson throws — crashing the offers list — if any is
+// absent. The create payload therefore carries every one of them, including the
+// two the review flow owns thereafter (review_rating_avg, review_count), seeded
+// from the company.
 func BuildProductViewCreate(viewId string, product, company map[string]any, nowMillis int64) map[string]any {
 	view := projectedProductFields(product, company)
 
 	// ProductViewEntity.id is both the document ID and a stored field.
 	view["id"] = viewId
-	view["created_at"] = nowMillis
 	view["updated_at"] = nowMillis
-	view["deleted_at"] = productDeletedAt(product)
+
+	// created_at is the PRODUCT's own creation time when it has one, not the
+	// moment this projection ran: loadNext() pages the marketplace with
+	// orderBy('created_at') ASCENDING (product_view_firestore_service.dart:198),
+	// and Task 7 backfills every product in a single burst, which would
+	// otherwise order that stream by backfill order rather than by product age.
+	createdAt := nowMillis
+	if millis, ok := productMillis(product, "created_at"); ok {
+		createdAt = millis
+	}
+	view["created_at"] = createdAt
 
 	// The review counters on a view are a denormalization of the company:
 	// both the live Dart writer (loans_bloc.dart:653-654) and the retired
@@ -145,7 +163,32 @@ func BuildProductViewCreate(viewId string, product, company map[string]any, nowM
 func BuildProductViewUpdate(product, company map[string]any, nowMillis int64) map[string]any {
 	view := projectedProductFields(product, company)
 	view["updated_at"] = nowMillis
+
+	// A company that is genuinely absent must not blank a denormalization that
+	// is already correct. (A company READ FAILURE never reaches here — the
+	// core aborts before writing anything.) Merging company_name: "" plus
+	// search_tokens rebuilt without the lender's name would make the offer
+	// unfindable by lender, silently, on the next unrelated product edit.
+	// Create still writes the empty shape, because there is nothing there to
+	// preserve and the entity requires the keys.
+	if company == nil {
+		for _, key := range companyDerivedKeys {
+			delete(view, key)
+		}
+	}
 	return view
+}
+
+// companyDerivedKeys are the view fields whose value comes from the companies
+// document rather than from the product. search_tokens belongs here because two
+// of its three inputs (company name, tag line) are company-derived; rebuilding
+// it from loan_type alone would strip the lender's name out of the index.
+// company_id is NOT in the list — it is product.provider_id.
+var companyDerivedKeys = []string{
+	"company_name",
+	"tag_line",
+	"company_profile_photo_url",
+	"search_tokens",
 }
 
 // projectedProductFields is the field set common to both payloads: everything
@@ -175,6 +218,18 @@ func projectedProductFields(product, company map[string]any) map[string]any {
 		"max_period":    mapInt64(product, "max_period", 1),
 		"allow_add_ons": mapBool(product, "allow_add_ons", true),
 		"search_tokens": search.ProductViewTokens(companyName, loanType, tagLine),
+		// deleted_at follows the PRODUCT on BOTH paths, because the view's
+		// lifecycle is the product's. Products are only ever soft-deleted
+		// (product_firestore_service.dart:29-35 sets deleted_at and calls
+		// update), which arrives here as an ordinary write: if the update path
+		// left the view's deleted_at alone, the deleted offer would stay
+		// visible to `where('deleted_at', isNull: true)` AND be floated to the
+		// top of the marketplace by the bumped updated_at, which the listing
+		// orders by descending. Clearing deleted_at has to restore the offer
+		// for the same reason. It is written unconditionally — as an explicit
+		// null for a live product — because Firestore's `isNull: true`, used by
+		// both Dart read paths, matches only documents where the field exists.
+		"deleted_at": productDeletedAt(product),
 	}
 
 	// tag_line and company_profile_photo_url are nullable on the entity;
@@ -190,18 +245,24 @@ func projectedProductFields(product, company map[string]any) map[string]any {
 	return view
 }
 
-// productDeletedAt carries a soft-deleted product's deleted_at onto a newly
-// created view. Without it the trigger — now the only creator — would publish
-// a visible offer for a product that was deleted before it was ever projected.
+// productDeletedAt renders the product's deleted_at the way the view stores it:
+// epoch millis when the product is soft-deleted, and an explicit null — never
+// an absent key — when it is live.
 func productDeletedAt(product map[string]any) any {
-	raw, ok := product["deleted_at"]
-	if !ok || raw == nil {
-		return nil
-	}
-	if millis, ok := utils.ToInt64(raw); ok {
+	if millis, ok := productMillis(product, "deleted_at"); ok {
 		return millis
 	}
 	return nil
+}
+
+// productMillis reads an epoch-millis field off the product, reporting !ok when
+// it is absent, null, or not a number.
+func productMillis(product map[string]any, key string) (int64, bool) {
+	raw, ok := product[key]
+	if !ok || raw == nil {
+		return 0, false
+	}
+	return utils.ToInt64(raw)
 }
 
 func mapValue(m map[string]any, key string) any {
@@ -303,7 +364,10 @@ func ProductWritten(ctx context.Context, ev event.Event) error {
 				// transient and is propagated, because merging an empty
 				// company_name over a good one destroys data.
 				if status.Code(err) == codes.NotFound {
-					log.Sugar().Warnf("product_written: company %s not found", companyId)
+					// Error, not warn: a product pointing at a company that
+					// does not exist is broken referential integrity, not a
+					// normal state.
+					log.Sugar().Errorf("product_written: company %s not found", companyId)
 					return nil, nil
 				}
 				return nil, err
@@ -335,8 +399,7 @@ func ProductWritten(ctx context.Context, ev event.Event) error {
 			_, err := views.Doc(viewId).Set(ctx, fields, firestore.MergeAll)
 			return err
 		},
-		NewViewID: func() string { return views.NewDoc().ID },
-		Now:       func() int64 { return time.Now().UnixMilli() },
+		Now: func() int64 { return time.Now().UnixMilli() },
 	}
 
 	return HandleProductWrittenCore(ctx, product, deps)
@@ -359,10 +422,13 @@ func flattenProductFields(fields map[string]*firestoredata.Value) map[string]any
 			if _, ok := value.GetValueType().(*firestoredata.Value_BooleanValue); ok {
 				out[key] = value.GetBooleanValue()
 			}
-		case "deleted_at":
-			// Absent for a live product, and a NullValue once cleared —
-			// intMillisFromValue reports !ok for both, which productDeletedAt
-			// renders as an explicit null.
+		case "created_at", "deleted_at":
+			// Both are int millis when Dart wrote them (handleDateTimeToJson)
+			// and a Timestamp when anything Go did; intMillisFromValue accepts
+			// either and reports !ok for absent, null and every other type.
+			// deleted_at is absent for a live product and a NullValue once
+			// cleared, which productDeletedAt renders as an explicit null;
+			// created_at falls back to projection time.
 			if millis, ok := intMillisFromValue(value); ok {
 				out[key] = millis
 			}

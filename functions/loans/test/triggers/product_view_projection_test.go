@@ -3,6 +3,7 @@ package triggers_test
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 
 	"com.loooans.app/triggers"
@@ -66,13 +67,55 @@ func TestBuildProductViewUpdate(t *testing.T) {
 }
 
 func TestBuildProductViewUpdate_ToleratesMissingFields(t *testing.T) {
-	view := triggers.BuildProductViewUpdate(map[string]any{"id": "prod-2"}, nil, testNowMillis)
+	// The company exists but carries none of the denormalized fields — which
+	// is a different case from no company at all (see
+	// TestBuildProductViewUpdate_OmitsCompanyFieldsWhenCompanyMissing).
+	view := triggers.BuildProductViewUpdate(map[string]any{"id": "prod-2"}, map[string]any{}, testNowMillis)
 
 	if view["product_id"] != "prod-2" {
 		t.Errorf("product_id = %v, want prod-2", view["product_id"])
 	}
 	if _, ok := view["search_tokens"].([]string); !ok {
 		t.Error("search_tokens must always be present, even if empty")
+	}
+}
+
+// TestBuildProductViewUpdate_OmitsCompanyFieldsWhenCompanyMissing covers the
+// NotFound-company branch. The core only reaches the builders with a nil
+// company when the company genuinely does not exist — a read FAILURE aborts
+// before anything is written — so the update payload must leave the stored
+// denormalization alone rather than merging empties over it. Blanking
+// company_name and rebuilding search_tokens without the lender's name makes
+// the offer unfindable by lender, silently, on the next unrelated product edit.
+func TestBuildProductViewUpdate_OmitsCompanyFieldsWhenCompanyMissing(t *testing.T) {
+	view := triggers.BuildProductViewUpdate(sampleProduct(), nil, testNowMillis)
+
+	companyDerived := []string{"company_name", "tag_line", "company_profile_photo_url", "search_tokens"}
+	for _, key := range companyDerived {
+		if value, ok := view[key]; ok {
+			t.Errorf("update payload carries %q = %v; a MergeAll would overwrite the stored value", key, value)
+		}
+	}
+
+	// Everything the product itself owns still updates, including company_id,
+	// which comes from product.provider_id rather than from the company doc.
+	if view["company_id"] != "company-1" {
+		t.Errorf("company_id = %v, want company-1 (product.provider_id, not company-derived)", view["company_id"])
+	}
+	if view["loan_type"] != "Salary Loan" {
+		t.Errorf("loan_type = %v, want Salary Loan", view["loan_type"])
+	}
+	if view["updated_at"] != testNowMillis {
+		t.Errorf("updated_at = %v, want %d", view["updated_at"], testNowMillis)
+	}
+
+	// Create has nothing to preserve and the entity requires the keys, so it
+	// still writes the full shape.
+	created := triggers.BuildProductViewCreate("prod-1", sampleProduct(), nil, testNowMillis)
+	for _, key := range companyDerived {
+		if _, ok := created[key]; !ok {
+			t.Errorf("create payload must still carry %q — there is no prior value to preserve", key)
+		}
 	}
 }
 
@@ -134,6 +177,64 @@ func TestBuildProductViewCreate_PropagatesProductDeletedAt(t *testing.T) {
 
 	if view["deleted_at"] != int64(1700000000000) {
 		t.Errorf("deleted_at = %v (%T), want the product's own int64 millis", view["deleted_at"], view["deleted_at"])
+	}
+}
+
+// TestBuildProductViewUpdate_CarriesProductDeletedAt pins the other half of the
+// view's lifecycle. Products are never hard-deleted — the Dart service
+// soft-deletes (product_firestore_service.dart:29-35: set deleted_at, then
+// update), which arrives here as an ordinary write. An update payload without
+// deleted_at is a MergeAll that leaves the view's own value untouched, so a
+// deleted offer stays visible to `where('deleted_at', isNull: true)` and the
+// bumped updated_at floats it to the TOP of the marketplace listing
+// (product_view_firestore_service.dart:121 orders by updated_at descending).
+// After Task 7's backfill every product has a view, so this is the only branch
+// that runs.
+func TestBuildProductViewUpdate_CarriesProductDeletedAt(t *testing.T) {
+	live := triggers.BuildProductViewUpdate(sampleProduct(), sampleCompany(), testNowMillis)
+
+	value, ok := live["deleted_at"]
+	if !ok {
+		t.Fatal("update payload omits deleted_at — a product whose deleted_at was CLEARED would keep a hidden view forever")
+	}
+	if value != nil {
+		t.Errorf("deleted_at = %v, want an explicit nil for a live product", value)
+	}
+
+	product := sampleProduct()
+	product["deleted_at"] = int64(1700000000000)
+	deleted := triggers.BuildProductViewUpdate(product, sampleCompany(), testNowMillis)
+
+	if deleted["deleted_at"] != int64(1700000000000) {
+		t.Errorf("deleted_at = %v (%T), want the product's own int64 millis — otherwise soft-deleting a product publishes it at the top of the listing",
+			deleted["deleted_at"], deleted["deleted_at"])
+	}
+}
+
+// created_at on a created view is the PRODUCT's own creation time when the
+// event carries one. loadNext() pages the marketplace with
+// orderBy('created_at') ASCENDING (product_view_firestore_service.dart:198),
+// and Task 7 backfills every product in one burst, which would otherwise order
+// that stream by backfill order rather than by product age.
+func TestBuildProductViewCreate_CarriesProductCreatedAt(t *testing.T) {
+	product := sampleProduct()
+	product["created_at"] = int64(1600000000000)
+
+	view := triggers.BuildProductViewCreate("prod-1", product, sampleCompany(), testNowMillis)
+
+	if view["created_at"] != int64(1600000000000) {
+		t.Errorf("created_at = %v (%T), want the product's own int64 millis", view["created_at"], view["created_at"])
+	}
+	// updated_at is still projection time — only created_at is historical.
+	if view["updated_at"] != testNowMillis {
+		t.Errorf("updated_at = %v, want %d", view["updated_at"], testNowMillis)
+	}
+
+	// A product with no created_at falls back to projection time, never to 0:
+	// created_at is `late` and non-nullable on the entity.
+	fallback := triggers.BuildProductViewCreate("prod-1", sampleProduct(), sampleCompany(), testNowMillis)
+	if fallback["created_at"] != testNowMillis {
+		t.Errorf("created_at = %v, want the %d fallback when the product has none", fallback["created_at"], testNowMillis)
 	}
 }
 
@@ -295,7 +396,6 @@ type fakeProductViewStore struct {
 	loadedCompanyID string
 	created         map[string]map[string]any
 	updated         map[string]map[string]any
-	newIDs          int
 }
 
 func (f *fakeProductViewStore) deps() triggers.ProductViewDeps {
@@ -317,12 +417,17 @@ func (f *fakeProductViewStore) deps() triggers.ProductViewDeps {
 			f.updated[viewId] = fields
 			return nil
 		},
-		NewViewID: func() string {
-			f.newIDs++
-			return "generated-1"
-		},
 		Now: func() int64 { return testNowMillis },
 	}
+}
+
+func docIDs(docs map[string]map[string]any) []string {
+	ids := make([]string, 0, len(docs))
+	for id := range docs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // TestHandleProductWrittenCore_UpdatesExistingView pins defect D1. Legacy
@@ -363,17 +468,54 @@ func TestHandleProductWrittenCore_CreatesWhenNoViewExists(t *testing.T) {
 	if len(store.updated) != 0 {
 		t.Errorf("updated %v — nothing existed to update", store.updated)
 	}
-	view, ok := store.created["generated-1"]
+	view, ok := store.created["prod-1"]
 	if !ok {
-		t.Fatalf("created %v, want a doc under the newly allocated id", store.created)
+		t.Fatalf("created %v, want a doc under the product id", docIDs(store.created))
 	}
 	// ProductViewEntity.id is both the doc ID and a stored field; the Dart
 	// service reads back doc.data(), so a mismatch breaks get-by-id.
-	if view["id"] != "generated-1" {
-		t.Errorf("id field = %v, want the allocated doc id", view["id"])
+	if view["id"] != "prod-1" {
+		t.Errorf("id field = %v, want the doc id prod-1", view["id"])
 	}
 	if _, ok := view["created_at"]; !ok {
 		t.Error("a created document must carry created_at")
+	}
+}
+
+// TestHandleProductWrittenCore_ConcurrentCreatesConvergeOnOneDocument pins the
+// atomicity gap in query-then-create. Eventarc/Cloud Functions gen2 Firestore
+// triggers are AT-LEAST-ONCE, so the same product write can be delivered
+// twice; the second delivery queries before the first one's write has landed
+// and also sees zero views. With a randomly allocated doc ID each delivery
+// creates its OWN document and the product ends up with two views — the exact
+// duplication the product_id lookup exists to prevent, and one the
+// update-every-duplicate loop would then keep permanently in sync so it never
+// diverges and nobody notices. A deterministic ID makes them converge.
+//
+// This does not reopen D1: the LOOKUP is still by field, so a legacy auto-ID
+// document is found and updated in place (…UpdatesExistingView above).
+func TestHandleProductWrittenCore_ConcurrentCreatesConvergeOnOneDocument(t *testing.T) {
+	store := &fakeProductViewStore{company: sampleCompany()}
+	// existingIDs stays empty for both calls: neither delivery sees the
+	// other's write, which is the race.
+	deps := store.deps()
+
+	for delivery := 1; delivery <= 2; delivery++ {
+		if err := triggers.HandleProductWrittenCore(context.Background(), sampleProduct(), deps); err != nil {
+			t.Fatalf("delivery %d: %v", delivery, err)
+		}
+	}
+
+	if len(store.created) != 1 {
+		t.Fatalf("two deliveries of one product write created %d documents (%v), want 1 — the created doc ID must be derived from the product ID",
+			len(store.created), docIDs(store.created))
+	}
+	view, ok := store.created["prod-1"]
+	if !ok {
+		t.Fatalf("created %v, want the document keyed on the product id", docIDs(store.created))
+	}
+	if view["id"] != "prod-1" {
+		t.Errorf("id field = %v, want the doc id prod-1", view["id"])
 	}
 }
 
