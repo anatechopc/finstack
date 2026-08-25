@@ -28,6 +28,13 @@ func depsWithBoth(
 // backfill would pad updater.Updates with an extra call these tests don't
 // expect. TestSearchTokensForUser_* in user_search_tokens_test.go covers the
 // token-diffing behavior itself.
+//
+// Note this seeding is deliberately unrealistic wherever the fixture's mobile
+// or name fields differ from `before` — only this trigger writes search_tokens,
+// so a document whose name just changed cannot already carry tokens matching
+// the *new* name. The tokens are neutralised here purely to isolate the path
+// under test; TestHandleUserChangedCore_WritesSearchTokens below covers the
+// realistic shape (a changed field, tokens still stale or absent).
 func withMatchingTokens(after map[string]any) map[string]any {
 	tokens, _ := triggers.SearchTokensForUser(after)
 	after["search_tokens"] = toAnySlice(tokens)
@@ -223,6 +230,76 @@ func TestHandleUserChangedCore_UpdaterErrorPropagates(t *testing.T) {
 	err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps)
 	if err == nil {
 		t.Fatal("expected propagated error")
+	}
+}
+
+// TestHandleUserChangedCore_WritesSearchTokens pins the wiring, not the
+// tokenizer: it proves that an ordinary user edit reaches UpdateUser with a
+// search_tokens field at all. Every other test in this file neutralises that
+// path via withMatchingTokens, so without this one the whole search_tokens
+// block could be deleted from HandleUserChangedCore and the suite stays green.
+func TestHandleUserChangedCore_WritesSearchTokens(t *testing.T) {
+	updater := &fakes.UserUpdater{}
+	names := &fakes.LoanViewNameUpdater{}
+	deps := depsWithBoth(updater, names)
+
+	// A realistic edit: the surname changed and the document carries no
+	// search_tokens yet (pre-migration, or a user created before this trigger
+	// shipped). Mobile is absent on both sides, so the verification path stays
+	// quiet and every recorded update belongs to the search path.
+	before := map[string]any{"id": "user-1", "first_name": "Ana", "last_name": "Cruz"}
+	after := map[string]any{"id": "user-1", "first_name": "Ana", "last_name": "Reyes"}
+
+	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(updater.Updates) != 1 {
+		t.Fatalf("expected exactly the search_tokens update, got %d: %+v", len(updater.Updates), updater.Updates)
+	}
+	upd := updater.Updates[0]
+	if upd.UID != "user-1" {
+		t.Errorf("uid: got %s, want user-1", upd.UID)
+	}
+	got, ok := upd.Fields["search_tokens"].([]string)
+	if !ok {
+		t.Fatalf("search_tokens: got %T (%v), want []string", upd.Fields["search_tokens"], upd.Fields["search_tokens"])
+	}
+	// Prefixes of "ana" and "reyes" from MinPrefix=2 up, sorted. Spelled out
+	// rather than recomputed via search.UserTokens so the assertion is a real
+	// expectation and not a restatement of the production call.
+	want := []string{"an", "ana", "re", "rey", "reye", "reyes"}
+	if len(got) != len(want) {
+		t.Fatalf("search_tokens: got %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("search_tokens: got %q, want %q", got, want)
+		}
+	}
+}
+
+// TestHandleUserChangedCore_SkipsSearchTokenWriteWhenCurrent is the recursion
+// guard at the level that actually ships: this trigger fires on its own token
+// write, so a document already carrying current tokens must produce no write.
+func TestHandleUserChangedCore_SkipsSearchTokenWriteWhenCurrent(t *testing.T) {
+	updater := &fakes.UserUpdater{}
+	names := &fakes.LoanViewNameUpdater{}
+	deps := depsWithBoth(updater, names)
+
+	// Same edit as above, but `after` is the document as it looks on the
+	// trigger's *second* delivery — the one caused by its own token write.
+	before := map[string]any{"id": "user-1", "first_name": "Ana", "last_name": "Cruz"}
+	after := withMatchingTokens(map[string]any{
+		"id": "user-1", "first_name": "Ana", "last_name": "Reyes",
+	})
+
+	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	for _, upd := range updater.Updates {
+		if _, ok := upd.Fields["search_tokens"]; ok {
+			t.Fatalf("tokens already current — must not write again, got %+v", upd.Fields)
+		}
 	}
 }
 

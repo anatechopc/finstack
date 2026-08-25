@@ -98,12 +98,6 @@ func UserCreated(ctx context.Context, event event.Event) error {
 		return errFirebaseAdmin
 	}
 
-	authClient, errAuthClient := app.Auth(ctx)
-
-	if errAuthClient != nil {
-		return errAuthClient
-	}
-
 	// Write search_tokens for the new user unconditionally — including
 	// admin-provisioned users that skip the welcome email below. Done here
 	// rather than in HandleUserCreatedCore so that skip decision (which only
@@ -111,10 +105,21 @@ func UserCreated(ctx context.Context, event event.Event) error {
 	// search. Best-effort: a failure degrades search but must not fail the
 	// trigger, which also carries the (more important) welcome email and
 	// would otherwise retry it too.
+	//
+	// Placed before the Auth client is built: it needs only app + uid, and
+	// running it first means a transient Auth failure (which returns below,
+	// with no retry configured) can't leave a brand-new user untokenized and
+	// permanently unfindable.
 	if tokens, needsWrite := SearchTokensForUser(flattenFields(data.GetValue().GetFields())); needsWrite {
 		if err := writeUserSearchTokens(ctx, app, uid, tokens); err != nil {
 			log.Sugar().Warnf("user_created: write search tokens for %s: %v", uid, err)
 		}
+	}
+
+	authClient, errAuthClient := app.Auth(ctx)
+
+	if errAuthClient != nil {
+		return errAuthClient
 	}
 
 	deps := UserCreatedDeps{

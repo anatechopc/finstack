@@ -41,6 +41,18 @@ func TestSearchTokensForUser_RewritesOnNameChange(t *testing.T) {
 		t.Fatal("a changed surname must produce a write")
 	}
 	assertHas(t, tokens, "santos")
+
+	// The case every edit to an already-tokenized user actually hits: tokens
+	// are present but stale (they still describe the previous surname). Absent
+	// tokens and exactly-matching tokens are the easy ends; this is the middle.
+	stale, _ := triggers.SearchTokensForUser(map[string]any{"first_name": "Juan", "last_name": "Cruz"})
+	after["search_tokens"] = toAnySlice(stale)
+
+	tokens, needsWrite = triggers.SearchTokensForUser(after)
+	if !needsWrite {
+		t.Fatal("stale tokens must be rewritten, not left in place")
+	}
+	assertHas(t, tokens, "santos")
 }
 
 // TestSearchTokensForUser_NewlyCreatedUser covers the user_created path: a

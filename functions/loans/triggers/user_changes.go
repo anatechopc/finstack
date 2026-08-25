@@ -18,7 +18,11 @@ const verificationBitMobileNumber = 2
 
 // UserChangesDeps holds the collaborator functions used by the core.
 type UserChangesDeps struct {
-	// UpdateUser clears mobile-verification fields on the user document.
+	// UpdateUser applies a partial write to the user document. Two callers use
+	// it: the mobile path (clearing the verification bit and
+	// mobile_verified_at) and the search path (writing search_tokens). The
+	// adapter recognises each key independently, so a caller may pass either
+	// set on its own.
 	UpdateUser func(ctx context.Context, uid string, fields map[string]any) error
 	// UpdateUserLoanViewNames refreshes the denormalized user_full_name on every
 	// user_loan_views document owned by the given user. Called only when the
@@ -216,7 +220,7 @@ func UserChanges(ctx context.Context, ev event.Event) error {
 				if _, ok := fields["mobile_verified_at"]; ok {
 					update["mobile_verified_at"] = nil
 				}
-				if v, ok := fields["search_tokens"]; ok {
+				if v, ok := fields["search_tokens"].([]string); ok {
 					update["search_tokens"] = v
 				}
 				return tx.Set(docRef, update, firestore.MergeAll)
@@ -228,7 +232,7 @@ func UserChanges(ctx context.Context, ev event.Event) error {
 			// user_id index, so no composite index is required). Each matching
 			// doc gets a single-field MergeAll set; a borrower has at most a
 			// handful of loans, so the write fan-out is small.
-			iter := fs.Collection(collectionPrefix + "user_loan_views").
+			iter := fs.Collection(collectionPrefix+"user_loan_views").
 				Where("user_id", "==", userId).
 				Documents(ctx)
 			defer iter.Stop()
@@ -295,6 +299,13 @@ func flattenFields(fields map[string]*firestoredata.Value) map[string]any {
 			// lets SearchTokensForUser see the document's current tokens and
 			// recognise a no-op, which is what stops this trigger recursing
 			// on its own search_tokens write.
+			//
+			// Pinned by TestFlattenFields_SearchTokensRoundTrip in
+			// user_changes_internal_test.go — deleting this case makes that
+			// test's pass-2 assertion fail. NOTE: that test lives in the
+			// triggers *module*, which `go test ./...` from functions/loans
+			// does not reach; run it with `cd functions/loans/triggers &&
+			// go test ./...`.
 			if arr := v.GetArrayValue(); arr != nil {
 				tokens := make([]any, 0, len(arr.GetValues()))
 				for _, tv := range arr.GetValues() {
