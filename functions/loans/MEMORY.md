@@ -374,9 +374,14 @@ catastrophic if the flag were enabled), #101 (hard-deleted product orphans its v
 - **Task 7 Step 6 never ran:** the backfill has only been exercised against fakes. ADC was
   absent in the session. Needs `gcloud auth application-default login`, then a
   `-dry-run=true` pass against `loooans-dev-stg`.
-- **Nothing in CI deploys `firestore.indexes.json`**, and all 41 indexes name unprefixed
-  collections (`users`, not `dev_users`). Indexes must exist before the frontend lands or
-  the first search fails with `FAILED_PRECONDITION`.
+- **Nothing in CI deploys `firestore.indexes.json`.** The file is declarative only — no
+  workflow runs `firebase deploy --only firestore:indexes`. Indexes must exist before the
+  frontend lands or the first search fails with `FAILED_PRECONDITION`.
+  (Fixed in `d0acf96`: the file previously named only unprefixed collections, so **dev and
+  staging had no managed indexes at all** — they were being hand-created from the console's
+  index-required error link. All 41 entries are now mirrored as `dev_*` and `stg_*` too,
+  123 total. Prefixes verified against `environment_utils.go:5-19` and
+  `base_firestore_service.dart:26-35`, not against the docs.)
 - **`firestore.rules` is the default allow-all template, expired 2024-06-22, and
   `firebase.json` has no `"rules"` key** — so it is not deployed and the live rules are
   unknown. Relevant because search's authorization is enforced in query construction
