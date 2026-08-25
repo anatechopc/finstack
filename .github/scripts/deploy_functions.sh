@@ -153,8 +153,14 @@ echo "Deploying MessageWritten trigger"
 gcloud functions deploy messageWritten_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=messageWritten --trigger-event-filters=type=google.cloud.firestore.document.v1.written --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}chat_rooms/{roomId}/messages/{messageId}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
 pids[$!]="messageWritten"
 
+# Owns the product_views projection: fires on every products write and upserts
+# the denormalized read model, search_tokens included.
+echo "Deploying ProductWritten trigger"
+gcloud functions deploy productWritten_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=productWritten --trigger-event-filters=type=google.cloud.firestore.document.v1.written --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}products/{productId}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+pids[$!]="productWritten"
+
 echo ""
-echo "All 17 functions deploying in parallel. Waiting for completion..."
+echo "All 18 functions deploying in parallel. Waiting for completion..."
 echo ""
 
 # Wait for all background processes and track failures
@@ -167,7 +173,7 @@ done
 
 echo ""
 if [ ${#failed[@]} -eq 0 ]; then
-  echo "Deployment done. All 17 functions deployed successfully."
+  echo "Deployment done. All 18 functions deployed successfully."
 else
   echo "Deployment finished with errors. Failed functions: ${failed[*]}"
   exit 1
