@@ -30,11 +30,27 @@ jobs:
         with:
           go-version: '1.26'
 
-      - name: Build
-        run: go build -v ./...
-
-      - name: Test
-        run: go test -v ./...
+      # functions/loans is a multi-module Go setup wired together with `replace`
+      # directives, so `./...` only reaches the module rooted here. Every sibling
+      # module (api, job, test/fakes, triggers, types, utils) must be built and
+      # tested explicitly — otherwise a module can stop compiling, or an internal
+      # test can stop running, while CI stays green.
+      #
+      # Do not pipe the go commands: a pipeline exits with the status of its last
+      # element, which would swallow every failure and make this step a no-op.
+      - name: Build and test every module
+        run: |
+          set -uo pipefail
+          status=0
+          for mod in $(find . -name go.mod -not -path './vendor/*' -exec dirname {} \; | sort); do
+            echo "::group::$mod"
+            if ! (cd "$mod" && go build -v ./... && go test -v ./...); then
+              echo "::error::module $mod failed"
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $status
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
