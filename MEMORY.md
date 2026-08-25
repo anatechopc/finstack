@@ -238,3 +238,17 @@ dropped ~a third of every offer's search tokens. The Critical in the final revie
 the *golden-vector file itself* could not express the contract it existed to enforce: a Dart
 implementation with the exact phone bug Go once had would have passed it. Independent review
 + mutation testing found things no amount of careful reading did.
+
+### Correction (2026-08-25): Firestore indexes live in per-env files
+
+Recorded because I got it wrong twice in one session. `apps/loans/firestore.indexes.json`
+is a **scratch artifact** — `apps/loans/scripts/deploy-indexes.sh` `cp`s the chosen
+environment's file over it right before deploying, so anything committed there is
+discarded. The real snapshots are `firestore.indexes.{dev,stg,prod}.json`
+(`dev_*` / `stg_*` / unprefixed). Fixed in `5b14006`.
+
+**The repo's own skill library documented all of this** — `finstack-run-deploy-operate` §6
+covers the file layout, the scratch-artifact trap, and the `["$ENV" == "dev"]` bracket bug.
+`CLAUDE.md` says to load the relevant skill before non-trivial work and I did not. Loading
+it would have prevented three wrong commits and a wrong claim to the user. **Load the skill
+first — especially for anything deploy- or environment-shaped.**

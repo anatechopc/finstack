@@ -374,14 +374,25 @@ catastrophic if the flag were enabled), #101 (hard-deleted product orphans its v
 - **Task 7 Step 6 never ran:** the backfill has only been exercised against fakes. ADC was
   absent in the session. Needs `gcloud auth application-default login`, then a
   `-dry-run=true` pass against `loooans-dev-stg`.
-- **Nothing in CI deploys `firestore.indexes.json`.** The file is declarative only — no
-  workflow runs `firebase deploy --only firestore:indexes`. Indexes must exist before the
+- **Indexes are deployed by hand, per environment**, not by CI:
+  `cd apps/loans && ./scripts/deploy-indexes.sh <dev|stg|prod>`. They must exist before the
   frontend lands or the first search fails with `FAILED_PRECONDITION`.
-  (Fixed in `d0acf96`: the file previously named only unprefixed collections, so **dev and
-  staging had no managed indexes at all** — they were being hand-created from the console's
-  index-required error link. All 41 entries are now mirrored as `dev_*` and `stg_*` too,
-  123 total. Prefixes verified against `environment_utils.go:5-19` and
-  `base_firestore_service.dart:26-35`, not against the docs.)
+
+  **I got this wrong twice before getting it right — read `finstack-run-deploy-operate` §6
+  before touching indexes.** `apps/loans/firestore.indexes.json` is a **scratch artifact**;
+  the deploy script `cp`s the chosen env file over it, so anything committed there is
+  silently discarded. The real committed snapshots are
+  `firestore.indexes.{dev,stg,prod}.json`, carrying `dev_*` / `stg_*` / unprefixed
+  collections. `5b14006` moved the six search indexes into those three and restored the
+  scratch file; commits `1a7d699`, `408e3ef` and `d0acf96` had all edited the scratch file,
+  and d0acf96's claim that dev/staging had no managed indexes was simply false.
+
+  `5b14006` also fixed the deploy script, which could not have shipped a new index at all:
+  it refreshed the env file from **live** state and then deployed that, so for stg and prod
+  a newly added index was overwritten before it could be created. Refreshing is now
+  `--refresh` (writes the snapshot, deploys nothing); the default deploys what is committed.
+  The `if ["$ENV" == "dev"]` bracket bug (documented in the skill) meant `deploy-indexes.sh
+  dev` regenerated and clobbered the **staging** snapshot on every run — reproduced, fixed.
 - **`firestore.rules` is the default allow-all template, expired 2024-06-22, and
   `firebase.json` has no `"rules"` key** — so it is not deployed and the live rules are
   unknown. Relevant because search's authorization is enforced in query construction
