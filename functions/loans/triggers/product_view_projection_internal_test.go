@@ -1,6 +1,7 @@
 package triggers
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -130,6 +131,70 @@ func TestFlattenProductFields_CreatedAtShapes(t *testing.T) {
 				t.Errorf("created_at = %v (%T), want %v", view["created_at"], view["created_at"], tc.want)
 			}
 		})
+	}
+}
+
+// The trigger and the backfill share HandleProductWrittenCore but reach it with
+// differently shaped maps: the trigger flattens a CloudEvent payload, while the
+// backfill passes DocumentSnapshot.Data() straight through — and that hands a
+// Firestore Timestamp back as a Go time.Time, not as int64 millis.
+//
+// If only one of the two understands a Timestamp, the writers never converge:
+// the backfill writes deleted_at: null onto a soft-deleted product's view
+// (publishing a deleted offer as live), the next product write restores the
+// millis, and the next backfill run flips it back. The job's whole design
+// depends on a second pass writing nothing, so the two shapes must project to
+// byte-identical views for the same logical product.
+func TestBuildProductViewCreate_BackfillShapeMatchesTriggerShape(t *testing.T) {
+	const nowMillis = int64(1755000000000)
+	createdAt := time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC)
+	deletedAt := time.Date(2026, 8, 20, 1, 2, 3, 0, time.UTC)
+
+	company := map[string]any{
+		"name":         "Acme Lending",
+		"tag_line":     "Fast cash",
+		"review_count": int64(4),
+		"total_rating": float64(18),
+	}
+
+	fromTrigger := BuildProductViewCreate("prod-1", flattenProductFields(map[string]*firestoredata.Value{
+		"id":                  stringValue("prod-1"),
+		"provider_id":         stringValue("company-1"),
+		"loan_type":           stringValue("Salary Loan"),
+		"term":                stringValue("1m"),
+		"interest_rate":       integerValue(8),
+		"max_loanable_amount": doubleValue(50000),
+		"max_period":          integerValue(6),
+		"allow_add_ons":       boolValue(false),
+		"created_at":          timestampValue(createdAt),
+		"deleted_at":          timestampValue(deletedAt),
+	}), company, nowMillis)
+
+	fromBackfill := BuildProductViewCreate("prod-1", map[string]any{
+		"id":                  "prod-1",
+		"provider_id":         "company-1",
+		"loan_type":           "Salary Loan",
+		"term":                "1m",
+		"interest_rate":       int64(8),
+		"max_loanable_amount": float64(50000),
+		"max_period":          int64(6),
+		"allow_add_ons":       false,
+		"created_at":          createdAt,
+		"deleted_at":          deletedAt,
+	}, company, nowMillis)
+
+	// Named individually as well as compared wholesale, so a failure says which
+	// field diverged rather than dumping two eighteen-key maps.
+	if fromBackfill["deleted_at"] != deletedAt.UnixMilli() {
+		t.Errorf("backfill deleted_at = %v (%T), want %d — a soft-deleted product would be published as live",
+			fromBackfill["deleted_at"], fromBackfill["deleted_at"], deletedAt.UnixMilli())
+	}
+	if fromBackfill["created_at"] != createdAt.UnixMilli() {
+		t.Errorf("backfill created_at = %v (%T), want %d — the marketplace's created_at paging would order by backfill order",
+			fromBackfill["created_at"], fromBackfill["created_at"], createdAt.UnixMilli())
+	}
+	if !reflect.DeepEqual(fromTrigger, fromBackfill) {
+		t.Errorf("the two writers disagree about the same product\ntrigger:  %v\nbackfill: %v", fromTrigger, fromBackfill)
 	}
 }
 

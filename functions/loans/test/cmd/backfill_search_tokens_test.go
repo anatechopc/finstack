@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	backfill "com.loooans.app/cmd/backfill_search_tokens"
 	"com.loooans.app/triggers"
@@ -20,6 +21,9 @@ const laterNowMillis = testNowMillis + 86_400_000
 // productCreatedAtMillis is deliberately far from testNowMillis so a create
 // that stamps backfill time instead of the product's own age is visible.
 const productCreatedAtMillis = int64(1700000000000)
+
+// productDeletedAtMillis is the soft-delete stamp used by the Timestamp test.
+const productDeletedAtMillis = int64(1710000000000)
 
 // Re-runnability is the property under test: a second pass over an
 // already-migrated collection must write nothing.
@@ -202,6 +206,49 @@ func TestRunProductsCore_CreatedAtComesFromTheProduct(t *testing.T) {
 	if got := store.created["prod-1"]["created_at"]; got != productCreatedAtMillis {
 		t.Errorf("created_at = %v, want the product's own %v (backfill time is %v)",
 			got, productCreatedAtMillis, testNowMillis)
+	}
+}
+
+// The backfill reads products through the Firestore client, so a field stored
+// as a Timestamp rather than as int millis arrives as a Go time.Time — while
+// the trigger reads the same field out of a CloudEvent payload, where it has
+// always been converted to millis. If only the trigger understands it, the two
+// writers never converge: this pass writes deleted_at: null onto a soft-deleted
+// product (publishing a deleted offer as live and breaking `isNull: true`), the
+// next product write restores the millis, and the next run flips it back —
+// so no second pass ever writes nothing, which is the job's whole premise.
+func TestRunProductsCore_TimestampDatesProjectLikeTheTrigger(t *testing.T) {
+	product := sampleProduct()
+	product["created_at"] = time.UnixMilli(productCreatedAtMillis).UTC()
+	product["deleted_at"] = time.UnixMilli(productDeletedAtMillis).UTC()
+
+	store := newFakeProducts(
+		map[string]map[string]any{"prod-1": product},
+		map[string]map[string]any{"company-1": sampleCompany()},
+		nil,
+	)
+
+	if _, err := backfill.RunProductsCore(context.Background(), store.deps(), false); err != nil {
+		t.Fatalf("RunProductsCore: %v", err)
+	}
+
+	// The same logical product as the trigger sees it, post-flattening.
+	triggerProduct := sampleProduct()
+	triggerProduct["created_at"] = productCreatedAtMillis
+	triggerProduct["deleted_at"] = productDeletedAtMillis
+	want := triggers.BuildProductViewCreate("prod-1", triggerProduct, sampleCompany(), testNowMillis)
+
+	got := store.created["prod-1"]
+	if got["deleted_at"] != productDeletedAtMillis {
+		t.Errorf("deleted_at = %v (%T), want %v — a soft-deleted product would be published as a live offer",
+			got["deleted_at"], got["deleted_at"], productDeletedAtMillis)
+	}
+	if got["created_at"] != productCreatedAtMillis {
+		t.Errorf("created_at = %v (%T), want the product's own %v",
+			got["created_at"], got["created_at"], productCreatedAtMillis)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("backfill and trigger disagree about the same product\nbackfill: %v\ntrigger:  %v", got, want)
 	}
 }
 

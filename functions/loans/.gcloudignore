@@ -14,4 +14,10 @@
 .gitignore
 
 node_modules
+
+# Operator tooling, not function code. The search-token backfill is run by hand
+# from a workstation (see cmd/backfill_search_tokens); uploading it with all 18
+# function deploys is dead weight in every artifact.
+cmd/backfill_search_tokens/
+
 #!include:.gitignore

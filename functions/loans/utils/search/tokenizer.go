@@ -23,13 +23,23 @@ const (
 	// longer than this match on the first MaxPrefix characters, then refine
 	// on the client.
 	MaxPrefix = 12
+	// MaxFullValue bounds the one token that MaxPrefix does not: the full
+	// normalized value. search_tokens is automatically single-field indexed,
+	// and Firestore rejects the whole write when an index entry exceeds its
+	// size limit — so an absurd first_name or email_address would make every
+	// subsequent edit of that user fail, and HandleUserChangedCore propagates
+	// that error, taking the name cascade down with it. 256 is far above any
+	// real value (RFC 5321 caps an email at 254) so nothing legitimate is
+	// truncated; it exists to keep one bad document from being unwritable.
+	MaxFullValue = 256
 )
 
 // Tokenize returns the deduplicated, sorted token set for the given field
 // values. Empty values are skipped.
 //
 // For each value it emits the full normalized value (exempt from MaxPrefix,
-// so a pasted email or phone number matches exactly), and for each
+// so a pasted email or phone number matches exactly, and bounded only by the
+// far looser MaxFullValue), and for each
 // whitespace-separated word both the de-punctuated joined form and the
 // sub-tokens obtained by splitting on runs of non-alphanumeric characters.
 // Every one of those is prefix-expanded.
@@ -42,10 +52,11 @@ func Tokenize(values ...string) []string {
 			continue
 		}
 
-		// The whole value, uncapped — this is what makes a pasted email or
-		// phone number match. Without it, splitting happens before matching
-		// and the paste finds nothing.
-		set[normalized] = struct{}{}
+		// The whole value, exempt from MaxPrefix — this is what makes a pasted
+		// email or phone number match. Without it, splitting happens before
+		// matching and the paste finds nothing. Exempt from MaxPrefix is not
+		// the same as unbounded: MaxFullValue keeps it writable.
+		set[capFullValue(normalized)] = struct{}{}
 
 		for _, word := range strings.Fields(normalized) {
 			parts := strings.FieldsFunc(word, func(r rune) bool {
@@ -83,6 +94,19 @@ func Normalize(value string) string {
 		folded = value
 	}
 	return strings.ToLower(strings.TrimSpace(folded))
+}
+
+// capFullValue truncates the full-value token to MaxFullValue runes. It
+// truncates rather than dropping the token: a truncated token still matches a
+// query the client truncates the same way, whereas dropping it would make a
+// pasted value silently return nothing. Runes, not bytes, so the cap means the
+// same thing in Dart.
+func capFullValue(normalized string) string {
+	runesOf := []rune(normalized)
+	if len(runesOf) <= MaxFullValue {
+		return normalized
+	}
+	return string(runesOf[:MaxFullValue])
 }
 
 func addPrefixes(set map[string]struct{}, token string) {

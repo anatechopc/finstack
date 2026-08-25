@@ -1,19 +1,121 @@
 {
-  "description": "Shared golden vectors for search tokenization. Asserted by Go (functions/loans/test/utils/search) and Dart (apps/loans/test/features/search). If these two disagree, search breaks invisibly - a client simply cannot be found - so any change here must be made in both places in the same PR.",
+  "description": "Shared golden vectors for search tokenization. Asserted by Go (functions/loans/test/utils/search) and Dart (apps/loans/test/features/search). If the two implementations disagree, search breaks invisibly - no error, a client simply cannot be found - so any change here must be made in both places in the same PR.",
+  "schema": {
+    "case.name": "What the case pins. Purely documentation.",
+    "case.path": "Which function produces the tokens. See paths below. A case with an unknown or missing path is a test failure, not a skip.",
+    "case.input": "Arguments to that function, in order.",
+    "case.tokens": "The exact expected output: deduplicated and sorted ascending. Compare as an ordered list."
+  },
+  "paths": {
+    "tokenize": "Tokenize(input...) - the general tokenizer, applied to name and email fields. Lowercases, folds diacritics, emits the full normalized value as its own token (exempt from the 12-character prefix cap, truncated only past 256 runes, which no real value reaches), and prefix-expands every word - and every non-alphanumeric-split sub-word - to lengths 2..12.",
+    "phone_tokens": "PhoneTokens(input[0]) - mobile numbers only. Takes exactly one input. Strips non-digits, then repeatedly trims a leading 63 or 0 until neither remains, then prefix-expands the canonical form and emits its last 4 digits as a discrete token. Never route a phone number through 'tokenize': it does none of that."
+  },
   "cases": [
-    { "input": ["Go"], "tokens": ["go"] },
-    { "input": ["Cruz"], "tokens": ["cr", "cru", "cruz"] },
-    { "input": ["Peña"], "tokens": ["pe", "pen", "pena"] },
     {
-      "input": ["O'Brien"],
-      "tokens": ["br", "bri", "brie", "brien", "o", "o'brien", "ob", "obr", "obri", "obrie", "obrien"]
+      "name": "two-letter surname is indexed whole (below the 2-char prefix floor)",
+      "path": "tokenize",
+      "input": ["Go"],
+      "tokens": ["go"]
     },
     {
+      "name": "simple name expands to prefixes from length 2",
+      "path": "tokenize",
+      "input": ["Cruz"],
+      "tokens": ["cr", "cru", "cruz"]
+    },
+    {
+      "name": "diacritics are folded before tokenizing",
+      "path": "tokenize",
+      "input": ["Peña"],
+      "tokens": ["pe", "pen", "pena"]
+    },
+    {
+      "name": "apostrophe yields the joined form, the split parts, and the full value",
+      "path": "tokenize",
+      "input": ["O'Brien"],
+      "tokens": [
+        "br", "bri", "brie", "brien",
+        "o",
+        "o'brien",
+        "ob", "obr", "obri", "obrie", "obrien"
+      ]
+    },
+    {
+      "name": "hyphen yields the joined form, the split parts, and the full value",
+      "path": "tokenize",
       "input": ["Mary-Jane"],
       "tokens": [
         "ja", "jan", "jane",
-        "ma", "mar", "mary", "mary-jane",
+        "ma", "mar", "mary",
+        "mary-jane",
         "maryj", "maryja", "maryjan", "maryjane"
+      ]
+    },
+    {
+      "name": "long token: prefixes stop at 12 characters, full value is still emitted whole",
+      "path": "tokenize",
+      "input": ["Bartholomewson"],
+      "tokens": [
+        "ba", "bar", "bart", "barth", "bartho", "barthol",
+        "bartholo", "bartholom", "bartholome", "bartholomew",
+        "bartholomews",
+        "bartholomewson"
+      ]
+    },
+    {
+      "name": "full email: pasted address matches exactly, and every part is searchable; the joined form is capped at 12 while the full value is not",
+      "path": "tokenize",
+      "input": ["juan_cruz-x+tag@gmail.com"],
+      "tokens": [
+        "co", "com",
+        "cr", "cru", "cruz",
+        "gm", "gma", "gmai", "gmail",
+        "ju", "jua", "juan",
+        "juan_cruz-x+tag@gmail.com",
+        "juanc", "juancr", "juancru", "juancruz", "juancruzx",
+        "juancruzxt", "juancruzxta", "juancruzxtag",
+        "ta", "tag",
+        "x"
+      ]
+    },
+    {
+      "name": "phone spelling 1 of 3: local, leading 0",
+      "path": "phone_tokens",
+      "input": ["09175550142"],
+      "tokens": [
+        "0142",
+        "91", "917", "9175", "91755", "917555",
+        "9175550", "91755501", "917555014", "9175550142"
+      ]
+    },
+    {
+      "name": "phone spelling 2 of 3: E.164 with +63 - must equal spelling 1 exactly",
+      "path": "phone_tokens",
+      "input": ["+639175550142"],
+      "tokens": [
+        "0142",
+        "91", "917", "9175", "91755", "917555",
+        "9175550", "91755501", "917555014", "9175550142"
+      ]
+    },
+    {
+      "name": "phone spelling 3 of 3: country code without + - must equal spellings 1 and 2 exactly",
+      "path": "phone_tokens",
+      "input": ["639175550142"],
+      "tokens": [
+        "0142",
+        "91", "917", "9175", "91755", "917555",
+        "9175550", "91755501", "917555014", "9175550142"
+      ]
+    },
+    {
+      "name": "phone: international access code stacks 0 and 63 - trimming each prefix once instead of looping leaves 0639175550142 or 639175550142 and produces a different token set",
+      "path": "phone_tokens",
+      "input": ["00639175550142"],
+      "tokens": [
+        "0142",
+        "91", "917", "9175", "91755", "917555",
+        "9175550", "91755501", "917555014", "9175550142"
       ]
     }
   ]
