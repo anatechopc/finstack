@@ -33,6 +33,7 @@ package backfill
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"reflect"
@@ -58,9 +59,10 @@ type Report struct {
 	// MissingView counts products with no product_views document at all — the
 	// offers that were invisible to the marketplace, not merely unsearchable.
 	MissingView int
-	// Failed counts documents whose projection returned an error. The pass
-	// continues past them so one bad document cannot strand the rest, and Run
-	// returns a non-nil error at the end so the exit code still reflects it.
+	// Failed counts documents whose projection returned an error, plus those
+	// whose write was accepted but did not land. The pass continues past them
+	// so one bad document cannot strand the rest, and Run returns a non-nil
+	// error at the end so the exit code still reflects it.
 	Failed int
 }
 
@@ -76,25 +78,73 @@ func (r Report) String() string {
 // []any of strings — never []string. The comparison is index-by-index rather
 // than set-based because every token producer sorts (tokenizer.go, phone.go,
 // entities.go) and every writer writes what they produced.
+//
+// The reading and the comparison are the TRIGGER's, not a second copy of them.
+// This package's whole premise is that backfill and trigger must agree about
+// whether a document is already migrated; two implementations of that rule is
+// the one shape guaranteed to let them disagree, at which point each rewrites
+// the other's work forever and both writes succeed.
 func NeedsUpdate(doc map[string]any, want []string) bool {
-	rawValues, _ := doc["search_tokens"].([]any)
+	return !triggers.EqualStringSlices(triggers.StringSliceFrom(doc["search_tokens"]), want)
+}
 
-	existing := make([]string, 0, len(rawValues))
-	for _, raw := range rawValues {
-		if value, ok := raw.(string); ok {
-			existing = append(existing, value)
-		}
-	}
+// writeKind names the counter a write was optimistically charged to when it
+// was handed over, so a flush failure can be moved off that counter and onto
+// Failed.
+type writeKind int
 
-	if len(existing) != len(want) {
-		return true
+const (
+	writeUpdated writeKind = iota
+	writeCreated
+)
+
+// writeLedger remembers, per document, which counter is holding a write that
+// has only been ACCEPTED so far.
+//
+// It is needed because the real writer batches: UpdateUser/CreateView return
+// nil the moment the write is enqueued, and whether it landed is known only
+// after a flush. Counting at hand-over and correcting at flush is what makes
+// the report describe durable outcomes instead of intentions.
+//
+// The ledger holds one entry per WRITTEN document for the length of the pass —
+// a string and an int each, so a few MB for a collection of tens of thousands,
+// which is the scale this job runs at.
+type writeLedger struct {
+	kinds map[string]writeKind
+}
+
+func (l *writeLedger) record(id string, kind writeKind) {
+	if l.kinds == nil {
+		l.kinds = map[string]writeKind{}
 	}
-	for i := range existing {
-		if existing[i] != want[i] {
-			return true
+	l.kinds[id] = kind
+}
+
+// reconcile asks the writer which of the handed-over writes actually failed and
+// corrects the report: the document comes off Created/Updated and goes onto
+// Failed.
+//
+// A nil flush means the deps write synchronously — what the write function
+// returned was already the durable outcome — so the counters are true as they
+// stand.
+func (l *writeLedger) reconcile(ctx context.Context, flush func(context.Context) map[string]error, report *Report) {
+	if flush == nil {
+		return
+	}
+	for id, err := range flush(ctx) {
+		log.Printf("%s/%s: write did not land: %v", report.Collection, id, err)
+		report.Failed++
+		switch l.kinds[id] {
+		case writeCreated:
+			report.Created--
+		default:
+			// writeUpdated, and also the zero value for an id the ledger never
+			// saw. An unattributed failure still has to be counted; the log
+			// line above names it either way.
+			report.Updated--
 		}
+		delete(l.kinds, id)
 	}
-	return false
 }
 
 // UserDeps is the users pass's I/O, injected so the run loop is testable
@@ -103,14 +153,22 @@ type UserDeps struct {
 	// EachUser visits every users document. The adapter pages; the core does
 	// not know or care where a page boundary falls.
 	EachUser func(ctx context.Context, visit func(id string, user map[string]any) error) error
-	// UpdateUser merges fields onto the user document.
+	// UpdateUser merges fields onto the user document. A nil return means the
+	// write was ACCEPTED, which for a batching writer is not the same as
+	// landed — see Flush.
 	UpdateUser func(ctx context.Context, id string, fields map[string]any) error
+	// Flush waits for every accepted write to complete and returns the
+	// document ids whose writes failed. Leave it nil when the deps write
+	// synchronously; a batching adapter MUST set it, or the report counts
+	// writes it knows nothing about.
+	Flush func(ctx context.Context) map[string]error
 }
 
 // RunUsersCore writes search_tokens onto every users document that does not
 // already carry the tokens the trigger would write.
 func RunUsersCore(ctx context.Context, deps UserDeps, dryRun bool) (*Report, error) {
 	report := &Report{Collection: "users"}
+	pending := &writeLedger{}
 
 	err := deps.EachUser(ctx, func(id string, user map[string]any) error {
 		report.Scanned++
@@ -137,13 +195,24 @@ func RunUsersCore(ctx context.Context, deps UserDeps, dryRun bool) (*Report, err
 			log.Printf("users/%s: %v", id, err)
 			return nil
 		}
+		// Provisional. A batching writer has only ACCEPTED this write;
+		// reconcile below moves it to Failed if the flush says it never
+		// landed.
 		report.Updated++
+		pending.record(id, writeUpdated)
 		return nil
 	})
-	if err != nil {
-		return report, err
-	}
-	return report, failureError(report)
+
+	// Reconciled on the error path too: writes already accepted either became
+	// durable or did not, whatever stopped the pass, and a report that stayed
+	// optimistic about them is the lie this exists to prevent.
+	pending.reconcile(ctx, deps.Flush, report)
+
+	// Both errors, never one instead of the other: the pass error says why it
+	// stopped, failureError says how many documents did not get written. This
+	// used to return the pass error alone, which is how a trailing batch of up
+	// to pageSize failed writes could hide behind a single unrelated error.
+	return report, errors.Join(err, failureError(report))
 }
 
 // ProductDeps is the products pass's I/O. LoadCompany, CreateView and
@@ -163,6 +232,11 @@ type ProductDeps struct {
 	FindViews  func(ctx context.Context, productId string) (map[string]map[string]any, error)
 	CreateView func(ctx context.Context, viewId string, view map[string]any) error
 	UpdateView func(ctx context.Context, viewId string, fields map[string]any) error
+	// Flush waits for every accepted write to complete and returns the view
+	// ids whose writes failed. Leave it nil when the deps write
+	// synchronously; a batching adapter MUST set it, or the report counts
+	// writes it knows nothing about.
+	Flush func(ctx context.Context) map[string]error
 	// Now returns the current time as epoch milliseconds.
 	Now func() int64
 }
@@ -177,6 +251,7 @@ type ProductDeps struct {
 func RunProductsCore(ctx context.Context, deps ProductDeps, dryRun bool) (*Report, error) {
 	report := &Report{Collection: "products"}
 	companies := map[string]map[string]any{}
+	pending := &writeLedger{}
 
 	err := deps.EachProduct(ctx, func(id string, product map[string]any) error {
 		report.Scanned++
@@ -224,6 +299,7 @@ func RunProductsCore(ctx context.Context, deps ProductDeps, dryRun bool) (*Repor
 					if err := deps.CreateView(ctx, viewId, view); err != nil {
 						return err
 					}
+					pending.record(viewId, writeCreated)
 				}
 				report.Created++
 				return nil
@@ -237,6 +313,7 @@ func RunProductsCore(ctx context.Context, deps ProductDeps, dryRun bool) (*Repor
 					if err := deps.UpdateView(ctx, viewId, fields); err != nil {
 						return err
 					}
+					pending.record(viewId, writeUpdated)
 				}
 				report.Updated++
 				return nil
@@ -252,10 +329,15 @@ func RunProductsCore(ctx context.Context, deps ProductDeps, dryRun bool) (*Repor
 		}
 		return nil
 	})
-	if err != nil {
-		return report, err
-	}
-	return report, failureError(report)
+
+	// See RunUsersCore: reconciled on the error path too.
+	pending.reconcile(ctx, deps.Flush, report)
+
+	// Both errors, never one instead of the other: the pass error says why it
+	// stopped, failureError says how many documents did not get written. This
+	// used to return the pass error alone, which is how a trailing batch of up
+	// to pageSize failed writes could hide behind a single unrelated error.
+	return report, errors.Join(err, failureError(report))
 }
 
 // viewNeedsUpdate reports whether the stored view is missing anything the

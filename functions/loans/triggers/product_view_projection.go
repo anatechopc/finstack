@@ -392,17 +392,34 @@ func ProductWritten(ctx context.Context, ev event.Event) error {
 			return ids, nil
 		},
 		CreateView: func(ctx context.Context, viewId string, view map[string]any) error {
+			// No merge option at all: a create writes the whole document, so
+			// there is nothing to preserve and every key lands as given.
 			_, err := views.Doc(viewId).Set(ctx, view)
 			return err
 		},
 		UpdateView: func(ctx context.Context, viewId string, fields map[string]any) error {
-			_, err := views.Doc(viewId).Set(ctx, fields, firestore.MergeAll)
-			return err
+			return setProductViewFields(ctx, views, viewId, fields)
 		},
 		Now: func() int64 { return time.Now().UnixMilli() },
 	}
 
 	return HandleProductWrittenCore(ctx, product, deps)
+}
+
+// setProductViewFields merges a BuildProductViewUpdate payload onto an existing
+// product_views document, replacing each projected field wholesale.
+//
+// A package-level function rather than a closure inside the adapter so the
+// update mask it actually sends can be asserted against a Firestore server —
+// company_profile_photo_url is a nested map, and the difference between
+// replacing it and merging its leaves is the difference between a view that
+// converges and one every backfill pass rewrites forever. See MergeFields.
+func setProductViewFields(ctx context.Context, views *firestore.CollectionRef, viewId string, fields map[string]any) error {
+	if len(fields) == 0 {
+		return nil
+	}
+	_, err := views.Doc(viewId).Set(ctx, fields, MergeFields(fields))
+	return err
 }
 
 // flattenProductFields converts the event payload into the map the projection

@@ -2,6 +2,7 @@ package backfill_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"sort"
 	"strings"
@@ -131,6 +132,63 @@ func TestRunUsersCore_DryRunWritesNothing(t *testing.T) {
 		t.Fatalf("dry run wrote %v", store.writes)
 	}
 	assertReport(t, report, backfill.Report{Collection: "users", Scanned: 1, Updated: 1})
+}
+
+// TestRunUsersCore_CountsOnlyWritesThatLanded is the report's honesty test.
+//
+// The writer this job uses batches: its Set() returns nil the moment the write
+// is ENQUEUED, and whether it landed is known only after a flush. Counting
+// that nil as success meant a run against a service account with no write
+// permission reported `updated=499 failed=1` — the first full batch charged as
+// written before anything at all was known about it, and the error charged to
+// whichever document happened to fill the batch. main.go then quotes a trigger
+// cost derived from that number and the operator concludes the backfill
+// worked. This job has never run against a real Firestore, so its report is
+// the only evidence anyone will ever have.
+func TestRunUsersCore_CountsOnlyWritesThatLanded(t *testing.T) {
+	store := newFakeUsers(map[string]map[string]any{
+		"user-1": sampleUser(),
+		"user-2": sampleUser(),
+		"user-3": sampleUser(),
+	})
+	store.flushErr = errors.New("PermissionDenied: Missing or insufficient permissions")
+
+	report, err := backfill.RunUsersCore(context.Background(), store.deps(), false)
+	if err == nil {
+		t.Error("every write failed and the pass returned nil — the exit code would say success")
+	}
+	assertReport(t, report, backfill.Report{
+		Collection: "users", Scanned: 3, Updated: 0, Created: 0, Failed: 3,
+	})
+}
+
+// TestRunUsersCore_CountsFlushFailuresWhenThePassAlsoFailed is the other half:
+// a pass that stopped on a page read still has writes in flight behind it, and
+// those outcomes must reach the report. The version this replaces returned the
+// pass error and discarded the flush entirely, so 200 users could fail as one
+// batch and be reported as `failed=0` — the operator re-runs for the single
+// document named in the error and the rest stay unsearchable.
+func TestRunUsersCore_CountsFlushFailuresWhenThePassAlsoFailed(t *testing.T) {
+	store := newFakeUsers(map[string]map[string]any{
+		"user-1": sampleUser(),
+		"user-2": sampleUser(),
+	})
+	store.flushErr = errors.New("PermissionDenied: Missing or insufficient permissions")
+	store.eachErr = errors.New("page users after 2 document(s): DeadlineExceeded")
+
+	report, err := backfill.RunUsersCore(context.Background(), store.deps(), false)
+	if err == nil {
+		t.Fatal("expected the page error")
+	}
+	if !strings.Contains(err.Error(), "DeadlineExceeded") {
+		t.Errorf("err = %v, want it to still name the page failure", err)
+	}
+	if !strings.Contains(err.Error(), "2 document(s) failed") {
+		t.Errorf("err = %v, want it to also name the writes that did not land", err)
+	}
+	assertReport(t, report, backfill.Report{
+		Collection: "users", Scanned: 2, Updated: 0, Failed: 2,
+	})
 }
 
 // ------------------------------------------------------------- products ----
@@ -327,6 +385,69 @@ func TestRunProductsCore_SecondPassWritesNothing(t *testing.T) {
 // true), and Firestore matches that only when the field exists. An absent
 // deleted_at is not an equal-to-null deleted_at, and a skip here would leave
 // the offer invisible in every listing while looking perfect in the console.
+// TestRunProductsCore_ConvergesOnANestedMapWithFewerKeys is the backfill half
+// of the nested-map finding.
+//
+// company_profile_photo_url is a MAP (Dart's handleImageUrlToJson returns
+// ImageUrl.toJson()). The stored view carries a thumbnail the company no
+// longer has. After one pass the view must hold exactly the company's map, and
+// a second pass must then write nothing.
+//
+// The write semantics asserted here — each top-level key of the payload
+// replaced wholesale — are what triggers.MergeFields asks Firestore for, and
+// are pinned on the wire by TestMergeFields_ReplacesNestedMapsWholesale in the
+// triggers module. Under the firestore.MergeAll it replaced, Firestore merged
+// the map leaf by leaf: the thumbnail survived, sameFieldValue kept seeing a
+// difference, and every pass rewrote the same document forever without ever
+// being able to remove it.
+func TestRunProductsCore_ConvergesOnANestedMapWithFewerKeys(t *testing.T) {
+	company := sampleCompany()
+	company["company_profile_photo_url"] = map[string]any{"url": "b"}
+
+	store := newFakeProducts(
+		map[string]map[string]any{"prod-1": sampleProduct()},
+		map[string]map[string]any{"company-1": company},
+		map[string]map[string]any{"view-1": {
+			"product_id": "prod-1",
+			"company_profile_photo_url": map[string]any{
+				"url":       "a",
+				"thumbnail": "t",
+			},
+		}},
+	)
+
+	if _, err := backfill.RunProductsCore(context.Background(), store.deps(), false); err != nil {
+		t.Fatalf("pass 1: %v", err)
+	}
+
+	photo, ok := store.views["view-1"]["company_profile_photo_url"].(map[string]any)
+	if !ok {
+		t.Fatalf("company_profile_photo_url = %T, want map[string]any",
+			store.views["view-1"]["company_profile_photo_url"])
+	}
+	if _, stale := photo["thumbnail"]; stale {
+		t.Errorf("thumbnail survived: the company no longer carries it, so the view can "+
+			"never converge and every pass rewrites it. got %v", photo)
+	}
+	if got := photo["url"]; got != "b" {
+		t.Errorf("url = %v, want b", got)
+	}
+
+	store.created = map[string]map[string]any{}
+	store.updated = map[string]map[string]any{}
+	store.now = laterNowMillis
+
+	report, err := backfill.RunProductsCore(context.Background(), store.deps(), false)
+	if err != nil {
+		t.Fatalf("pass 2: %v", err)
+	}
+	if len(store.created)+len(store.updated) != 0 {
+		t.Errorf("pass 2 wrote created=%v updated=%v — the nested map never converged",
+			keysOf(store.created), keysOf(store.updated))
+	}
+	assertReport(t, report, backfill.Report{Collection: "products", Scanned: 1, Skipped: 1})
+}
+
 func TestRunProductsCore_RepairsViewMissingDeletedAt(t *testing.T) {
 	store := newFakeProducts(
 		map[string]map[string]any{"prod-1": sampleProduct()},
@@ -416,6 +537,27 @@ func TestRunProductsCore_DryRunWritesNothing(t *testing.T) {
 	})
 }
 
+// The products pass counts CREATES the same way, and a create that never
+// landed is the worse half: the product had no view at all, so an operator
+// told `created=1` records an offer that is still invisible to the
+// marketplace as published.
+func TestRunProductsCore_CountsOnlyCreatesThatLanded(t *testing.T) {
+	store := newFakeProducts(
+		map[string]map[string]any{"prod-1": sampleProduct()},
+		map[string]map[string]any{"company-1": sampleCompany()},
+		nil,
+	)
+	store.flushErr = errors.New("PermissionDenied: Missing or insufficient permissions")
+
+	report, err := backfill.RunProductsCore(context.Background(), store.deps(), false)
+	if err == nil {
+		t.Fatal("the create never landed and the pass returned nil")
+	}
+	assertReport(t, report, backfill.Report{
+		Collection: "products", Scanned: 1, Created: 0, Updated: 0, MissingView: 1, Failed: 1,
+	})
+}
+
 // ---------------------------------------------------------------- safety ----
 //
 // Every case below returns before Run builds a Firestore client, so these need
@@ -470,6 +612,47 @@ func TestRun_RejectsMissingEnvironment(t *testing.T) {
 	}
 }
 
+// The production guard checks that -allow-production was supplied. It does not
+// check that ENVIRONMENT agrees with the project, and this is the mistake that
+// makes: the operator means production, passes -allow-production, and still
+// has ENVIRONMENT=development exported from an earlier dev dry run. Every
+// other guard passes and the job then pages dev_users inside loooans-prod.
+func TestRun_RefusesAnEnvironmentThatDoesNotMatchTheProject(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "development")
+
+	_, err := backfill.Run(context.Background(), backfill.Options{
+		Collection:      backfill.CollectionUsers,
+		ProjectID:       "loooans-prod",
+		DryRun:          false,
+		AllowProduction: true,
+	})
+	if err == nil {
+		t.Fatal("ENVIRONMENT=development against loooans-prod was allowed")
+	}
+	if !strings.Contains(err.Error(), "does not match project") {
+		t.Errorf("err = %v, want it to name the mismatch", err)
+	}
+}
+
+// Refused on a dry run too. A dry run against the wrong prefix reports counts
+// that mean nothing, and those counts are exactly what the decision to run for
+// real is based on.
+func TestRun_RefusesAMismatchedDryRun(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "production")
+
+	_, err := backfill.Run(context.Background(), backfill.Options{
+		Collection: backfill.CollectionUsers,
+		ProjectID:  "loooans-dev-stg",
+		DryRun:     true,
+	})
+	if err == nil {
+		t.Fatal("ENVIRONMENT=production against loooans-dev-stg was allowed")
+	}
+	if !strings.Contains(err.Error(), "does not match project") {
+		t.Errorf("err = %v, want it to name the mismatch", err)
+	}
+}
+
 // The original plan said to page product_views. Doing so cannot create the
 // views that were never written, so the name is rejected with the reason
 // rather than quietly accepted.
@@ -489,6 +672,17 @@ func TestRun_RejectsProductViews(t *testing.T) {
 type fakeUsers struct {
 	docs   map[string]map[string]any
 	writes map[string]map[string]any
+	// flushErr, when set, makes every write one that is ACCEPTED and never
+	// lands: UpdateUser returns nil exactly as firestore.BulkWriter.Set does
+	// when it merely enqueues, the stored document is left untouched, and
+	// Flush reports the lot as failed. This is the shape a service account
+	// without write permission produces.
+	flushErr error
+	accepted []string
+	// eachErr, when set, is returned by EachUser once every document has been
+	// visited — a page read that failed partway through a large collection,
+	// with a batch of writes still unflushed behind it.
+	eachErr error
 }
 
 func newFakeUsers(docs map[string]map[string]any) *fakeUsers {
@@ -503,14 +697,35 @@ func (f *fakeUsers) deps() backfill.UserDeps {
 					return err
 				}
 			}
-			return nil
+			return f.eachErr
 		},
 		UpdateUser: func(ctx context.Context, id string, fields map[string]any) error {
 			f.writes[id] = fields
+			if f.flushErr != nil {
+				f.accepted = append(f.accepted, id)
+				return nil
+			}
 			mergeStored(f.docs[id], fields)
 			return nil
 		},
+		Flush: func(ctx context.Context) map[string]error {
+			return takeAccepted(&f.accepted, f.flushErr)
+		},
 	}
+}
+
+// takeAccepted reports every write that was accepted since the last call as
+// having failed with err, and clears them. A nil err means the writes landed.
+func takeAccepted(accepted *[]string, err error) map[string]error {
+	if err == nil {
+		return nil
+	}
+	failures := map[string]error{}
+	for _, id := range *accepted {
+		failures[id] = err
+	}
+	*accepted = nil
+	return failures
 }
 
 type fakeProducts struct {
@@ -524,6 +739,9 @@ type fakeProducts struct {
 	// tests pass even if updated_at were part of the skip comparison.
 	now          int64
 	companyReads int
+	// flushErr / accepted: see fakeUsers.
+	flushErr error
+	accepted []string
 }
 
 func newFakeProducts(docs, companies, views map[string]map[string]any) *fakeProducts {
@@ -565,6 +783,10 @@ func (f *fakeProducts) deps() backfill.ProductDeps {
 		},
 		CreateView: func(ctx context.Context, viewID string, view map[string]any) error {
 			f.created[viewID] = view
+			if f.flushErr != nil {
+				f.accepted = append(f.accepted, viewID)
+				return nil
+			}
 			stored := map[string]any{}
 			mergeStored(stored, view)
 			f.views[viewID] = stored
@@ -572,14 +794,25 @@ func (f *fakeProducts) deps() backfill.ProductDeps {
 		},
 		UpdateView: func(ctx context.Context, viewID string, fields map[string]any) error {
 			f.updated[viewID] = fields
+			if f.flushErr != nil {
+				f.accepted = append(f.accepted, viewID)
+				return nil
+			}
 			mergeStored(f.views[viewID], fields)
 			return nil
+		},
+		Flush: func(ctx context.Context) map[string]error {
+			return takeAccepted(&f.accepted, f.flushErr)
 		},
 		Now: func() int64 { return f.now },
 	}
 }
 
-// mergeStored applies a payload the way a Firestore MergeAll write would, and
+// mergeStored applies a payload the way the projection's own write does —
+// every top-level key of the payload replaced wholesale, which is what
+// triggers.MergeFields asks Firestore for (a firestore.MergeAll would instead
+// merge nested maps leaf by leaf; see TestMergeAll_MergesNestedMapsLeafByLeaf
+// in the triggers module, which pins that difference on the wire) — and
 // stores string arrays as []any — the shape the Firestore client hands back on
 // the next read. Keeping that fidelity is what makes the second-pass tests
 // mean anything: NeedsUpdate reads []any, so a fake that stored []string would

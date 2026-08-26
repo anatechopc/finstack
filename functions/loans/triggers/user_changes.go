@@ -18,11 +18,11 @@ const verificationBitMobileNumber = 2
 
 // UserChangesDeps holds the collaborator functions used by the core.
 type UserChangesDeps struct {
-	// UpdateUser applies a partial write to the user document. Two callers use
-	// it: the mobile path (clearing the verification bit and
-	// mobile_verified_at) and the search path (writing search_tokens). The
-	// adapter recognises each key independently, so a caller may pass either
-	// set on its own.
+	// UpdateUser applies a partial write to the user document. The core calls
+	// it at most once per event, with whichever of the two key sets apply:
+	// the mobile path (clearing the verification bit and mobile_verified_at)
+	// and the search path (writing search_tokens). The adapter recognises each
+	// key independently, so either set may arrive on its own or both together.
 	UpdateUser func(ctx context.Context, uid string, fields map[string]any) error
 	// UpdateUserLoanViewNames refreshes the denormalized user_full_name on every
 	// user_loan_views document owned by the given user. Called only when the
@@ -54,6 +54,15 @@ func HandleUserChangedCore(ctx context.Context, uid string, before, after map[st
 		}
 	}
 
+	// The mobile-verification keys and the search_tokens key are accumulated
+	// into ONE payload and written once. They used to be two UpdateUser calls,
+	// which meant an edit touching both wrote the same document twice and
+	// re-fired userChanges twice — and left the document, between the two
+	// writes, with verification cleared but tokens still describing the old
+	// number. The adapter recognises each key independently, so either set may
+	// still arrive on its own.
+	fields := map[string]any{}
+
 	beforeMobile, _ := before["mobile_number"].(string)
 	afterMobile, _ := after["mobile_number"].(string)
 	// beforeMobile != afterMobile AND beforeMobile != "" — clear verification.
@@ -61,28 +70,27 @@ func HandleUserChangedCore(ctx context.Context, uid string, before, after map[st
 	// beforeMobile == "" is skipped: no prior mobile to invalidate, first
 	// time setting a number.
 	if beforeMobile != afterMobile && beforeMobile != "" {
-		fields := map[string]any{
-			"verificationStatus_andNot": verificationBitMobileNumber,
-			"mobile_verified_at":        nil,
-		}
-		if err := deps.UpdateUser(ctx, uid, fields); err != nil {
-			return err
-		}
+		fields["verificationStatus_andNot"] = verificationBitMobileNumber
+		fields["mobile_verified_at"] = nil
 	}
 
-	// Keep search_tokens in sync with the fields it's derived from. Runs
-	// independently of the two paths above so a name-only or mobile-only
+	// Keep search_tokens in sync with the fields it's derived from. Decided
+	// independently of the mobile path above so a name-only or mobile-only
 	// edit still refreshes findability. SearchTokensForUser reports
 	// needsWrite=false once the document's own search_tokens field already
 	// matches, which is what stops this from re-firing on its own write.
 	if tokens, needsWrite := SearchTokensForUser(after); needsWrite {
-		if err := deps.UpdateUser(ctx, uid, map[string]any{
-			"search_tokens": tokens,
-		}); err != nil {
-			// Propagate like the paths above so the platform retries the
-			// delivery — a token write failure otherwise degrades search
-			// findability silently.
-			return err
+		fields["search_tokens"] = tokens
+	}
+
+	if len(fields) > 0 {
+		if err := deps.UpdateUser(ctx, uid, fields); err != nil {
+			// Named, and propagated so the platform retries the delivery. A
+			// bare error here produced a retry log storm naming no document,
+			// in which one unwritable user is indistinguishable from a
+			// collection-wide failure; a token write that fails silently
+			// degrades search findability.
+			return fmt.Errorf("update user %s: %w", uid, err)
 		}
 	}
 
@@ -113,17 +121,22 @@ func SearchTokensForUser(after map[string]any) ([]string, bool) {
 		str("email_address"),
 	)
 
-	existing := stringSliceFrom(after["search_tokens"])
-	if equalStringSlices(existing, tokens) {
+	existing := StringSliceFrom(after["search_tokens"])
+	if EqualStringSlices(existing, tokens) {
 		return nil, false
 	}
 	return tokens, true
 }
 
-// stringSliceFrom reads a []any of strings (the shape a Firestore array field
+// StringSliceFrom reads a []any of strings (the shape a Firestore array field
 // takes once flattened into a map[string]any) back into a []string. Anything
 // else — absent key, wrong type, non-string elements — yields nil.
-func stringSliceFrom(raw any) []string {
+//
+// Exported because the backfill compares stored tokens against computed ones
+// too. Two copies of that rule is the one shape guaranteed to let the trigger
+// and the backfill disagree about whether a document is already migrated, at
+// which point each rewrites the other's work forever and both writes succeed.
+func StringSliceFrom(raw any) []string {
 	values, ok := raw.([]any)
 	if !ok {
 		return nil
@@ -137,11 +150,13 @@ func stringSliceFrom(raw any) []string {
 	return out
 }
 
-// equalStringSlices compares two token slices for exact (order-sensitive)
+// EqualStringSlices compares two token slices for exact (order-sensitive)
 // equality. search.UserTokens always returns a sorted slice and the stored
 // search_tokens field is whatever a prior call wrote, so order-sensitivity is
 // safe and cheaper than a set comparison.
-func equalStringSlices(a, b []string) bool {
+//
+// Exported alongside StringSliceFrom, and for the same reason.
+func EqualStringSlices(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -223,7 +238,16 @@ func UserChanges(ctx context.Context, ev event.Event) error {
 				if v, ok := fields["search_tokens"].([]string); ok {
 					update["search_tokens"] = v
 				}
-				return tx.Set(docRef, update, firestore.MergeAll)
+				if len(update) == 0 {
+					// No recognised key: writing an empty merge would still
+					// bump the document and re-fire this trigger for nothing.
+					return nil
+				}
+				// MergeFields, not MergeAll — see its doc comment. Every value
+				// written here is a scalar or an array today, for which the
+				// two agree, but the rule holds for the document either way
+				// and a nested field added later must not silently regress.
+				return tx.Set(docRef, update, MergeFields(update))
 			})
 		},
 		UpdateUserLoanViewNames: func(ctx context.Context, userId, newFullName string) error {
@@ -294,7 +318,7 @@ func flattenFields(fields map[string]*firestoredata.Value) map[string]any {
 			out[k] = v.GetStringValue()
 		case "search_tokens":
 			// Carried through as []any (string elements) — the same shape
-			// SearchTokensForUser's stringSliceFrom expects, and the shape a
+			// SearchTokensForUser's StringSliceFrom expects, and the shape a
 			// prior write to this same field produced. Parsing this is what
 			// lets SearchTokensForUser see the document's current tokens and
 			// recognise a no-op, which is what stops this trigger recursing

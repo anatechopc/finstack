@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"cloud.google.com/go/firestore"
 	"com.loooans.app/utils"
 	firebase "firebase.google.com/go/v4"
 	"github.com/cloudevents/sdk-go/v2/event"
@@ -147,6 +146,10 @@ func writeUserSearchTokens(ctx context.Context, app *firebase.App, uid string, t
 	defer fs.Close()
 
 	docRef := fs.Doc(utils.GetCollectionPrefix() + "users/" + uid)
-	_, err := docRef.Set(ctx, map[string]any{"search_tokens": tokens}, firestore.MergeAll)
+	// MergeFields rather than MergeAll, matching the userChanges token write.
+	// The two agree for a payload of one array field; keeping the token
+	// writers on one idiom is what stops them drifting apart later.
+	fields := map[string]any{"search_tokens": tokens}
+	_, err := docRef.Set(ctx, fields, MergeFields(fields))
 	return err
 }

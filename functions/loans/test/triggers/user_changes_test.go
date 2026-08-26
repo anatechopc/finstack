@@ -3,6 +3,7 @@ package triggers_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"com.loooans.app/test/fakes"
@@ -300,6 +301,65 @@ func TestHandleUserChangedCore_SkipsSearchTokenWriteWhenCurrent(t *testing.T) {
 		if _, ok := upd.Fields["search_tokens"]; ok {
 			t.Fatalf("tokens already current — must not write again, got %+v", upd.Fields)
 		}
+	}
+}
+
+// TestHandleUserChangedCore_MobileAndTokensShareOneWrite: an edit that touches
+// both paths must reach Firestore ONCE.
+//
+// As two calls it wrote the same document twice and re-fired userChanges
+// twice, and between the two writes the document sat with mobile verification
+// cleared while its search_tokens still described the old number — findable by
+// a number the user no longer has.
+func TestHandleUserChangedCore_MobileAndTokensShareOneWrite(t *testing.T) {
+	updater := &fakes.UserUpdater{}
+	names := &fakes.LoanViewNameUpdater{}
+	deps := depsWithBoth(updater, names)
+
+	// The mobile number is one of the five fields search_tokens is built from,
+	// so changing it is exactly the edit that drives both paths at once. The
+	// name is untouched, so the loan-view cascade stays out of it.
+	before := map[string]any{
+		"id": "user-1", "first_name": "Ana", "last_name": "Cruz",
+		"mobile_number": "9171234567",
+	}
+	after := map[string]any{
+		"id": "user-1", "first_name": "Ana", "last_name": "Cruz",
+		"mobile_number": "9170000000",
+	}
+
+	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(updater.Updates) != 1 {
+		t.Fatalf("one edit must produce one write, got %d: %+v", len(updater.Updates), updater.Updates)
+	}
+	fields := updater.Updates[0].Fields
+	for _, key := range []string{"verificationStatus_andNot", "mobile_verified_at", "search_tokens"} {
+		if _, ok := fields[key]; !ok {
+			t.Errorf("the single write is missing %q: %+v", key, fields)
+		}
+	}
+}
+
+// TestHandleUserChangedCore_UpdaterErrorNamesTheUser: this trigger retries, so
+// a bare error produces a log storm naming no document, in which one
+// unwritable user is indistinguishable from a collection-wide failure.
+func TestHandleUserChangedCore_UpdaterErrorNamesTheUser(t *testing.T) {
+	updater := &fakes.UserUpdater{Err: errors.New("firestore: write failed")}
+	deps := triggers.UserChangesDeps{UpdateUser: updater.Update}
+	before := map[string]any{"mobile_number": "old"}
+	after := map[string]any{"mobile_number": "new"}
+
+	err := triggers.HandleUserChangedCore(context.Background(), "user-42", before, after, deps)
+	if err == nil {
+		t.Fatal("expected propagated error")
+	}
+	if !strings.Contains(err.Error(), "user-42") {
+		t.Errorf("err = %v, want it to name the document that could not be written", err)
+	}
+	if !strings.Contains(err.Error(), "firestore: write failed") {
+		t.Errorf("err = %v, want the underlying cause wrapped, not replaced", err)
 	}
 }
 
