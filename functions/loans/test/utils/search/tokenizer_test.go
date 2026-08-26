@@ -2,6 +2,7 @@ package search_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -100,12 +101,99 @@ func TestTokenize_FullValueTokenIsCapped(t *testing.T) {
 	}
 }
 
+// Normalize collapses internal whitespace runs, it does not only trim the
+// ends. A double space is an ordinary paste artefact, and if it survived into
+// the full-value token then "Juan  Carlos" and "Juan Carlos" would be two
+// different clients as far as a pasted query is concerned.
+func TestNormalizeCollapsesInternalWhitespace(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"Juan  Carlos", "juan carlos"},
+		{"  dela   Cruz\t", "dela cruz"},
+		{"Acme\n\nLending", "acme lending"},
+		{"already fine", "already fine"},
+	}
+	for _, tc := range cases {
+		if got := search.Normalize(tc.in); got != tc.want {
+			t.Errorf("Normalize(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+
+	if a, b := search.Tokenize("Juan  Carlos"), search.Tokenize("Juan Carlos"); !reflect.DeepEqual(a, b) {
+		t.Errorf("double- and single-spaced spellings diverge:\n %q\nvs %q", a, b)
+	}
+}
+
+// Token LENGTH was bounded; token COUNT was not. Each element of search_tokens
+// costs one index entry per composite index containing it plus two automatic
+// single-field entries, and Firestore rejects a write producing more than
+// 40,000 entries for one document — so an unbounded array does not bloat, it
+// makes the document permanently unwritable and fails productWritten on every
+// later edit. See search.MaxWords / search.MaxTokens.
+func TestTokenize_WordCountIsCapped(t *testing.T) {
+	words := make([]string, 800)
+	for i := range words {
+		words[i] = fmt.Sprintf("w%04d", i+1)
+	}
+	tokens := search.Tokenize(strings.Join(words, " "))
+
+	if len(tokens) > search.MaxTokens {
+		t.Errorf("%d tokens emitted, want at most %d", len(tokens), search.MaxTokens)
+	}
+
+	index := map[string]bool{}
+	for _, token := range tokens {
+		index[token] = true
+	}
+	// The budget is MaxWords words, taken in order: the last word inside it is
+	// expanded, the first word past it is not.
+	if last := fmt.Sprintf("w%04d", search.MaxWords); !index[last] {
+		t.Errorf("word %d (%q) was not expanded, but it is inside the %d-word budget", search.MaxWords, last, search.MaxWords)
+	}
+	if past := fmt.Sprintf("w%04d", search.MaxWords+1); index[past] {
+		t.Errorf("word %d (%q) was expanded, but the budget is %d words — the cap is not being applied", search.MaxWords+1, past, search.MaxWords)
+	}
+}
+
+// MaxWords cannot bound a single pathological *word*: "aaa-aab-aac-…" has no
+// whitespace at all, so it costs one word yet emits a sub-token per part.
+// MaxTokens is the backstop that makes the array bounded regardless.
+func TestTokenize_TokenCountIsCappedForOneLongWord(t *testing.T) {
+	var word strings.Builder
+	for i := 0; i < 2000; i++ {
+		if i > 0 {
+			word.WriteByte('-')
+		}
+		fmt.Fprintf(&word, "%c%c%c", 'a'+i/676, 'a'+(i/26)%26, 'a'+i%26)
+	}
+	if strings.ContainsAny(word.String(), " \t\n") {
+		t.Fatal("the pathological input must be a single word, or it tests MaxWords instead")
+	}
+
+	tokens := search.Tokenize(word.String())
+	if len(tokens) != search.MaxTokens {
+		t.Errorf("one pathological word produced %d tokens, want exactly the cap %d "+
+			"(fewer means the input stopped being pathological; more means the cap is gone)",
+			len(tokens), search.MaxTokens)
+	}
+}
+
 // The producers a golden case may name. Names, values and meaning are fixed by
 // the "paths" block of golden_tokens.json, which is what the Dart suite reads.
 const (
-	pathTokenize    = "tokenize"
-	pathPhoneTokens = "phone_tokens"
+	pathTokenize          = "tokenize"
+	pathPhoneTokens       = "phone_tokens"
+	pathUserTokens        = "user_tokens"
+	pathProductViewTokens = "product_view_tokens"
 )
+
+// inputArity is how many arguments each path takes. A case with the wrong
+// count is a failure, not a skip: dispatching it anyway would either panic or
+// silently assert a different function's contract.
+var inputArity = map[string]int{
+	pathPhoneTokens:       1,
+	pathUserTokens:        5,
+	pathProductViewTokens: 3,
+}
 
 // goldenCase is one entry of golden_tokens.json.
 //
@@ -122,7 +210,11 @@ type goldenCase struct {
 }
 
 type goldenFile struct {
-	Cases []goldenCase `json:"cases"`
+	// Limits mirrors the Go constants. It exists so the file can be
+	// reimplemented from alone — the Dart suite reads these numbers rather
+	// than hardcoding them — which only holds if Go asserts they stay true.
+	Limits map[string]int `json:"limits"`
+	Cases  []goldenCase   `json:"cases"`
 }
 
 // TestGoldenVectors asserts the shared contract with the Dart query path.
@@ -155,9 +247,28 @@ func TestGoldenVectors(t *testing.T) {
 	// Coverage, not correctness: the failure this whole file exists to prevent
 	// is silent, so a path losing its last case must break CI rather than
 	// quietly stop being asserted.
-	for _, path := range []string{pathTokenize, pathPhoneTokens} {
+	for _, path := range []string{pathTokenize, pathPhoneTokens, pathUserTokens, pathProductViewTokens} {
 		if seen[path] == 0 {
 			t.Errorf("no golden case exercises path %q — that producer is now unpinned", path)
+		}
+	}
+
+	// The "limits" block is what a reimplementation reads instead of the Go
+	// source. A stale number there is a drift bug that ships silently.
+	for name, want := range map[string]int{
+		"min_prefix":     search.MinPrefix,
+		"max_prefix":     search.MaxPrefix,
+		"max_full_value": search.MaxFullValue,
+		"max_words":      search.MaxWords,
+		"max_tokens":     search.MaxTokens,
+	} {
+		got, ok := golden.Limits[name]
+		if !ok {
+			t.Errorf("limits block is missing %q — Dart reads these numbers, so an absent one is silent drift", name)
+			continue
+		}
+		if got != want {
+			t.Errorf("limits.%s = %d, Go constant is %d", name, got, want)
 		}
 	}
 }
@@ -168,15 +279,20 @@ func TestGoldenVectors(t *testing.T) {
 func runGoldenCase(t *testing.T, tc goldenCase) []string {
 	t.Helper()
 
+	if want, fixed := inputArity[tc.Path]; fixed && len(tc.Input) != want {
+		t.Fatalf("%s: path %q takes exactly %d inputs, got %d: %q",
+			tc.Name, tc.Path, want, len(tc.Input), tc.Input)
+	}
+
 	switch tc.Path {
 	case pathTokenize:
 		return search.Tokenize(tc.Input...)
 	case pathPhoneTokens:
-		if len(tc.Input) != 1 {
-			t.Fatalf("%s: path %q takes exactly one input, got %d: %q",
-				tc.Name, tc.Path, len(tc.Input), tc.Input)
-		}
 		return search.PhoneTokens(tc.Input[0])
+	case pathUserTokens:
+		return search.UserTokens(tc.Input[0], tc.Input[1], tc.Input[2], tc.Input[3], tc.Input[4])
+	case pathProductViewTokens:
+		return search.ProductViewTokens(tc.Input[0], tc.Input[1], tc.Input[2])
 	default:
 		t.Fatalf("%s: unknown path %q — add it to runGoldenCase and to the "+
 			"\"paths\" block of golden_tokens.json, or the case asserts nothing", tc.Name, tc.Path)

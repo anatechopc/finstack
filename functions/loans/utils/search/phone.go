@@ -1,7 +1,6 @@
 package search
 
 import (
-	"sort"
 	"strings"
 	"unicode"
 )
@@ -52,10 +51,8 @@ func PhoneTokens(raw string) []string {
 		set[canonical[len(canonical)-lastDigits:]] = struct{}{}
 	}
 
-	tokens := make([]string, 0, len(set))
-	for token := range set {
-		tokens = append(tokens, token)
-	}
-	sort.Strings(tokens)
-	return tokens
+	// A phone number emits at most MaxPrefix-MinPrefix+3 tokens, so the cap
+	// never bites here; sharing the flatten path keeps one definition of
+	// "sorted and bounded" for everything that reaches search_tokens.
+	return sortedCapped(set)
 }

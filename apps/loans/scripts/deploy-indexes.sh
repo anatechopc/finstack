@@ -87,8 +87,39 @@ echo "  file:        $TARGET_INDEX_FILE ($COUNT indexes)"
 echo "-----------------------------------------------------"
 
 # firebase.json wires firestore.indexes -> firestore.indexes.json, so the chosen
-# env file has to land there before the deploy.
-cp "$TARGET_INDEX_FILE" firestore.indexes.json
+# env file has to land there before the deploy — that part is required and stays.
+#
+# What does NOT stay is the overwritten file. firestore.indexes.json is tracked
+# in git, so leaving it dirty is a live hazard: `./deploy-indexes.sh prod` would
+# leave unprefixed PRODUCTION index definitions in the working tree, and once
+# those ride along in someone's `git add -A`, a later bare
+# `firebase deploy --only firestore:indexes` — no script, whatever project
+# `firebase use` last selected — ships production indexes at loooans-dev-stg.
+# Observed for real: a dev deploy in this repo left the file modified and it had
+# to be restored by hand.
+#
+# Restore it on the way out, success or failure. Deliberately not `git checkout`:
+# git may not be installed, and the tree may hold unrelated local edits that a
+# checkout would destroy.
+SCRATCH_INDEX_FILE="firestore.indexes.json"
+SCRATCH_BACKUP=""
+if [ -f "$SCRATCH_INDEX_FILE" ]; then
+  SCRATCH_BACKUP="$(mktemp "${TMPDIR:-/tmp}/deploy-indexes.scratch.XXXXXX")"
+  cp "$SCRATCH_INDEX_FILE" "$SCRATCH_BACKUP"
+fi
+
+restore_scratch_index_file() {
+  if [ -n "$SCRATCH_BACKUP" ]; then
+    mv -f "$SCRATCH_BACKUP" "$SCRATCH_INDEX_FILE"
+  else
+    # Nothing was there before this run, so do not leave one behind.
+    rm -f "$SCRATCH_INDEX_FILE"
+  fi
+  echo "Restored $SCRATCH_INDEX_FILE to its pre-deploy contents."
+}
+trap restore_scratch_index_file EXIT
+
+cp "$TARGET_INDEX_FILE" "$SCRATCH_INDEX_FILE"
 
 firebase deploy --only firestore:indexes --project "$PROJECT"
 
