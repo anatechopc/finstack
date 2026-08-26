@@ -14,4 +14,26 @@
 .gitignore
 
 node_modules
+
+# Operator tooling, not function code. The search-token backfill is run by hand
+# from a workstation (see cmd/backfill_search_tokens); uploading it with all 18
+# function deploys is dead weight in every artifact.
+cmd/backfill_search_tokens/
+
+# Tests are not function code, and shipping them is not merely dead weight: the
+# uploaded test/cmd/backfill_search_tokens_test.go imports
+# com.loooans.app/cmd/backfill_search_tokens, which the line above excludes.
+# `go build ./...` ignores _test.go files so today's buildpack survives, but
+# `go vet ./...`, `go test ./...`, a future buildpack version, or anyone running
+# `gcloud functions deploy --source=.` and then exercising the staged tree gets
+# "no required module provides package com.loooans.app/cmd/backfill_search_tokens".
+#
+# test/fakes/ is deliberately kept. The root go.mod carries
+# `replace com.loooans.app/test/fakes => ./test/fakes`, and a missing replacement
+# directory fails `go mod download` — which the Go buildpack runs — outright:
+#   reading test/fakes/go.mod: no such file or directory
+# Verified by building a filtered copy of this tree both ways.
+test/*
+!test/fakes/
+
 #!include:.gitignore

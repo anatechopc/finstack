@@ -313,3 +313,87 @@ acknowledged). Also: the guard runs in CI against one call site - a second SMS
 body added elsewhere would be ungated until validation moves to the write
 boundary (`deps.WriteOtp`). Current headroom: the shipped body is 140 chars,
 20 below the GSM-7 limit; one non-ASCII rune makes it 3 UCS-2 parts.
+
+---
+
+## 2026-08-25 — Search backend: server-side `search_tokens` (finstack#56)
+
+Built the backend half of client/offer search on branch `worktree-search-design-spec`
+(15 commits). Design spec `docs/superpowers/specs/2026-08-24-search-design.md` is the
+binding authority; the full decision log — including several rulings I got wrong and an
+implementer corrected — is in the SDD ledger (git-ignored, `.superpowers/sdd/`).
+
+**Approach:** prefix-expansion token arrays (`search_tokens`) written **server-side** by
+triggers, queried with `array-contains`. Rejected in the spec: BigQuery for search (OLAP,
+wrong latency profile — see #98 for reporting), a typed query DSL, single-field prefix
+matching, and Typesense at this stage.
+
+**What shipped:** `utils/search/` (tokenizer, phone canonicalization, per-entity
+composition) + golden vectors shared with Dart; `search_tokens` written from `userChanges`
+**and** `userCreated`; the `product_views` projection **moved from Flutter to a Go trigger**
+(`productWritten`); 6 composite indexes; a re-runnable backfill.
+
+### Traps worth remembering
+
+- **`userChanges` writes a field that re-fires `userChanges`.** Termination depends entirely
+  on `flattenFields` parsing the `search_tokens` **array** back out of the CloudEvent so
+  `SearchTokensForUser` can see the tokens already match. That `case` looks like dead weight
+  next to the string cases. Deleting it = infinite trigger loop billing production. It is
+  pinned by `triggers/user_changes_internal_test.go` — an *internal* test, because
+  `flattenFields` is unexported.
+- **CI was not running that test, or building 6 of 7 modules.** `go test ./...` from
+  `functions/loans` reaches only `com.loooans.app`; `api`, `job`, `test/fakes`, `triggers`,
+  `types`, `utils` were never built or tested. That is why `job` sat with a stale `go.mod`
+  that did not compile. Fixed in all three `loans-functions-*.yml` to loop over every
+  `go.mod`. **Do not pipe the go commands** — a pipeline exits with its last element's
+  status and silently swallows failures (my first draft did exactly that).
+- **`product_views` is written by Go, read by `ProductViewEntity`, which has 14 `late`
+  non-nullable fields.** An incomplete document crashes the app on read.
+  `BuildProductViewCreate`/`BuildProductViewUpdate` are the **only** thing enforcing that
+  contract — the backfill calls `HandleProductWrittenCore` rather than reimplementing, on
+  purpose. Never write a second projection.
+- **`deleted_at` must be written as an explicit null.** Firestore's `isNull: true` matches
+  only documents where the field **exists**, so a view missing it is invisible to every
+  listing while looking perfect in the console.
+- **Dates are epoch millis, not Timestamps** (`handleDateTimeToJson`). Firestore **sorts by
+  type before value**, so mixing `int` and `Timestamp` in one field silently splits the
+  ordering into two blocks. `utils.ToInt64` now converts `time.Time` for exactly this reason.
+- **`load()` vs `loadNext()` sort differently** and the `orderBy` sits *after* the caller's
+  filters, near the end of the method. I misread a `sed` line range as a method boundary and
+  got an index wrong because of it. Confirm which function a line is in before citing it.
+- **Phone canonicalization must trim `63`/`0` in a loop**, not once each (`00639175550142`).
+  Go had this bug and fixed it in `fd65833`; the golden vectors now pin it.
+
+### Deferred, with issues
+#100 (latent no-merge data loss in the Dart view writers — unreachable today, would be
+catastrophic if the flag were enabled), #101 (hard-deleted product orphans its view),
+#102 (company rename rots its offers' tokens — nothing fires on `companies`), #103
+(interest-rate facet needs a query path before it can be indexed), #99, #98.
+
+### Open / needs a human
+- **Task 7 Step 6 never ran:** the backfill has only been exercised against fakes. ADC was
+  absent in the session. Needs `gcloud auth application-default login`, then a
+  `-dry-run=true` pass against `loooans-dev-stg`.
+- **Indexes are deployed by hand, per environment**, not by CI:
+  `cd apps/loans && ./scripts/deploy-indexes.sh <dev|stg|prod>`. They must exist before the
+  frontend lands or the first search fails with `FAILED_PRECONDITION`.
+
+  **I got this wrong twice before getting it right — read `finstack-run-deploy-operate` §6
+  before touching indexes.** `apps/loans/firestore.indexes.json` is a **scratch artifact**;
+  the deploy script `cp`s the chosen env file over it, so anything committed there is
+  silently discarded. The real committed snapshots are
+  `firestore.indexes.{dev,stg,prod}.json`, carrying `dev_*` / `stg_*` / unprefixed
+  collections. `5b14006` moved the six search indexes into those three and restored the
+  scratch file; commits `1a7d699`, `408e3ef` and `d0acf96` had all edited the scratch file,
+  and d0acf96's claim that dev/staging had no managed indexes was simply false.
+
+  `5b14006` also fixed the deploy script, which could not have shipped a new index at all:
+  it refreshed the env file from **live** state and then deployed that, so for stg and prod
+  a newly added index was overwritten before it could be created. Refreshing is now
+  `--refresh` (writes the snapshot, deploys nothing); the default deploys what is committed.
+  The `if ["$ENV" == "dev"]` bracket bug (documented in the skill) meant `deploy-indexes.sh
+  dev` regenerated and clobbered the **staging** snapshot on every run — reproduced, fixed.
+- **`firestore.rules` is the default allow-all template, expired 2024-06-22, and
+  `firebase.json` has no `"rules"` key** — so it is not deployed and the live rules are
+  unknown. Relevant because search's authorization is enforced in query construction
+  (client-side); rules are the only real backstop.

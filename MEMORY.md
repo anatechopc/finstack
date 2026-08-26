@@ -205,3 +205,50 @@ Second trap hit on the way: 26 test files failed to load with
 gitignored-codegen trap, not a toolchain fault — `packages/build_models.sh`
 regenerates all 21 packages (CI does this in its "Generate code" step). A fresh
 clone cannot run `apps/loans` tests until it runs.
+
+---
+
+## 2026-08-25 — Search: spec, plans, and the backend half (finstack#56)
+
+Brainstormed → spec → two plans → executed the backend. Branch
+`worktree-search-design-spec`, 15 commits, merge-ready. Backend and frontend are
+deliberately **separate PRs, backend first**, per the standing preference.
+
+- Spec: `docs/superpowers/specs/2026-08-24-search-design.md` (binding)
+- Plans: `docs/superpowers/plans/2026-08-24-search-{backend,frontend}.md`
+- Backend detail and traps: `functions/loans/MEMORY.md`
+- **Frontend plan is NOT ready to execute** — see the defect below.
+
+**Cross-cutting decision:** search is Firestore `array-contains` over server-written
+`search_tokens`, not BigQuery. BigQuery is right for *reporting* (#98) and wrong for
+high-QPS point lookups. The reusable idea is to share the **CDC pipeline**, not the query
+store.
+
+**Frontend plan defect, must be fixed before executing it:** `OfferFilters.maxInterestRate`
+is a range filter, and Firestore requires the first `orderBy` to be the inequality field —
+but `ProductViewFirestoreService.load()` hardcodes `orderBy('updated_at', descending)` after
+applying filters. That query throws at runtime and **no index can fix it**; it needs a
+dedicated query path. Tracked as **#103**.
+
+**Process note that paid for itself.** Every task was implemented by one subagent and
+reviewed by an independent one, with findings adjudicated and verified by mutation rather
+than by re-reading. Reviewers/implementers caught **four** errors in my own rulings —
+including one (`tag_line` is a company field, not a product field) that would have silently
+dropped ~a third of every offer's search tokens. The Critical in the final review was that
+the *golden-vector file itself* could not express the contract it existed to enforce: a Dart
+implementation with the exact phone bug Go once had would have passed it. Independent review
++ mutation testing found things no amount of careful reading did.
+
+### Correction (2026-08-25): Firestore indexes live in per-env files
+
+Recorded because I got it wrong twice in one session. `apps/loans/firestore.indexes.json`
+is a **scratch artifact** — `apps/loans/scripts/deploy-indexes.sh` `cp`s the chosen
+environment's file over it right before deploying, so anything committed there is
+discarded. The real snapshots are `firestore.indexes.{dev,stg,prod}.json`
+(`dev_*` / `stg_*` / unprefixed). Fixed in `5b14006`.
+
+**The repo's own skill library documented all of this** — `finstack-run-deploy-operate` §6
+covers the file layout, the scratch-artifact trap, and the `["$ENV" == "dev"]` bracket bug.
+`CLAUDE.md` says to load the relevant skill before non-trivial work and I did not. Loading
+it would have prevented three wrong commits and a wrong claim to the user. **Load the skill
+first — especially for anything deploy- or environment-shaped.**

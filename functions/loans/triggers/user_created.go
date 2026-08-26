@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"com.loooans.app/utils"
+	firebase "firebase.google.com/go/v4"
 	"github.com/cloudevents/sdk-go/v2/event"
 	"github.com/golang/protobuf/proto"
 	"github.com/googleapis/google-cloudevents-go/cloud/firestoredata"
@@ -96,6 +97,24 @@ func UserCreated(ctx context.Context, event event.Event) error {
 		return errFirebaseAdmin
 	}
 
+	// Write search_tokens for the new user unconditionally — including
+	// admin-provisioned users that skip the welcome email below. Done here
+	// rather than in HandleUserCreatedCore so that skip decision (which only
+	// governs the welcome email) can't also make a user unfindable in
+	// search. Best-effort: a failure degrades search but must not fail the
+	// trigger, which also carries the (more important) welcome email and
+	// would otherwise retry it too.
+	//
+	// Placed before the Auth client is built: it needs only app + uid, and
+	// running it first means a transient Auth failure (which returns below,
+	// with no retry configured) can't leave a brand-new user untokenized and
+	// permanently unfindable.
+	if tokens, needsWrite := SearchTokensForUser(flattenFields(data.GetValue().GetFields())); needsWrite {
+		if err := writeUserSearchTokens(ctx, app, uid, tokens); err != nil {
+			log.Sugar().Warnf("user_created: write search tokens for %s: %v", uid, err)
+		}
+	}
+
 	authClient, errAuthClient := app.Auth(ctx)
 
 	if errAuthClient != nil {
@@ -116,4 +135,21 @@ func UserCreated(ctx context.Context, event event.Event) error {
 	}
 
 	return HandleUserCreatedCore(ctx, uid, ShouldSkipWelcomeEmail(data.GetValue().GetFields()), deps)
+}
+
+// writeUserSearchTokens merges the given search_tokens onto users/{uid}.
+func writeUserSearchTokens(ctx context.Context, app *firebase.App, uid string, tokens []string) error {
+	fs, fsErr := app.Firestore(ctx)
+	if fsErr != nil {
+		return fmt.Errorf("firestore client: %w", fsErr)
+	}
+	defer fs.Close()
+
+	docRef := fs.Doc(utils.GetCollectionPrefix() + "users/" + uid)
+	// MergeFields rather than MergeAll, matching the userChanges token write.
+	// The two agree for a payload of one array field; keeping the token
+	// writers on one idiom is what stops them drifting apart later.
+	fields := map[string]any{"search_tokens": tokens}
+	_, err := docRef.Set(ctx, fields, MergeFields(fields))
+	return err
 }

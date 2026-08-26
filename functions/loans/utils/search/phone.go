@@ -1,0 +1,58 @@
+package search
+
+import (
+	"strings"
+	"unicode"
+)
+
+// lastDigits is how many trailing digits are emitted as a discrete token.
+const lastDigits = 4
+
+// CanonicalPhone reduces a phone number to its national significant digits so
+// that every spelling of the same number collapses to one token.
+//
+// This deliberately does NOT use api/service.NormalizePhoneE164: that function
+// requires the user's country, read from their address, and fails with
+// ErrCountryUnknown when the address is incomplete — which would silently make
+// those users unfindable by phone. Search needs consistency, not validity.
+func CanonicalPhone(raw string) string {
+	var digits strings.Builder
+	for _, r := range raw {
+		if unicode.IsDigit(r) {
+			digits.WriteRune(r)
+		}
+	}
+
+	value := digits.String()
+	for {
+		switch {
+		case strings.HasPrefix(value, "63"):
+			value = strings.TrimPrefix(value, "63")
+		case strings.HasPrefix(value, "0"):
+			value = strings.TrimPrefix(value, "0")
+		default:
+			return value
+		}
+	}
+}
+
+// PhoneTokens returns the token set for a phone number: the canonical form,
+// its prefixes, and the last four digits.
+func PhoneTokens(raw string) []string {
+	canonical := CanonicalPhone(raw)
+	if canonical == "" {
+		return nil
+	}
+
+	set := map[string]struct{}{canonical: {}}
+	addPrefixes(set, canonical)
+
+	if len(canonical) >= lastDigits {
+		set[canonical[len(canonical)-lastDigits:]] = struct{}{}
+	}
+
+	// A phone number emits at most MaxPrefix-MinPrefix+3 tokens, so the cap
+	// never bites here; sharing the flatten path keeps one definition of
+	// "sorted and bounded" for everything that reaches search_tokens.
+	return sortedCapped(set)
+}

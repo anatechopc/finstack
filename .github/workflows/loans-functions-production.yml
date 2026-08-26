@@ -8,12 +8,22 @@ on:
     paths:
       - 'functions/loans/**'
       - '.github/workflows/loans-functions-*.yml'
+      # The deploy script is part of this pipeline: it is what registers every
+      # function and its trigger path. A commit touching only this file matched
+      # neither pattern above, so no workflow ran, nothing deployed, and the PR
+      # went green as "skipped" while the author assumed the trigger shipped.
+      - '.github/scripts/deploy_functions.sh'
   pull_request:
     branches:
       - master
     paths:
       - 'functions/loans/**'
       - '.github/workflows/loans-functions-*.yml'
+      # The deploy script is part of this pipeline: it is what registers every
+      # function and its trigger path. A commit touching only this file matched
+      # neither pattern above, so no workflow ran, nothing deployed, and the PR
+      # went green as "skipped" while the author assumed the trigger shipped.
+      - '.github/scripts/deploy_functions.sh'
 
 defaults:
   run:
@@ -30,11 +40,43 @@ jobs:
         with:
           go-version: '1.26'
 
-      - name: Build
-        run: go build -v ./...
-
-      - name: Test
-        run: go test -v ./...
+      # functions/loans is a multi-module Go setup wired together with `replace`
+      # directives, so `./...` only reaches the module rooted here. Every sibling
+      # module (api, job, test/fakes, triggers, types, utils) must be built and
+      # tested explicitly — otherwise a module can stop compiling, or an internal
+      # test can stop running, while CI stays green.
+      #
+      # Do not pipe the go commands: a pipeline exits with the status of its last
+      # element, which would swallow every failure and make this step a no-op.
+      #
+      # The loop must also assert it FOUND something. It runs under
+      # `set -uo pipefail` without `-e`, so a `find` matching nothing — the
+      # working-directory moves, the checkout path changes, a future filter is
+      # over-broad — executes the body zero times, leaves status at 0 and exits
+      # green having tested nothing: precisely the silent-green failure this
+      # loop was added to eliminate. EXPECTED_MODULES is a MINIMUM, so quietly
+      # losing one module fails too. Raise it when a module is added.
+      - name: Build and test every module
+        run: |
+          set -uo pipefail
+          EXPECTED_MODULES=7   # ., api, job, test/fakes, triggers, types, utils
+          modules=$(find . -name go.mod -not -path './vendor/*' -exec dirname {} \; | sort)
+          found=$(printf '%s\n' "$modules" | grep -c . || true)
+          if [ "$found" -lt "$EXPECTED_MODULES" ]; then
+            echo "::error::found $found Go module(s) under $(pwd), expected at least $EXPECTED_MODULES — module discovery is broken, so a green result here would mean nothing"
+            printf '%s\n' "$modules"
+            exit 1
+          fi
+          status=0
+          for mod in $modules; do
+            echo "::group::$mod"
+            if ! (cd "$mod" && go build -v ./... && go test -v ./...); then
+              echo "::error::module $mod failed"
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $status
   deploy:
     name: Deploy
     runs-on: ubuntu-latest

@@ -21,10 +21,15 @@ func TestToInt64(t *testing.T) {
 		{"string", "1700000000000", 0, false},
 		{"nil", nil, 0, false},
 		{"bool", true, 0, false},
-		// A Firestore Timestamp deserializes as time.Time, NOT int64 millis — the
-		// documented serialization footgun. It must fail closed (ok=false) so a
-		// caller rejects rather than silently mis-reads it as 0.
-		{"time.Time (Firestore Timestamp footgun)", time.UnixMilli(1700000000000), 0, false},
+		// A Firestore Timestamp deserializes as time.Time, NOT int64 millis. It
+		// is converted rather than rejected, so that a value read through the
+		// Firestore client (time.Time) and the same value read through a
+		// CloudEvent payload (intMillisFromValue, which already accepts
+		// TimestampValue) agree. Failing closed here was not actually fail-safe:
+		// four of the five call sites discard ok, so a Timestamp silently became
+		// 0 — a 1970 date — rather than being rejected.
+		{"time.Time (Firestore Timestamp)", time.UnixMilli(1700000000000), 1700000000000, true},
+		{"time.Time keeps sub-second precision as millis", time.UnixMilli(1700000000123), 1700000000123, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

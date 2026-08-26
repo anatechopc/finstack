@@ -8,6 +8,7 @@ require (
 	com.loooans.app/types v0.0.0-00010101000000-000000000000
 	firebase.google.com/go/v4 v4.13.0
 	go.uber.org/zap v1.26.0
+	golang.org/x/text v0.15.0
 )
 
 require (
@@ -32,7 +33,6 @@ require (
 	golang.org/x/oauth2 v0.7.0 // indirect
 	golang.org/x/sync v0.1.0 // indirect
 	golang.org/x/sys v0.13.0 // indirect
-	golang.org/x/text v0.13.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/api v0.114.0 // indirect

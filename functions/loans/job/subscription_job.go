@@ -129,8 +129,8 @@ func SubscriptionJob(w http.ResponseWriter, r *http.Request) {
 		validUntil := time.UnixMilli(compareMillis)
 		day := 24 * time.Hour
 
-		log.Debug(fmt.Sprintf("isNDays: math.Round(validUntil.Sub(now).Hours())", math.Round(validUntil.Sub(now).Hours())))
-		log.Debug(fmt.Sprintf("isNDays: (day.Hours() * float64(n))", day.Hours()*float64(n)))
+		log.Debug(fmt.Sprintf("isNDays: math.Round(validUntil.Sub(now).Hours()) = %v", math.Round(validUntil.Sub(now).Hours())))
+		log.Debug(fmt.Sprintf("isNDays: (day.Hours() * float64(n)) = %v", day.Hours()*float64(n)))
 
 		return math.Round(validUntil.Sub(now).Hours()) == (day.Hours() * float64(n))
 	}

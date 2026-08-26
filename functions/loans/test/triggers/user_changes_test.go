@@ -3,6 +3,7 @@ package triggers_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"com.loooans.app/test/fakes"
@@ -21,6 +22,26 @@ func depsWithBoth(
 	}
 }
 
+// withMatchingTokens seeds after["search_tokens"] with the value
+// SearchTokensForUser would already compute from after's own fields. Most of
+// the tests below exercise the mobile-verification or name-cascade path in
+// isolation; without this, HandleUserChangedCore's own (correct) search_tokens
+// backfill would pad updater.Updates with an extra call these tests don't
+// expect. TestSearchTokensForUser_* in user_search_tokens_test.go covers the
+// token-diffing behavior itself.
+//
+// Note this seeding is deliberately unrealistic wherever the fixture's mobile
+// or name fields differ from `before` — only this trigger writes search_tokens,
+// so a document whose name just changed cannot already carry tokens matching
+// the *new* name. The tokens are neutralised here purely to isolate the path
+// under test; TestHandleUserChangedCore_WritesSearchTokens below covers the
+// realistic shape (a changed field, tokens still stale or absent).
+func withMatchingTokens(after map[string]any) map[string]any {
+	tokens, _ := triggers.SearchTokensForUser(after)
+	after["search_tokens"] = toAnySlice(tokens)
+	return after
+}
+
 func TestHandleUserChangedCore_MobileChanged_ClearsVerification(t *testing.T) {
 	updater := &fakes.UserUpdater{}
 	names := &fakes.LoanViewNameUpdater{}
@@ -31,11 +52,11 @@ func TestHandleUserChangedCore_MobileChanged_ClearsVerification(t *testing.T) {
 		"mobile_number":      "9171234567",
 		"verificationStatus": int64(2),
 	}
-	after := map[string]any{
+	after := withMatchingTokens(map[string]any{
 		"id":                 "user-1",
 		"mobile_number":      "9170000000",
 		"verificationStatus": int64(2),
-	}
+	})
 
 	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps); err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -73,13 +94,13 @@ func TestHandleUserChangedCore_NameChanged_CascadesFullName(t *testing.T) {
 		"middle_name":   "Santos",
 		"mobile_number": "9171234567",
 	}
-	after := map[string]any{
+	after := withMatchingTokens(map[string]any{
 		"id":            "user-1",
 		"first_name":    "Juan Carlos",
 		"last_name":     "Dela Cruz",
 		"middle_name":   "Santos",
 		"mobile_number": "9171234567",
-	}
+	})
 
 	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps); err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -134,12 +155,12 @@ func TestHandleUserChangedCore_NameUnchanged_NoCascade(t *testing.T) {
 		"last_name":     "Dela Cruz",
 		"mobile_number": "9171234567",
 	}
-	after := map[string]any{
+	after := withMatchingTokens(map[string]any{
 		"id":            "user-1",
 		"first_name":    "Juan",
 		"last_name":     "Dela Cruz",
 		"mobile_number": "9170000000",
-	}
+	})
 
 	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps); err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -170,7 +191,7 @@ func TestHandleUserChangedCore_MobileUnchanged_NoOp(t *testing.T) {
 	updater := &fakes.UserUpdater{}
 	deps := triggers.UserChangesDeps{UpdateUser: updater.Update}
 	before := map[string]any{"mobile_number": "9171234567"}
-	after := map[string]any{"mobile_number": "9171234567"}
+	after := withMatchingTokens(map[string]any{"mobile_number": "9171234567"})
 
 	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps); err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -192,7 +213,8 @@ func TestHandleUserChangedCore_MissingValues_NoCrashNoUpdate(t *testing.T) {
 	}
 
 	// missing mobile_number on either side -> also no-op
-	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", map[string]any{}, map[string]any{"mobile_number": "9170000000"}, deps); err != nil {
+	after := withMatchingTokens(map[string]any{"mobile_number": "9170000000"})
+	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", map[string]any{}, after, deps); err != nil {
 		t.Fatalf("err on missing-before: %v", err)
 	}
 	if len(updater.Updates) != 0 {
@@ -209,6 +231,135 @@ func TestHandleUserChangedCore_UpdaterErrorPropagates(t *testing.T) {
 	err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps)
 	if err == nil {
 		t.Fatal("expected propagated error")
+	}
+}
+
+// TestHandleUserChangedCore_WritesSearchTokens pins the wiring, not the
+// tokenizer: it proves that an ordinary user edit reaches UpdateUser with a
+// search_tokens field at all. Every other test in this file neutralises that
+// path via withMatchingTokens, so without this one the whole search_tokens
+// block could be deleted from HandleUserChangedCore and the suite stays green.
+func TestHandleUserChangedCore_WritesSearchTokens(t *testing.T) {
+	updater := &fakes.UserUpdater{}
+	names := &fakes.LoanViewNameUpdater{}
+	deps := depsWithBoth(updater, names)
+
+	// A realistic edit: the surname changed and the document carries no
+	// search_tokens yet (pre-migration, or a user created before this trigger
+	// shipped). Mobile is absent on both sides, so the verification path stays
+	// quiet and every recorded update belongs to the search path.
+	before := map[string]any{"id": "user-1", "first_name": "Ana", "last_name": "Cruz"}
+	after := map[string]any{"id": "user-1", "first_name": "Ana", "last_name": "Reyes"}
+
+	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(updater.Updates) != 1 {
+		t.Fatalf("expected exactly the search_tokens update, got %d: %+v", len(updater.Updates), updater.Updates)
+	}
+	upd := updater.Updates[0]
+	if upd.UID != "user-1" {
+		t.Errorf("uid: got %s, want user-1", upd.UID)
+	}
+	got, ok := upd.Fields["search_tokens"].([]string)
+	if !ok {
+		t.Fatalf("search_tokens: got %T (%v), want []string", upd.Fields["search_tokens"], upd.Fields["search_tokens"])
+	}
+	// Prefixes of "ana" and "reyes" from MinPrefix=2 up, sorted. Spelled out
+	// rather than recomputed via search.UserTokens so the assertion is a real
+	// expectation and not a restatement of the production call.
+	want := []string{"an", "ana", "re", "rey", "reye", "reyes"}
+	if len(got) != len(want) {
+		t.Fatalf("search_tokens: got %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("search_tokens: got %q, want %q", got, want)
+		}
+	}
+}
+
+// TestHandleUserChangedCore_SkipsSearchTokenWriteWhenCurrent is the recursion
+// guard at the level that actually ships: this trigger fires on its own token
+// write, so a document already carrying current tokens must produce no write.
+func TestHandleUserChangedCore_SkipsSearchTokenWriteWhenCurrent(t *testing.T) {
+	updater := &fakes.UserUpdater{}
+	names := &fakes.LoanViewNameUpdater{}
+	deps := depsWithBoth(updater, names)
+
+	// Same edit as above, but `after` is the document as it looks on the
+	// trigger's *second* delivery — the one caused by its own token write.
+	before := map[string]any{"id": "user-1", "first_name": "Ana", "last_name": "Cruz"}
+	after := withMatchingTokens(map[string]any{
+		"id": "user-1", "first_name": "Ana", "last_name": "Reyes",
+	})
+
+	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	for _, upd := range updater.Updates {
+		if _, ok := upd.Fields["search_tokens"]; ok {
+			t.Fatalf("tokens already current — must not write again, got %+v", upd.Fields)
+		}
+	}
+}
+
+// TestHandleUserChangedCore_MobileAndTokensShareOneWrite: an edit that touches
+// both paths must reach Firestore ONCE.
+//
+// As two calls it wrote the same document twice and re-fired userChanges
+// twice, and between the two writes the document sat with mobile verification
+// cleared while its search_tokens still described the old number — findable by
+// a number the user no longer has.
+func TestHandleUserChangedCore_MobileAndTokensShareOneWrite(t *testing.T) {
+	updater := &fakes.UserUpdater{}
+	names := &fakes.LoanViewNameUpdater{}
+	deps := depsWithBoth(updater, names)
+
+	// The mobile number is one of the five fields search_tokens is built from,
+	// so changing it is exactly the edit that drives both paths at once. The
+	// name is untouched, so the loan-view cascade stays out of it.
+	before := map[string]any{
+		"id": "user-1", "first_name": "Ana", "last_name": "Cruz",
+		"mobile_number": "9171234567",
+	}
+	after := map[string]any{
+		"id": "user-1", "first_name": "Ana", "last_name": "Cruz",
+		"mobile_number": "9170000000",
+	}
+
+	if err := triggers.HandleUserChangedCore(context.Background(), "user-1", before, after, deps); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(updater.Updates) != 1 {
+		t.Fatalf("one edit must produce one write, got %d: %+v", len(updater.Updates), updater.Updates)
+	}
+	fields := updater.Updates[0].Fields
+	for _, key := range []string{"verificationStatus_andNot", "mobile_verified_at", "search_tokens"} {
+		if _, ok := fields[key]; !ok {
+			t.Errorf("the single write is missing %q: %+v", key, fields)
+		}
+	}
+}
+
+// TestHandleUserChangedCore_UpdaterErrorNamesTheUser: this trigger retries, so
+// a bare error produces a log storm naming no document, in which one
+// unwritable user is indistinguishable from a collection-wide failure.
+func TestHandleUserChangedCore_UpdaterErrorNamesTheUser(t *testing.T) {
+	updater := &fakes.UserUpdater{Err: errors.New("firestore: write failed")}
+	deps := triggers.UserChangesDeps{UpdateUser: updater.Update}
+	before := map[string]any{"mobile_number": "old"}
+	after := map[string]any{"mobile_number": "new"}
+
+	err := triggers.HandleUserChangedCore(context.Background(), "user-42", before, after, deps)
+	if err == nil {
+		t.Fatal("expected propagated error")
+	}
+	if !strings.Contains(err.Error(), "user-42") {
+		t.Errorf("err = %v, want it to name the document that could not be written", err)
+	}
+	if !strings.Contains(err.Error(), "firestore: write failed") {
+		t.Errorf("err = %v, want the underlying cause wrapped, not replaced", err)
 	}
 }
 
