@@ -46,6 +46,7 @@ class HomeScreen extends StatelessWidget {
                       AuthenticationService.instance.allowAddClients,
                   showAddCapitalButton: AuthenticationService.instance.isAdmin,
                   showMessagesButton: true,
+                  showSearchField: true,
                 ),
                 body: child,
               ),

@@ -15,6 +15,7 @@ import 'package:loooans/features/products/bloc/product_bloc.dart';
 import 'package:loooans/features/registration/bloc/registration_bloc.dart';
 import 'package:loooans/features/reports/bloc/reports_bloc.dart';
 import 'package:loooans/features/reviews/bloc/reviews_bloc.dart';
+import 'package:loooans/features/search/bloc/search_bloc.dart';
 import 'package:loooans/features/users/bloc/user_bloc.dart';
 
 class AppBlocProviders extends StatelessWidget {
@@ -48,6 +49,7 @@ class AppBlocProviders extends StatelessWidget {
         BlocProvider(create: PaymentCenterBloc.new),
         BlocProvider(create: BankDetailsBloc.new),
         BlocProvider(create: ConversationsBloc.new),
+        BlocProvider(create: SearchBloc.new),
       ],
       child: child,
     );
