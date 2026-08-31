@@ -555,3 +555,75 @@ Widths worth knowing: the anchor line has ~210px at 390dp, and
 `Loan ₱50k · Business loan` needs ~275px, so it ellipsizes — which is why the
 **amount precedes the product type**. Truncation must not eat the discriminator
 that tells a borrower's several loans apart.
+
+## Search frontend — 8 tasks (branch `docs/amend-search-frontend-plan`, PR #106, 2026-08-31)
+
+Built the query side against the **shipped Go indexer**, not the plan's prose.
+The plan predated the backend and had drifted; the spec had drifted further and
+was corrected in the same PR (it still described single-pass phone trimming, an
+unbounded token rule, and three offer facets where two shipped).
+
+Suite went **104 → 233**. Every guard below was mutation-proven: the mutation was
+applied, the named test observed failing, then reverted and the file re-verified
+byte-identical. **A guard without a proven-failing test is not a guard.**
+
+**Authorization is the whole feature.** Three places could have leaked client PII
+and all three were wrong in the plan:
+- `SearchRequest.companyId` came from `AuthenticationService.company`, which
+  **throws for `customer` AND `appAdmin`** (it gates on `role.index >
+  customer.index`; appAdmin is 0 and customer is 1, so both fail). The throw was
+  swallowed into an error state, so borrower search — the borrower's *only*
+  scope — would have been permanently and silently broken. The index resolves the
+  company itself now, from `UserRole.companyManagedRoles`.
+- `/search?scope=clients` minted a `SearchScope` straight from the query param,
+  and **`router.dart` has no role gate anywhere**. It is now a *candidate* passed
+  to `SearchScopeResolver` as `pinnedScope` and intersected with the role's
+  scopes, exactly like a typed prefix.
+- `FirestoreSearchIndex` reuses `SearchScopeResolver.scopesFor` rather than
+  re-deriving the role check, so the two cannot drift apart.
+
+**Two pre-auth crash guards, same root cause.** `AuthenticationService.user`
+throws `Please login` on `/login`, `/register`, `/set-password`. The app-bar field
+must stay inside `layout_widgets.dart`'s `if (!showSignUp && !showLogin)` block,
+and the `Ctrl/⌘K` wrapper — mounted above the `Router` in `app.dart`, the only
+position reaching the twelve out-of-shell routes — must guard on `isLoggedIn`.
+`isLoggedIn` is safe there because it reads the nullable `_user` field, never the
+throwing getter. Both have regression tests asserting `takeException()` is null
+**first**, so the failure names the crash rather than a downstream flag.
+
+**Dart cannot mirror Go's folding without a normalizer.** Go does NFD → strip
+every Mn → NFC. Dart core has no normalization, so `unorm_dart` was added. The
+plan's 25-char fold table cannot handle `Nguyễn`, `Erdős`, `Ștefan`, `Māori`, and
+must NOT fold `Straße`→`strasse` or `Søren`→`soren`, which Go does not. The
+golden file cannot prove this: its only non-ASCII case is a **precomposed** `Peña`,
+the one character the table already covered.
+
+**Gotchas worth keeping:**
+- `load()` carries `lastDocumentSnapshot` across calls — every search needs
+  `reset: true` or the second query silently paginates the first.
+- `QueryStatement` already supports `arrayContainsAny`, which is what makes the
+  last-4 phone search possible with no package change (`0142` canonicalizes to
+  `142` and matches nothing, so raw and canonical are both sent).
+- `ProductViewRepository` is `final` — it cannot be mocked. The index takes
+  injectable loader typedefs instead, which is also what made the authorization
+  predicates testable.
+- `SearchResults.empty` is pinned to the clients scope; using it on the offers
+  scope leaves `results.scope` disagreeing with `state.scope`.
+- The interest-rate facet is **deferred to finstack#103**: it is a range filter,
+  and `ProductViewFirestoreService` hardcodes `orderBy('updated_at')` before its
+  filter loop, so the query is illegal. Removing the chip is not enough — leaving
+  `params['interest']` parsed keeps the crash reachable by deep link.
+- `LayoutWidgets.defaultAppBar` has exactly ONE caller. A flag added only there
+  is unreachable from `home_screen.dart`; it must be plumbed through
+  `AppWidgets.defaultAppBar` too.
+- `NotificationService.instance` at `layout_widgets.dart:310` is NOT inside the
+  `showMessagesButton` block (288-308) — it is a sibling. Reading line order out
+  of a grep instead of checking the block structure got this wrong twice.
+
+**Known gaps (deliberate, not oversights):** no company picker, so that facet is
+deep-link only (I13 wants the label resolution specified first); tapping a client
+result opens the clients list, not the client, because `Paths.clientsAction`
+demands a productId and loanId a `users` result does not carry; `/offers/:action`,
+`/profile/:action` and `/chat/:roomId` have the shortcut but no visible
+affordance; and `reset: true` is verified by reading, not by a test — testing it
+needs the Firestore services injectable, a `packages/` change.
