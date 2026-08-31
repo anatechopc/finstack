@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-24-search-design.md`
 
-**Depends on:** `docs/superpowers/plans/2026-08-24-search-backend.md` — merged and deployed to development first, and the backfill run. Queries return nothing until `search_tokens` exists.
+**Depends on:** `docs/superpowers/plans/2026-08-24-search-backend.md` — **merged** (finstack#104, #105). Composite indexes are **deployed to dev, stg and prod**; the backfill has been run and verified **on dev only**, so stg and prod hold no `search_tokens` on pre-existing documents yet and queries there return only documents written since the triggers shipped. Six indexes back this feature — 2 on `users`, 4 on `product_views` — and the per-environment files `firestore.indexes.{dev,stg,prod}.json` are the source of truth; `firestore.indexes.json` is a scratch artifact `deploy-indexes.sh` overwrites, and edits made there are silently discarded.
 
 ## Global Constraints
 
@@ -2242,7 +2242,8 @@ Line 951-953 says to default it to `true` *"following the existing flags"*. Thos
 
 ## Still true — do NOT change
 
-- **The tokenizer's overall shape.** `normalize` → full-value token + per-word prefix expansion, `minPrefix = 2`, `maxPrefix = 12`, the `_accented`/`_plain` table's *ordering* (lowercase before folding), and `_addPrefixes` emitting a sub-`minPrefix` token whole. Only the specific defects above change.
+- **The tokenizer's overall shape.** `normalize` → full-value token + per-word prefix expansion, `minPrefix = 2`, `maxPrefix = 12`, and `_addPrefixes` emitting a sub-`minPrefix` token whole. Only the specific defects above change.
+  - **Superseded on execution (2026-08-31):** the `_accented`/`_plain` table was **deleted**, not kept. Real NFD subsumes it, and keeping both is two sources of truth for one rule. Its *ordering* claim (lowercase before folding) was also wrong: Go folds first, then lowercases, and the Dart side now mirrors that. Verified by replicating `Normalize` against the same `golang.org/x/text` version the functions use — the table cannot fold `Nguyễn`, `Erdős`, `Ștefan` or `Māori`, and must NOT fold `Straße`→`strasse` or `Søren`→`soren`, which Go does not.
 - **`canonicalPhone` stays in the API.** It is exported in Go (`phone.go:18`) and is the runtime query-side entry point (line 556). It is simply not one of the four golden *paths*.
 - **The resolver design.** Scope selection lives in `SearchScopeResolver`, a customer has no clients scope, and a typed prefix naming a scope the role lacks is treated as literal text (390-392). B9 adds a missing case; B11 makes the deep link *feed* the resolver instead of bypassing it. Neither weakens the rule.
 - **The plan's Task 3 tests for `queryToken` at 473-489**, including the email assertion at 482-489 — that one states the correct contract and B5 changes the *code* to match it.
