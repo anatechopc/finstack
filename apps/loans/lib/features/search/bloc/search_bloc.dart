@@ -61,6 +61,7 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
       role: authService.user.userRole,
       location: event.location,
       rawQuery: event.query,
+      pinnedScope: event.pinnedScope,
     );
 
     return _runQuery(scope: parsed.scope, term: parsed.term, emit: emit);
@@ -89,7 +90,17 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
       // user has just erased land on top of the `tooShort` state.
       _requestId++;
       emit(
-        state.copyWith(status: SearchStatus.tooShort, scope: scope, term: term),
+        state.copyWith(
+          status: SearchStatus.tooShort,
+          scope: scope,
+          term: term,
+          // Erase means erase. Clearing here rather than in each surface is
+          // the only reason the overlay and `/search` don't both have to carry
+          // the same "these results are stale" guard. `SearchResults.empty` is
+          // not used: it is pinned to the clients scope, which would leave
+          // `results.scope` disagreeing with `state.scope`.
+          results: SearchResults(items: const [], scope: scope),
+        ),
       );
 
       return;

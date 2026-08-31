@@ -27,6 +27,7 @@ import 'package:loooans/features/registration/screens/register_screen.dart';
 import 'package:loooans/features/registration/screens/registration_complete_screen.dart';
 import 'package:loooans/features/reports/bloc/reports_bloc.dart';
 import 'package:loooans/features/reports/screen/dashboard_screen.dart';
+import 'package:loooans/features/search/screen/search_screen.dart';
 import 'package:loooans/features/set_password/cubit/set_password_cubit.dart';
 import 'package:loooans/features/set_password/screen/set_password_screen.dart';
 import 'package:loooans/features/users/screens/loan_client_detail.dart';
@@ -254,6 +255,16 @@ RouterConfig<Object> buildAppRoutes() {
           GoRoute(
             path: Paths.chat,
             builder: (context, state) => const ConversationsScreen(),
+          ),
+          // Reading state from query params is what makes results
+          // deep-linkable. The mapping lives on the screen, not here: this
+          // file has no role gate, so `?scope=` must reach it as a raw string
+          // and be intersected with the role's permitted scopes by
+          // `SearchScopeResolver`.
+          GoRoute(
+            path: Paths.search,
+            builder: (context, state) =>
+                SearchScreen.fromQueryParameters(state.uri.queryParameters),
           ),
         ],
       ),

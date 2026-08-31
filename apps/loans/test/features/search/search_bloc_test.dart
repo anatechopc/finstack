@@ -217,6 +217,32 @@ void main() {
     },
   );
 
+  // Erase means erase. Leaving the last results on the state makes every
+  // surface re-implement the same "don't render these" guard — two places to
+  // get it wrong for one rule.
+  blocTest<SearchBloc, SearchState>(
+    'shortening a query below the minimum clears the results it found',
+    build: () {
+      when(() => index.query(any())).thenAnswer((_) async => _clients('hit'));
+
+      return buildBloc();
+    },
+    act: (bloc) async {
+      bloc.add(const QueryChangedEvent('dela', location: '/users'));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.results.items, isNotEmpty);
+
+      bloc.add(const QueryChangedEvent('d', location: '/users'));
+      await Future<void>.delayed(Duration.zero);
+    },
+    verify: (bloc) {
+      expect(bloc.state.status, SearchStatus.tooShort);
+      expect(bloc.state.results.items, isEmpty);
+      // The empty set still belongs to the scope that was searched.
+      expect(bloc.state.results.scope, bloc.state.scope);
+    },
+  );
+
   // Same guard, the erase direction: shortening the query below `minPrefix`
   // must also invalidate whatever is in flight, or the results for a query the
   // user has deleted land on top of the tooShort state.
