@@ -40,7 +40,11 @@ abstract final class SearchTokenizer {
 
   /// Last-4 tail token length. Deliberately NOT in the golden `limits` block:
   /// the value comes from the `paths.phone_tokens` prose and `phone.go:9`.
-  static const int _lastDigits = 4;
+  ///
+  /// Public because the query side needs it too: a 4-digit term is the one
+  /// case that must be sent raw as well as canonicalized, since
+  /// `canonicalPhone('0142')` is `'142'` and no token set contains that.
+  static const int lastDigits = 4;
 
   /// Go splits words on `!unicode.IsLetter(r) && !unicode.IsDigit(r)`
   /// (`tokenizer.go:114-116`), which is Unicode-aware — an ASCII-only class
@@ -147,9 +151,9 @@ abstract final class SearchTokenizer {
 
     final tokens = <String>{canonical};
     _addPrefixes(tokens, canonical);
-    if (canonical.length >= _lastDigits) {
+    if (canonical.length >= lastDigits) {
       // Safe to index by code unit: [_nonDigit] leaves only ASCII digits.
-      tokens.add(canonical.substring(canonical.length - _lastDigits));
+      tokens.add(canonical.substring(canonical.length - lastDigits));
     }
     return _sortedCapped(tokens);
   }
