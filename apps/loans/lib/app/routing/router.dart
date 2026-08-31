@@ -39,7 +39,10 @@ import 'package:loooans/services/settings_service.dart';
 import 'package:user_loan_view_repository/user_loan_view_repository.dart';
 import 'package:user_repository/user_repository.dart';
 
-RouterConfig<Object> buildAppRoutes() {
+/// Returns the concrete `GoRouter`, not `RouterConfig`: `app.dart` needs
+/// `go` to drive the `Ctrl K` shortcut, which is bound above the `Router`
+/// widget and so has no `GoRouter.of(context)` to reach for.
+GoRouter buildAppRoutes() {
   var servicesInitialized = false;
 
   return GoRouter(
@@ -366,6 +369,7 @@ RouterConfig<Object> buildAppRoutes() {
                 userId: extras['userId'] as String,
                 loanId: extras['loanId'] as String,
                 userLoanView: extras['userLoanView'] as UserLoanView?,
+                showSearchAction: true,
               );
             }
           }

@@ -7,6 +7,7 @@ import 'package:loooans/features/loans/bloc/loans_bloc.dart';
 import 'package:loooans/features/loans/bloc/payment_bloc.dart';
 import 'package:loooans/features/products/bloc/product_bloc.dart';
 import 'package:loooans/features/products/bloc/product_status.dart';
+import 'package:loooans/features/search/widget/search_app_bar_action.dart';
 import 'package:loooans/features/users/bloc/user_bloc.dart';
 import 'package:loooans/features/users/widget/client_detail/client_detail_action_buttons.dart';
 import 'package:loooans/features/users/widget/client_detail/client_detail_loan_body.dart';
@@ -22,12 +23,21 @@ class LoanClientDetail extends StatefulWidget {
     this.userLoanView,
     this.productId,
     this.loanId,
+    this.showSearchAction = false,
   });
 
   final UserLoanView? userLoanView;
   final String? productId;
   final String? loanId;
   final String userId;
+
+  /// Set only by the `/clients/:action` route. That route is outside the
+  /// `ShellRoute`, so it never gets `AppWidgets.defaultAppBar`'s `SearchField`
+  /// and needs its own affordance beside the `Ctrl K` shortcut. Off by default
+  /// because `dialog_widgets.dart:196` mounts this same widget — app bar and
+  /// all — inside a dialog that already has the shell's field behind it, and
+  /// navigating from there would leave the dialog stranded on top.
+  final bool showSearchAction;
 
   @override
   State<LoanClientDetail> createState() => _LoanClientDetailState();
@@ -237,6 +247,9 @@ class _LoanClientDetailState extends State<LoanClientDetail> {
                       ),
                     ),
                     centerTitle: false,
+                    actions: [
+                      if (widget.showSearchAction) const SearchAppBarAction(),
+                    ],
                   ),
                   body: Padding(
                     padding: const EdgeInsets.all(16),
