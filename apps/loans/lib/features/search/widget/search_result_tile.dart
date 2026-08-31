@@ -1,5 +1,9 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
+import 'package:loooans/app/routing/paths.dart';
+import 'package:loooans/features/products/bloc/product_bloc.dart';
 import 'package:loooans/features/search/search_index.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
@@ -21,6 +25,31 @@ class SearchResultTile extends StatelessWidget {
 
   final SearchResultItem item;
   final VoidCallback onTap;
+
+  /// Where a row goes when it is tapped — shared by the overlay and `/search`,
+  /// because "where does this result live" is a property of the row and not of
+  /// the surface that happens to be showing it.
+  ///
+  /// Navigates to the surface that renders the row *before* selecting into it:
+  /// `ProductState.selected` is only rendered by `loan_offers_widget.dart`, so
+  /// selecting first would select a product with nothing mounted to show it.
+  static void open(BuildContext context, SearchResultItem item) {
+    final router = GoRouter.maybeOf(context);
+
+    switch (item) {
+      case OfferResultItem(:final productView):
+        router?.go('${Paths.index}?sec=offers');
+        context.read<ProductBloc>().selectProduct(
+              productView.productId,
+              productView: productView,
+            );
+      case ClientResultItem():
+        // The clients list, not `LoanClientDetail`: that screen requires a
+        // productId and a loanId (`router.dart` `clientsAction`), and a `users`
+        // search result carries neither.
+        router?.go('${Paths.index}?sec=clients');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

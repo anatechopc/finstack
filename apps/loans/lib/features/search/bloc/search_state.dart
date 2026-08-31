@@ -26,6 +26,20 @@ final class SearchState extends Equatable {
   final SearchResults results;
   final OfferFilters filters;
 
+  /// The empty-state line. It lives here rather than in a surface because both
+  /// surfaces render it and a copy that drifts between them is a copy that is
+  /// wrong in one of them.
+  ///
+  /// Scope-aware for the reason [scope] is on the state at all: only `users`
+  /// documents carry phone tokens, and `scopesFor(customer)` is `{offers}`, so
+  /// a "search by mobile number" hint is unactionable for every borrower.
+  String get emptyCopy => switch (scope) {
+        SearchScope.clients => 'No results for "$term". Try a shorter term, '
+            'or search by mobile number.',
+        SearchScope.offers => 'No results for "$term". Try a shorter term, '
+            'or search by lender name or loan type.',
+      };
+
   SearchState copyWith({
     SearchStatus? status,
     SearchScope? scope,

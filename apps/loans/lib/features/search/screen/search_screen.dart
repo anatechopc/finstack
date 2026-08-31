@@ -2,9 +2,7 @@ import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gap/gap.dart';
-import 'package:go_router/go_router.dart';
 import 'package:loooans/app/routing/paths.dart';
-import 'package:loooans/features/products/bloc/product_bloc.dart';
 import 'package:loooans/features/search/bloc/search_bloc.dart';
 import 'package:loooans/features/search/search_index.dart';
 import 'package:loooans/features/search/search_scope.dart';
@@ -212,7 +210,7 @@ class _SearchScreenState extends State<SearchScreen> {
       case SearchStatus.error:
         return _message('Something went wrong. Try searching again.');
       case SearchStatus.empty:
-        return _message(_emptyCopy(state));
+        return _message(state.emptyCopy);
       case SearchStatus.results:
         return _results(state.results);
     }
@@ -238,30 +236,12 @@ class _SearchScreenState extends State<SearchScreen> {
 
           final item = results.items[index];
 
-          return SearchResultTile(item: item, onTap: () => _open(item));
+          return SearchResultTile(
+            item: item,
+            onTap: () => SearchResultTile.open(context, item),
+          );
         },
       );
-
-  /// Navigates to the surface that renders the row *before* selecting into it:
-  /// `ProductState.selected` is only rendered by `loan_offers_widget.dart`, so
-  /// selecting first would select a product with nothing mounted to show it.
-  void _open(SearchResultItem item) {
-    final router = GoRouter.maybeOf(context);
-
-    switch (item) {
-      case OfferResultItem(:final productView):
-        router?.go('${Paths.index}?sec=offers');
-        context.read<ProductBloc>().selectProduct(
-              productView.productId,
-              productView: productView,
-            );
-      case ClientResultItem():
-        // The clients list, not `LoanClientDetail`: that screen requires a
-        // productId and a loanId (`router.dart` `clientsAction`), and a `users`
-        // search result carries neither.
-        router?.go('${Paths.index}?sec=clients');
-    }
-  }
 
   static Widget _message(String text) => Center(
         child: Padding(
@@ -273,15 +253,5 @@ class _SearchScreenState extends State<SearchScreen> {
   static String _scopeLabel(SearchScope scope) => switch (scope) {
         SearchScope.clients => 'Clients',
         SearchScope.offers => 'Offers',
-      };
-
-  /// Scope-aware: only `users` documents carry phone tokens, and a customer can
-  /// never reach the clients scope — a "search by mobile number" hint is
-  /// unactionable for the entire borrower population.
-  static String _emptyCopy(SearchState state) => switch (state.scope) {
-        SearchScope.clients => 'No results for "${state.term}". Try a shorter '
-            'term, or search by mobile number.',
-        SearchScope.offers => 'No results for "${state.term}". Try a shorter '
-            'term, or search by lender name or loan type.',
       };
 }
