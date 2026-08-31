@@ -109,9 +109,12 @@ void main() {
         await tester.sendKeyUpEvent(modifier);
         await tester.pumpAndSettle();
 
+        // Exception first: with the guard gone the framework catches the
+        // `Please login` throw inside the key message handler and parks it
+        // here, so this is the assertion that names the crash.
+        expect(tester.takeException(), isNull);
         expect(opened, isFalse, reason: '$modifier fired the shortcut');
         expect(role, isNull);
-        expect(tester.takeException(), isNull);
       }
     });
 
