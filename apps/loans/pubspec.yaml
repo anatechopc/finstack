@@ -83,6 +83,12 @@ dependencies:
   storage_repository:
     path: "../../packages/core/storage_repository"
   two_dimensional_scrollables: ^0.3.1
+  # Unicode NFD/NFC. The Go search indexer folds diacritics with
+  # NFD -> strip every Mn -> NFC (functions/loans/utils/search/tokenizer.go),
+  # and Dart's core has no normalization, so the query-side tokenizer cannot
+  # mirror it without this. Do NOT swap in an ASCII-folding package: those map
+  # o-slash to "o" and eszett to "ss", which Go does not.
+  unorm_dart: ^0.3.2
   url_launcher: ^6.2.6
   user_loan_view_repository:
     path: "../../packages/loans/user_loan_view_repository"
