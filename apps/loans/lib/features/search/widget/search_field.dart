@@ -48,6 +48,13 @@ class _SearchFieldState extends State<SearchField> {
 
   static const double _fieldWidth = 280;
 
+  /// Matches the circular icon buttons beside it. The app bar's toolbar is
+  /// 120px (`layout_widgets.dart:43`) and without an explicit height the field
+  /// renders at the full 120, towering over those buttons — measured, not
+  /// eyeballed, and pinned by a test. Wrapping in `Center` does NOT fix it;
+  /// only constraining the height does.
+  static const double _fieldHeight = 48;
+
   /// Wider than the field: an offer row carries a company, a rate, an amount
   /// and a term, and 280px wraps all of it.
   static const double _overlayWidth = 360;
@@ -163,6 +170,7 @@ class _SearchFieldState extends State<SearchField> {
           bindings: {const SingleActivator(LogicalKeyboardKey.escape): _hide},
           child: SizedBox(
             width: _fieldWidth,
+            height: _fieldHeight,
             child: BlocBuilder<SearchBloc, SearchState>(
               buildWhen: (previous, current) => previous.scope != current.scope,
               builder: (context, state) => TextField(

@@ -347,5 +347,18 @@ void main() {
     expect(find.byType(SearchField), findsOneWidget);
     // Live, not merely mounted: the hint comes from the bloc it found.
     expect(find.text('Search clients…'), findsOneWidget);
+
+    // The toolbar is 120px (`layout_widgets.dart:43`) and an unconstrained
+    // field renders at the full 120, dwarfing the icon buttons beside it.
+    // Measured, not eyeballed: every other assertion here passed while the
+    // field was two and a half times too tall. Wrapping in `Center` does not
+    // fix it — only the explicit height does.
+    final fieldHeight = tester.getSize(find.byType(TextField)).height;
+    expect(
+      fieldHeight,
+      lessThan(64),
+      reason:
+          '$fieldHeight tall in a 120px toolbar; the height is unconstrained',
+    );
   });
 }
