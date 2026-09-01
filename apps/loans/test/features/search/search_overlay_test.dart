@@ -192,6 +192,46 @@ void main() {
 
       expect(router.location, '/search?q=salary&scope=offers');
     });
+
+    testWidgets('tapping a client opens that borrower, not the clients list',
+        (tester) async {
+      seed(
+        SearchState(
+          status: SearchStatus.results,
+          term: 'juan',
+          results: SearchResults(
+            items: [
+              ClientResultItem(user: _user(7), matchedField: 'name'),
+            ],
+            scope: SearchScope.clients,
+          ),
+        ),
+      );
+
+      final router = GoRouter(
+        initialLocation: Paths.index,
+        routes: [
+          GoRoute(path: Paths.index, builder: (_, __) => subject()),
+          GoRoute(
+            path: Paths.borrowersAction,
+            builder: (_, __) => const Scaffold(body: Text('borrower page')),
+          ),
+          GoRoute(
+            path: Paths.clientsAction,
+            builder: (_, __) => const Scaffold(body: Text('clients list')),
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
+
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.tap(find.text('Dela Cruz, Juan7'));
+      await tester.pumpAndSettle();
+
+      // The reported bug: this landed on the clients list, so the user had to
+      // find again by hand the client they had just searched for.
+      expect(router.location, '/borrowers/user-7');
+    });
   });
 
   group('states', () {

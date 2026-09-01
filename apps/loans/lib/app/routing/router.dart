@@ -30,6 +30,7 @@ import 'package:loooans/features/reports/screen/dashboard_screen.dart';
 import 'package:loooans/features/search/screen/search_screen.dart';
 import 'package:loooans/features/set_password/cubit/set_password_cubit.dart';
 import 'package:loooans/features/set_password/screen/set_password_screen.dart';
+import 'package:loooans/features/users/screens/borrower_detail_screen.dart';
 import 'package:loooans/features/users/screens/loan_client_detail.dart';
 import 'package:loooans/features/users/screens/update_profile_screen.dart';
 import 'package:loooans/features/users/screens/users_screen.dart';
@@ -350,6 +351,24 @@ GoRouter buildAppRoutes() {
                 ),
               );
             }
+          }
+
+          return const PageNotFound();
+        },
+      ),
+      GoRoute(
+        path: Paths.borrowersAction,
+        builder: (context, state) {
+          final action = state.pathParameters['action'];
+
+          if (action != null && Paths.isPathId(action)) {
+            // The path id IS the userId, and that is all this screen needs:
+            // `BorrowerDetailScreen.initState` selects the user and loads their
+            // loans and principal borrowers from it alone. Read it from the
+            // path rather than `extra` so the screen is deep-linkable and a
+            // missing `extra` cannot throw, which is what `clientsAction`
+            // below does with `state.extra!`.
+            return BorrowerDetailScreen(userId: action);
           }
 
           return const PageNotFound();
