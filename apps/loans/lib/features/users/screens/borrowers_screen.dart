@@ -21,9 +21,17 @@ class BorrowerScreen extends StatefulWidget {
   const BorrowerScreen({
     super.key,
     this.scrollController,
+    this.initialBorrowerId,
   });
 
   final ScrollController? scrollController;
+
+  /// From `/?sec=borrowers&id=<userId>`. Opens that borrower's dialog on
+  /// first frame, which is what makes the dialog deep-linkable and what
+  /// search navigates to. Wide screens only: on compact/medium, `MainScreen`
+  /// has already redirected the same URL to the full-screen route before
+  /// this widget mounts, and a dialog there would race that navigation.
+  final String? initialBorrowerId;
 
   @override
   State<BorrowerScreen> createState() => _BorrowerScreenState();
@@ -37,6 +45,19 @@ class _BorrowerScreenState extends State<BorrowerScreen> {
           companyId: AuthenticationService.instance.company.id,
           customerOnly: true,
         );
+
+    final id = widget.initialBorrowerId;
+    if (id != null) {
+      // `showDialog` cannot run during build; the established pattern here is
+      // a post-frame callback (`payment_otp_dialog.dart:46`).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (getScreenSize(context: context).index <= ScreenSize.medium.index) {
+          return;
+        }
+        showBorrowerDetailsDialog(context, id);
+      });
+    }
   }
 
   @override

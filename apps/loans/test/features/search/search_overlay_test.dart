@@ -216,10 +216,6 @@ void main() {
             path: Paths.borrowersAction,
             builder: (_, __) => const Scaffold(body: Text('borrower page')),
           ),
-          GoRoute(
-            path: Paths.clientsAction,
-            builder: (_, __) => const Scaffold(body: Text('clients list')),
-          ),
         ],
       );
       addTearDown(router.dispose);
@@ -228,9 +224,11 @@ void main() {
       await tester.tap(find.text('Dela Cruz, Juan7'));
       await tester.pumpAndSettle();
 
-      // The reported bug: this landed on the clients list, so the user had to
-      // find again by hand the client they had just searched for.
-      expect(router.location, '/borrowers/user-7');
+      // First reported bug: this landed on the clients list. Second: pushing
+      // `/borrowers/user-7` directly rendered the detail full-bleed on desktop.
+      // The section URL is what the Borrowers section itself uses, so the
+      // result opens exactly as a row there does — and is deep-linkable.
+      expect(router.location, '/?sec=borrowers&id=user-7');
     });
   });
 

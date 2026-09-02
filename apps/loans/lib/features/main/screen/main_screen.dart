@@ -78,6 +78,9 @@ class _MainScreenState extends State<MainScreen> {
         } else if (widget.section == 'loans') {
           GoRouter.of(context)
               .goSafe(Paths.loansAction.replaceAll(':action', widget.id!));
+        } else if (widget.section == 'borrowers') {
+          GoRouter.of(context)
+              .goSafe(Paths.borrowersAction.replaceAll(':action', widget.id!));
         }
       }
     }
@@ -355,6 +358,10 @@ class _MainScreenState extends State<MainScreen> {
                                           scrollController: isMobilePlatform
                                               ? scrollController
                                               : null,
+                                          initialBorrowerId:
+                                              widget.section == 'borrowers'
+                                                  ? widget.id
+                                                  : null,
                                         ),
                                 ),
                                 if ((widget.section == null ||

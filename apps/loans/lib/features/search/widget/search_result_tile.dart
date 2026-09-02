@@ -44,18 +44,13 @@ class SearchResultTile extends StatelessWidget {
               productView: productView,
             );
       case ClientResultItem(:final user):
-        // The borrower's own screen — profile plus their loan history — not the
-        // clients list. `LoanClientDetail` is the wrong target and is why this
-        // used to land on the list: it requires a productId and a loanId that a
-        // `users` result does not carry. `BorrowerDetailScreen` needs only the
-        // userId and selects the user itself.
-        // `push`, not `go`: the screen's own back control calls `pop()`
-        // (`borrower_detail_screen.dart:71`), and `go` replaces the stack so
-        // there would be nothing to pop back to on mobile, where that arrow is
-        // the only way out.
-        router?.push(
-          Paths.borrowersAction.replaceAll(':action', user.id),
-        );
+        // The same URL the Borrowers section uses, so the result opens the way
+        // that section opens a row: a dialog over the list on wide screens,
+        // the full-screen route on compact ones (`MainScreen` decides), and
+        // deep-linkable either way. Pushing `/borrowers/:id` directly rendered
+        // the detail full-bleed on desktop, which is not how that screen is
+        // presented anywhere else.
+        router?.go('${Paths.index}?sec=borrowers&id=${user.id}');
     }
   }
 
