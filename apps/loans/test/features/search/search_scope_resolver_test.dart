@@ -5,7 +5,8 @@ import 'package:loooans/features/search/search_scope_resolver.dart';
 import 'package:user_repository/user_repository.dart';
 
 /// Realistic locations, taken from the routes `router.dart` actually
-/// registers. `/offers/id` and `/` are the two offer-shaped ones.
+/// registers. `/offers/id` is the one offer-shaped route; `/` is not — there
+/// the role decides, so staff get clients and a customer gets offers.
 const _locations = <String>[
   Paths.index,
   Paths.dashboard,
@@ -62,6 +63,59 @@ void main() {
       );
       expect(parsed.scope, SearchScope.clients);
       expect(parsed.term, 'dela cruz');
+    });
+
+    // The home page used to force offers as "the marketplace", so a teller
+    // typing a client's name there searched products. The role decides now.
+    test('staff on the home page default to clients', () {
+      for (final role in [
+        UserRole.admin,
+        UserRole.teller,
+        UserRole.loanOfficer,
+      ]) {
+        final parsed = SearchScopeResolver.resolve(
+          role: role,
+          location: Paths.index,
+          rawQuery: 'dela cruz',
+        );
+        expect(parsed.scope, SearchScope.clients, reason: role.name);
+      }
+    });
+
+    // `products:` was the only offers keyword and the first admin to try it
+    // typed `offer:`, which fell through as literal text. Every obvious
+    // spelling of both scopes is accepted; a forbidden one is still text.
+    test('every alias of a prefix forces its scope', () {
+      for (final alias in ['offers', 'offer', 'products', 'product']) {
+        final parsed = SearchScopeResolver.resolve(
+          role: UserRole.admin,
+          location: Paths.index,
+          rawQuery: '$alias: salary',
+        );
+        expect(parsed.scope, SearchScope.offers, reason: alias);
+        expect(parsed.term, 'salary', reason: alias);
+      }
+      for (final alias in ['clients', 'client', 'borrowers', 'borrower']) {
+        final parsed = SearchScopeResolver.resolve(
+          role: UserRole.admin,
+          location: '/offers/id',
+          rawQuery: '$alias: dela cruz',
+        );
+        expect(parsed.scope, SearchScope.clients, reason: alias);
+        expect(parsed.term, 'dela cruz', reason: alias);
+      }
+    });
+
+    test('an alias of a forbidden scope is literal text for a customer', () {
+      for (final alias in ['client', 'borrowers', 'borrower']) {
+        final parsed = SearchScopeResolver.resolve(
+          role: UserRole.customer,
+          location: Paths.index,
+          rawQuery: '$alias: dela cruz',
+        );
+        expect(parsed.scope, SearchScope.offers, reason: alias);
+        expect(parsed.term, '$alias: dela cruz', reason: alias);
+      }
     });
 
     test('borrowers default to offers', () {

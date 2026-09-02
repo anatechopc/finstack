@@ -1,4 +1,3 @@
-import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/search/search_scope.dart';
 import 'package:user_repository/user_repository.dart';
 
@@ -46,16 +45,19 @@ abstract final class SearchScopeResolver {
     final permitted = scopesFor(role);
     final trimmed = rawQuery.trim();
 
+    final lowered = trimmed.toLowerCase();
     for (final scope in SearchScope.values) {
-      final marker = '${scope.prefix}:';
-      if (!trimmed.toLowerCase().startsWith(marker)) continue;
-      // A prefix naming a scope this role lacks must not escalate; fall
-      // through and treat the whole string as search text.
-      if (!permitted.contains(scope)) break;
-      return ParsedQuery(
-        scope: scope,
-        term: trimmed.substring(marker.length).trim(),
-      );
+      for (final alias in scope.aliases) {
+        final marker = '$alias:';
+        if (!lowered.startsWith(marker)) continue;
+        // A prefix naming a scope this role lacks must not escalate; the
+        // whole string stays search text.
+        if (!permitted.contains(scope)) break;
+        return ParsedQuery(
+          scope: scope,
+          term: trimmed.substring(marker.length).trim(),
+        );
+      }
     }
 
     // A pin is minted outside this resolver (a scope tab, or `?scope=` on
@@ -76,7 +78,12 @@ abstract final class SearchScopeResolver {
     String location,
     Set<SearchScope> permitted,
   ) {
-    if (location.startsWith('/offers') || location == Paths.index) {
+    // The offers pages search offers for everyone. Everywhere else — the
+    // home page included — the ROLE decides: a customer's only scope is
+    // offers, and staff default to clients, which is what they came for.
+    // `/` used to force offers as "the marketplace"; a teller typing a
+    // client's name on the home page then searched products.
+    if (location.startsWith('/offers')) {
       if (permitted.contains(SearchScope.offers)) return SearchScope.offers;
     }
     if (permitted.contains(SearchScope.clients)) return SearchScope.clients;

@@ -4,13 +4,19 @@
 /// not the collection name and not the deep-link spelling: `offers` reads
 /// `product_views`, and the `/search?scope=` param matches on [name].
 enum SearchScope {
-  clients('clients'),
-  offers('products');
+  clients('clients', ['clients', 'client', 'borrowers', 'borrower']),
+  offers('offers', ['offers', 'offer', 'products', 'product']);
 
-  const SearchScope(this.prefix);
+  const SearchScope(this.prefix, this.aliases);
 
-  /// The token a user types to force this scope, as in `products: salary`.
+  /// The keyword shown in hints, as in `offers: salary`.
   final String prefix;
+
+  /// Every keyword accepted before the colon. `products:` was the only one
+  /// at first, straight from the spec, and the first admin to try it typed
+  /// `offer:` — which fell through as literal text and searched clients for
+  /// "offer: …". The singular and the domain word are accepted for both.
+  final List<String> aliases;
 }
 
 /// A raw query resolved into a scope and the term to search for.

@@ -627,3 +627,26 @@ demands a productId and loanId a `users` result does not carry; `/offers/:action
 `/profile/:action` and `/chat/:roomId` have the shortcut but no visible
 affordance; and `reset: true` is verified by reading, not by a test — testing it
 needs the Firestore services injectable, a `packages/` change.
+
+### Follow-ups after local verification (same PR, 2026-09-02)
+
+The user ran the app locally before accepting each change (see the
+`verify-ui-locally-before-push` memory). Three things that only showed up live:
+
+- **Every way of opening a borrower goes through `BorrowerScreen.openBorrower`** —
+  table row, compact list item, search result. It navigates to
+  `/?sec=borrowers&id=<id>` in classic UI (the section hosts the dialog) and to
+  `/borrowers/:id` full-screen in non-classic, which has no borrower surface. The
+  search tile once carried its own copy of the URL and drifted the same day. Closing
+  the dialog strips `&id=`, otherwise re-tapping the same row is a no-op. The compact
+  list item's `onTap` had been entirely commented out.
+- **Scope default is by role, not route.** `/` used to force offers ("the
+  marketplace"), so a teller typing a client's name on the home page searched
+  products. Now: clients if the role has it, else offers; `/offers/*` still offers.
+  Customers cannot reach clients by any route, prefix, or pin — tested adversarially.
+- **Prefixes accept aliases.** The only offers keyword was `products:` (from the spec);
+  the first admin typed `offer:` and searched clients for "offer: …". Both scopes take
+  the plural, singular, and domain word. `SearchScope.prefix` stays the hint keyword.
+- Testing seams: `SettingsService.setClassicUIForTest`; `tester.view.physicalSize`
+  (not `setSurfaceSize`) is what `MediaQuery`/`getScreenSize` read; providers must sit
+  ABOVE `MaterialApp` for a `showDialog` route to see them.

@@ -35,7 +35,7 @@ final class SearchState extends Equatable {
   /// a "search by mobile number" hint is unactionable for every borrower.
   String get emptyCopy => switch (scope) {
         SearchScope.clients => 'No results for "$term". Try a shorter term, '
-            'or search by mobile number.',
+            'search by mobile number, or type offers: to search offers.',
         SearchScope.offers => 'No results for "$term". Try a shorter term, '
             'or search by lender name or loan type.',
       };
