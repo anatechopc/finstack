@@ -33,6 +33,27 @@ class BorrowerScreen extends StatefulWidget {
   /// this widget mounts, and a dialog there would race that navigation.
   final String? initialBorrowerId;
 
+  /// Every way of opening a borrower goes through the URL — a table row, a
+  /// compact list item, or a search result — so all three present identically
+  /// (`MainScreen` picks dialog or full-screen from the screen size) and every
+  /// one of them is a link. Calling `showDialog` here directly would open the
+  /// same dialog with the address bar still saying `/?sec=borrowers`.
+  static void openBorrower(BuildContext context, String userId) {
+    // Classic UI has a Borrowers section for the dialog to sit over; the
+    // non-classic UI has no borrower-profile surface at all (its clients
+    // panel opens the loan-scoped LoanClientDetail), so there the profile is
+    // its own screen. Sending non-classic to `/?sec=borrowers&id=` rendered
+    // the home page with an id in the URL and nothing opened.
+    // `maybeOf`: widget tests that render a tile or a row without a router
+    // are asserting other things (dismissal, layout) and must not throw here.
+    final router = GoRouter.maybeOf(context);
+    if (!SettingsService.instance.appUseClassicUI) {
+      router?.go(Paths.borrowersAction.replaceAll(':action', userId));
+      return;
+    }
+    router?.go('${Paths.index}?sec=borrowers&id=$userId');
+  }
+
   @override
   State<BorrowerScreen> createState() => _BorrowerScreenState();
 }
@@ -104,19 +125,8 @@ class _BorrowerScreenState extends State<BorrowerScreen> {
                   final item = data[index];
                   return InkWell(
                     borderRadius: BorderRadius.circular(16),
-                    onTap: () {
-                      // GoRouter.of(context).goSafe(
-                      //     Paths.clientsAction.replaceAll(
-                      //       ':action',
-                      //       userLoanView.userId,
-                      //     ),
-                      //     extra: {
-                      //       'useLoanView': userLoanView,
-                      //       'loanId': userLoanView.loanId,
-                      //       'productId': userLoanView.productId,
-                      //       'userId': userLoanView.userId,
-                      //     });
-                    },
+                    onTap: () =>
+                        BorrowerScreen.openBorrower(context, item.user.id),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -364,24 +374,8 @@ class _BorrowerScreenState extends State<BorrowerScreen> {
         TapGestureRecognizer:
             GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
           TapGestureRecognizer.new,
-          (TapGestureRecognizer t) => t.onTap = () {
-            // GoRouter.of(context).goSafe('${Paths.index}?sec=loans&id=123abc');
-            if (getScreenSize(context: context).index <=
-                ScreenSize.medium.index) {
-              final item = items[index - 1];
-              GoRouter.of(context).goSafe(
-                Paths.borrowersAction.replaceAll(
-                  ':action',
-                  item.user.id,
-                ),
-                extra: {
-                  'userId': item.user.id,
-                },
-              );
-            } else {
-              showBorrowerDetailsDialog(context, items[index - 1].user.id);
-            }
-          },
+          (TapGestureRecognizer t) => t.onTap = () =>
+              BorrowerScreen.openBorrower(context, items[index - 1].user.id),
         ),
       },
       // onEnter: (_) {
@@ -396,7 +390,14 @@ class _BorrowerScreenState extends State<BorrowerScreen> {
     BuildContext context,
     String userId,
   ) {
-    showDialog(
+    // Once closed, drop the id: the URL says a dialog is open, so it should
+    // stop saying so. It also makes tapping the same borrower again a URL
+    // change, which is what reopens the dialog. `mounted` is the guard —
+    // any navigation remounts MainScreen (`UniqueKey`) and disposes this.
+    // The router is captured before the gap: after it, only `this.context`
+    // is known-valid, and only once `mounted` says so.
+    final router = GoRouter.of(context);
+    showDialog<void>(
       context: context,
       builder: (context) {
         return AlertDialog(
@@ -412,6 +413,9 @@ class _BorrowerScreenState extends State<BorrowerScreen> {
           backgroundColor: AppColors.green1,
         );
       },
-    );
+    ).then((_) {
+      if (!mounted) return;
+      router.go('${Paths.index}?sec=borrowers');
+    });
   }
 }

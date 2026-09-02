@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/products/bloc/product_bloc.dart';
 import 'package:loooans/features/search/search_index.dart';
+import 'package:loooans/features/users/screens/borrowers_screen.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:product_view_repository/product_view_repository.dart';
@@ -44,13 +45,12 @@ class SearchResultTile extends StatelessWidget {
               productView: productView,
             );
       case ClientResultItem(:final user):
-        // The same URL the Borrowers section uses, so the result opens the way
-        // that section opens a row: a dialog over the list on wide screens,
-        // the full-screen route on compact ones (`MainScreen` decides), and
-        // deep-linkable either way. Pushing `/borrowers/:id` directly rendered
-        // the detail full-bleed on desktop, which is not how that screen is
-        // presented anywhere else.
-        router?.go('${Paths.index}?sec=borrowers&id=${user.id}');
+        // The same entry point a Borrowers row uses, so a result opens exactly
+        // as a row does and the UI mode is decided in ONE place. A URL written
+        // here as well drifted immediately: the non-classic branch was added
+        // to openBorrower and this path kept sending non-classic users to the
+        // home page with an id in the address bar.
+        BorrowerScreen.openBorrower(context, user.id);
     }
   }
 

@@ -9,6 +9,7 @@ import 'package:loooans/features/search/search_index.dart';
 import 'package:loooans/features/search/search_scope.dart';
 import 'package:loooans/features/search/widget/search_overlay.dart';
 import 'package:loooans/features/search/widget/search_result_tile.dart';
+import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:product_view_repository/product_view_repository.dart';
@@ -57,6 +58,7 @@ void main() {
   );
 
   setUp(() {
+    SettingsService.initialize();
     bloc = _MockSearchBloc();
     when(() => bloc.state).thenReturn(const SearchState());
   });
@@ -195,6 +197,9 @@ void main() {
 
     testWidgets('tapping a client opens that borrower, not the clients list',
         (tester) async {
+      // Classic UI: the Borrowers section hosts the dialog, so the URL is the
+      // section deep link. Non-classic is the next test.
+      SettingsService.instance.setClassicUIForTest(enabled: true);
       seed(
         SearchState(
           status: SearchStatus.results,
@@ -229,6 +234,45 @@ void main() {
       // The section URL is what the Borrowers section itself uses, so the
       // result opens exactly as a row there does — and is deep-linkable.
       expect(router.location, '/?sec=borrowers&id=user-7');
+    });
+
+    testWidgets('in the non-classic UI a client opens the full-screen route',
+        (tester) async {
+      // Caught live, not by a test: the tile carried its own copy of the
+      // classic URL, so non-classic users landed on the home page with an id
+      // in the address bar and nothing open.
+      SettingsService.instance.setClassicUIForTest(enabled: false);
+      seed(
+        SearchState(
+          status: SearchStatus.results,
+          term: 'juan',
+          results: SearchResults(
+            items: [
+              ClientResultItem(user: _user(7), matchedField: 'name'),
+            ],
+            scope: SearchScope.clients,
+          ),
+        ),
+      );
+
+      final router = GoRouter(
+        initialLocation: Paths.index,
+        routes: [
+          GoRoute(path: Paths.index, builder: (_, __) => subject()),
+          GoRoute(
+            path: Paths.borrowersAction,
+            builder: (_, __) => const Scaffold(body: Text('borrower page')),
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
+
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.tap(find.text('Dela Cruz, Juan7'));
+      await tester.pumpAndSettle();
+
+      expect(router.location, '/borrowers/user-7');
+      expect(find.text('borrower page'), findsOneWidget);
     });
   });
 

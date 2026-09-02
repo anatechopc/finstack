@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:loooans_helpers/logging_helpers.dart';
 import 'package:settings_repository/settings_repository.dart';
@@ -74,6 +75,17 @@ class SettingsService {
   /// There is now a classic version of the UI.
   /// The classic version is characterized by
   bool get appUseClassicUI => _currentSettings?.useClassicUI ?? false;
+
+  /// Tests only. Production reaches this through the settings stream; a test
+  /// has no repository and would otherwise be pinned to the non-classic
+  /// default, silently asserting only one of the two UI modes.
+  @visibleForTesting
+  void setClassicUIForTest({required bool enabled}) {
+    _currentSettings = Settings.create(
+      userId: _userId ?? 'test',
+      useClassicUI: enabled,
+    );
+  }
 
   bool get forcePaymentConfirmation =>
       _currentSettings?.forcePaymentConfirmation ?? false;
