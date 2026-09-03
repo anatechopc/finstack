@@ -7,7 +7,7 @@ import 'package:user_repository/user_repository.dart';
 /// route supplies the default.
 ///
 /// Pure by design — it reads no `AuthenticationService`. `company` throws for
-/// `customer` and `appAdmin` (`authentication_service.dart:42-53`), so an
+/// `customer` and `appAdmin` (`AuthenticationService.company`), so an
 /// authorization decision must never depend on it.
 abstract final class SearchScopeResolver {
   /// Scopes available to [role]. A customer has no clients scope - this is the
@@ -17,7 +17,7 @@ abstract final class SearchScopeResolver {
   /// exhaustive so the compiler forces the choice. Default to the customer
   /// branch — clients scope is client-PII access and is granted deliberately,
   /// with a test naming the role. Before granting it, confirm the role already
-  /// reaches `LoanClientsScreen` (`main_screen.dart:336-338` gates on
+  /// reaches `LoanClientsScreen` (`MainScreen` renders it only for
   /// `!isCustomer()`); search must be neither broader nor narrower than the
   /// screen it searches.
   static Set<SearchScope> scopesFor(UserRole role) {
@@ -29,7 +29,7 @@ abstract final class SearchScopeResolver {
       case UserRole.admin:
       case UserRole.appAdmin:
       case UserRole.reviewModerator:
-        // reviewModerator matches `main_screen.dart:336-338`, which renders
+        // reviewModerator matches `MainScreen`, which renders
         // LoanClientsScreen to every non-customer. Search must not be
         // stricter than the screen it searches.
         return {SearchScope.clients, SearchScope.offers};
@@ -83,11 +83,23 @@ abstract final class SearchScopeResolver {
     // offers, and staff default to clients, which is what they came for.
     // `/` used to force offers as "the marketplace"; a teller typing a
     // client's name on the home page then searched products.
-    if (location.startsWith('/offers')) {
+    if (_isOffersLocation(location)) {
       if (permitted.contains(SearchScope.offers)) return SearchScope.offers;
     }
     if (permitted.contains(SearchScope.clients)) return SearchScope.clients;
 
     return SearchScope.offers;
+  }
+
+  /// `/offers/…` is the offer detail route; `/?sec=offers` is the marketplace
+  /// itself, a section of the shell rather than a route (`MainScreen` renders
+  /// it off the `sec` query parameter). A path check alone matched only the
+  /// former, so staff browsing the marketplace searched clients.
+  static bool _isOffersLocation(String location) {
+    final uri = Uri.tryParse(location);
+    if (uri == null) return false;
+
+    return uri.path.startsWith('/offers') ||
+        uri.queryParameters['sec'] == SearchScope.offers.name;
   }
 }

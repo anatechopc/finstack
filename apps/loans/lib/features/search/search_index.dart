@@ -1,3 +1,4 @@
+import 'package:equatable/equatable.dart';
 import 'package:loooans/features/search/search_scope.dart';
 import 'package:loooans/features/search/search_tokenizer.dart';
 import 'package:product_view_repository/product_view_repository.dart';
@@ -10,19 +11,22 @@ import 'package:user_repository/user_repository.dart';
 /// facet needs its own composite index in every environment.
 ///
 /// Interest rate is deliberately absent: it is a range filter, and
-/// `product_view_firestore_service.dart:119-121` hardcodes
-/// `orderBy('updated_at')` before its statement loop, so Firestore rejects the
-/// query outright. Enabling it needs a `searchOffers` method in
-/// `packages/loans/product_view_repository` — deferred to finstack#103.
-class OfferFilters {
+/// `ProductViewFirestoreService.load` hardcodes `orderBy('updated_at')` before
+/// its statement loop, so Firestore rejects the query outright. Enabling it
+/// needs a `searchOffers` method in `packages/loans/product_view_repository`
+/// — deferred to finstack#103.
+///
+/// Value-equal so `SearchBloc` can tell "the same facets again" from a real
+/// change: every surface constructs a fresh instance per dispatch.
+class OfferFilters extends Equatable {
   const OfferFilters({this.companyId, this.term});
 
   /// The *provider* company whose offers to show — `product_views.company_id`,
   /// which the projection writes from the product's `provider_id`
-  /// (`product_view_projection.go:205`). A discovery facet supplied by the
-  /// user via chip or `?company=` query param. Never an authorization
-  /// boundary; the viewer's company is resolved inside `FirestoreSearchIndex`
-  /// and is a different value entirely.
+  /// (`projectedProductFields`). A discovery facet supplied by the user via
+  /// chip or `?company=` query param. Never an authorization boundary; the
+  /// viewer's company is resolved inside `FirestoreSearchIndex` and is a
+  /// different value entirely.
   final String? companyId;
 
   /// `product_views.term` — a String ('30d', '6m'), not a number. The numeric
@@ -30,6 +34,9 @@ class OfferFilters {
   final String? term;
 
   bool get isEmpty => companyId == null && term == null;
+
+  @override
+  List<Object?> get props => [companyId, term];
 }
 
 /// What to search for. Deliberately carries **no** company and **no** role:
@@ -40,8 +47,13 @@ class SearchRequest {
     required this.scope,
     required this.term,
     this.filters = const OfferFilters(),
-    this.candidateLimit = 50,
+    this.candidateLimit = defaultCandidateLimit,
   });
+
+  /// Enough that a common token's page still holds the refined hit — see
+  /// [candidateLimit]. Public so the bloc's event can default to the same
+  /// number without restating it.
+  static const int defaultCandidateLimit = 50;
 
   final SearchScope scope;
   final String term;
@@ -59,23 +71,37 @@ class SearchRequest {
   /// can be missed. [SearchResults.hasMore] is what tells the user so.
   final int candidateLimit;
 
+  /// [term] after [SearchTokenizer.normalize], computed once per instance.
+  /// The NFD/NFC round trip is the costliest thing on the query path, and
+  /// [queryTokens], [isSearchable] and the refinement all need the result.
+  /// An `Expando` rather than a `late` field so the constructor stays const.
+  String get normalizedTerm =>
+      _normalized[this] ??= SearchTokenizer.normalize(term);
+
+  static final Expando<String> _normalized = Expando<String>();
+
   /// The tokens sent to Firestore, matched with `array-contains-any`.
   ///
-  /// A name term is truncated to [SearchTokenizer.maxPrefix] and refined
-  /// client-side. A value containing '@' is sent WHOLE, capped only at
+  /// A name term sends the JOINED form of its first word — `Tokenize`
+  /// prefix-expands `o'brien` as `obrien` and `dela-cruz` as `delacruz`, so
+  /// the punctuation the user typed must be stripped the same way — cut to
+  /// [SearchTokenizer.maxPrefix] runes and refined client-side.
+  ///
+  /// A value containing '@' is sent WHOLE, capped only at
   /// [SearchTokenizer.maxFullValue]: '@' and '.' are consumed by the word
-  /// split before prefixes are taken (`tokenizer.go:114-124`), so the
-  /// full-value token is the only one a paste can match.
+  /// split before prefixes are taken, so the full-value token is the only one
+  /// a complete paste can match. A *partial* paste ("juan.cruz@gm") has no
+  /// such token, so the joined prefix of the local part goes with it.
   ///
   /// A phone-shaped term emits up to two candidates. `PhoneTokens` indexes the
-  /// last four digits of the *canonical* form as a discrete token
-  /// (`phone.go:50-52`) because staff often have only the tail — but
-  /// `canonicalPhone('0142')` strips the leading zero to `'142'`, which is in
-  /// no token set. Sending a 4-digit run raw *as well* covers the tail without
-  /// breaking the prefix path, and `array-contains-any` needs no new index:
-  /// every `search_tokens` entry is `arrayConfig: CONTAINS`.
+  /// last four digits of the *canonical* form as a discrete token because
+  /// staff often have only the tail — but `canonicalPhone('0142')` strips the
+  /// leading zero to `'142'`, which is in no token set. Sending a 4-digit run
+  /// raw *as well* covers the tail without breaking the prefix path, and
+  /// `array-contains-any` needs no new index: every `search_tokens` entry is
+  /// `arrayConfig: CONTAINS`.
   List<String> get queryTokens {
-    final normalized = SearchTokenizer.normalize(term);
+    final normalized = normalizedTerm;
 
     if (phoneShaped.hasMatch(normalized)) {
       final digits = digitsOf(normalized);
@@ -93,15 +119,18 @@ class SearchRequest {
     if (first.isEmpty) return const <String>[];
 
     if (first.contains('@')) {
-      return <String>[SearchTokenizer.capFullValue(first)];
+      final local = SearchTokenizer.wordForms(first.split('@').first);
+
+      return <String>{
+        SearchTokenizer.capFullValue(first),
+        if (local.isNotEmpty) SearchTokenizer.prefixOf(local.first),
+      }.toList();
     }
 
-    return <String>[
-      if (first.length > SearchTokenizer.maxPrefix)
-        first.substring(0, SearchTokenizer.maxPrefix)
-      else
-        first,
-    ];
+    final forms = SearchTokenizer.wordForms(first);
+    if (forms.isEmpty) return const <String>[];
+
+    return <String>[SearchTokenizer.prefixOf(forms.first)];
   }
 
   /// Measured on the value actually sent, not only on the raw term.
@@ -115,14 +144,14 @@ class SearchRequest {
   /// expands prefixes from `minPrefix` and adds a full canonical that is never
   /// one digit, so a 1-character phone token ('09' → '9', '+639' → '9') is in
   /// no token set and cannot be. A *name* token may legitimately be shorter:
-  /// `_addPrefixes` indexes a middle initial verbatim (`tokenizer.go:193-196`),
-  /// so 'a bcd' must stay searchable.
+  /// `addPrefixes` indexes a middle initial verbatim, so 'a bcd' must stay
+  /// searchable.
   bool get isSearchable {
     final tokens = queryTokens;
     if (tokens.isEmpty) return false;
 
-    final normalized = SearchTokenizer.normalize(term);
-    if (normalized.length < SearchTokenizer.minPrefix) return false;
+    final normalized = normalizedTerm;
+    if (normalized.runes.length < SearchTokenizer.minPrefix) return false;
 
     if (!phoneShaped.hasMatch(normalized)) return true;
 
@@ -146,7 +175,7 @@ class SearchRequest {
 /// collections and share no id: a client row is a `users` document, an offer
 /// row is a `product_views` document whose *document id* is meaningless —
 /// legacy views carry auto-generated ids and every consumer selects by
-/// `product_id` (`product_view_projection.go:48-59`).
+/// `product_id` (`HandleProductWrittenCore`).
 sealed class SearchResultItem {
   const SearchResultItem({required this.matchedField});
 
@@ -174,19 +203,17 @@ class OfferResultItem extends SearchResultItem {
 class SearchResults {
   const SearchResults({
     required this.items,
-    required this.scope,
     this.hasMore = false,
   });
 
   final List<SearchResultItem> items;
-  final SearchScope scope;
 
   /// Whether the *raw* page came back full — set before refinement, never from
   /// `items.length`. Refinement drops rows, so `items.length == limit` reads
   /// false in exactly the case it has to catch.
   final bool hasMore;
 
-  static const empty = SearchResults(items: [], scope: SearchScope.clients);
+  static const empty = SearchResults(items: []);
 }
 
 /// The swap point. `FirestoreSearchIndex` implements this now; a

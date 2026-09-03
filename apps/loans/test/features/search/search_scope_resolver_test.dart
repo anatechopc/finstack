@@ -5,8 +5,9 @@ import 'package:loooans/features/search/search_scope_resolver.dart';
 import 'package:user_repository/user_repository.dart';
 
 /// Realistic locations, taken from the routes `router.dart` actually
-/// registers. `/offers/id` is the one offer-shaped route; `/` is not — there
-/// the role decides, so staff get clients and a customer gets offers.
+/// registers. `/offers/id` and the in-shell marketplace `/?sec=offers` are
+/// the offer-shaped locations; a bare `/` is not — there the role decides, so
+/// staff get clients and a customer gets offers.
 const _locations = <String>[
   Paths.index,
   Paths.dashboard,
@@ -14,9 +15,22 @@ const _locations = <String>[
   Paths.paymentCenter,
   Paths.chat,
   '/offers/id',
+  '/?sec=offers',
+  '/?sec=offers&id=123abc',
+  '/?sec=clients',
   '/loans/id',
   '/clients/id',
   '/search',
+];
+
+/// Every spelling of "the user is looking at offers". The marketplace is a
+/// section of the shell, not a route: `MainScreen` renders it for
+/// `?sec=offers`, so a path check alone left staff there searching clients.
+const _offerLocations = <String>[
+  '/offers/id',
+  '/?sec=offers',
+  '/?sec=offers&id=123abc',
+  '/?id=123abc&sec=offers',
 ];
 
 void main() {
@@ -96,13 +110,15 @@ void main() {
         expect(parsed.term, 'salary', reason: alias);
       }
       for (final alias in ['clients', 'client', 'borrowers', 'borrower']) {
-        final parsed = SearchScopeResolver.resolve(
-          role: UserRole.admin,
-          location: '/offers/id',
-          rawQuery: '$alias: dela cruz',
-        );
-        expect(parsed.scope, SearchScope.clients, reason: alias);
-        expect(parsed.term, 'dela cruz', reason: alias);
+        for (final location in _offerLocations) {
+          final parsed = SearchScopeResolver.resolve(
+            role: UserRole.admin,
+            location: location,
+            rawQuery: '$alias: dela cruz',
+          );
+          expect(parsed.scope, SearchScope.clients, reason: '$alias $location');
+          expect(parsed.term, 'dela cruz', reason: alias);
+        }
       }
     });
 
@@ -127,7 +143,7 @@ void main() {
       expect(parsed.scope, SearchScope.offers);
     });
 
-    // appAdmin has no company (authentication_service.dart:42-53 throws for
+    // appAdmin has no company (`AuthenticationService.company` throws for
     // it), so this must resolve without ever reading AuthenticationService.
     test('appAdmin gets clients on a staff route without touching auth', () {
       final parsed = SearchScopeResolver.resolve(
@@ -138,13 +154,35 @@ void main() {
       expect(parsed.scope, SearchScope.clients);
     });
 
-    test('the offers route defaults to offers even for staff', () {
-      final parsed = SearchScopeResolver.resolve(
-        role: UserRole.teller,
-        location: '/offers/id',
-        rawQuery: 'salary',
-      );
-      expect(parsed.scope, SearchScope.offers);
+    test('every offers location defaults to offers even for staff', () {
+      for (final location in _offerLocations) {
+        final parsed = SearchScopeResolver.resolve(
+          role: UserRole.teller,
+          location: location,
+          rawQuery: 'salary',
+        );
+        expect(parsed.scope, SearchScope.offers, reason: location);
+      }
+    });
+
+    // Only the offers section is offers; every other section of the shell,
+    // and a `sec` that merely mentions offers elsewhere in the URL, is where
+    // the role decides.
+    test('other shell sections and look-alikes still default to clients', () {
+      for (final location in <String>[
+        '/?sec=clients',
+        '/?sec=loans&id=offers',
+        '/?section=offers',
+        '/search?q=offers',
+        '/loans/offers',
+      ]) {
+        final parsed = SearchScopeResolver.resolve(
+          role: UserRole.teller,
+          location: location,
+          rawQuery: 'dela',
+        );
+        expect(parsed.scope, SearchScope.clients, reason: location);
+      }
     });
 
     test('an explicit prefix overrides the route default', () {
@@ -157,14 +195,16 @@ void main() {
       expect(parsed.term, 'salary');
     });
 
-    test('a clients prefix overrides an offers route for staff', () {
-      final parsed = SearchScopeResolver.resolve(
-        role: UserRole.loanOfficer,
-        location: '/offers/id',
-        rawQuery: 'clients: dela cruz',
-      );
-      expect(parsed.scope, SearchScope.clients);
-      expect(parsed.term, 'dela cruz');
+    test('a clients prefix overrides an offers location for staff', () {
+      for (final location in _offerLocations) {
+        final parsed = SearchScopeResolver.resolve(
+          role: UserRole.loanOfficer,
+          location: location,
+          rawQuery: 'clients: dela cruz',
+        );
+        expect(parsed.scope, SearchScope.clients, reason: location);
+        expect(parsed.term, 'dela cruz');
+      }
     });
 
     // A prefix naming a scope the role lacks must not escalate. It is text.

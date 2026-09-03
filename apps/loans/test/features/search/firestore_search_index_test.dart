@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:loooans/features/search/firestore_search_index.dart';
 import 'package:loooans/features/search/search_index.dart';
 import 'package:loooans/features/search/search_scope.dart';
+import 'package:loooans/features/search/search_tokenizer.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:mocktail/mocktail.dart';
@@ -120,7 +121,7 @@ void main() {
     when(() => auth.user).thenReturn(_user(userRole: role));
     if (companyId == null) {
       // Mirrors the shipped getter, which throws for `customer` and
-      // `appAdmin` (authentication_service.dart:42-53). Reading it for those
+      // `appAdmin` (`AuthenticationService.company`). Reading it for those
       // roles must fail the test, not silently return null.
       when(() => auth.company).thenThrow(
         Exception('Cannot get company for role ${role.label}'),
@@ -162,7 +163,67 @@ void main() {
         scope: SearchScope.clients,
         term: 'juan.cruz@gmail.com',
       );
-      expect(request.queryTokens, ['juan.cruz@gmail.com']);
+      expect(request.queryTokens.first, 'juan.cruz@gmail.com');
+    });
+
+    // The index prefix-expands the JOINED form of a word (`Tokenize`:
+    // "o'brien" -> "obrien", "dela-cruz" -> "delacruz"), so punctuation typed
+    // into a query must be stripped the same way or the token hits nothing.
+    test('queryTokens send the joined form of a punctuated word', () {
+      const cases = <String, String>{
+        "o'br": 'obr',
+        'dela-c': 'delac',
+        'maria.santos': 'mariasantos',
+        'mary-jane smith': 'maryjane',
+      };
+      for (final entry in cases.entries) {
+        expect(
+          SearchRequest(scope: SearchScope.clients, term: entry.key)
+              .queryTokens,
+          [entry.value],
+          reason: entry.key,
+        );
+      }
+    });
+
+    // A partial paste ("juan.cruz@gm") has no full-value token to hit; the
+    // joined prefix of the local part is what finds the document.
+    test('an email term also sends the joined prefix of its local part', () {
+      expect(
+        const SearchRequest(
+          scope: SearchScope.clients,
+          term: 'juan.cruz@gmail.com',
+        ).queryTokens,
+        ['juan.cruz@gmail.com', 'juancruz'],
+      );
+      expect(
+        const SearchRequest(
+          scope: SearchScope.clients,
+          term: 'juan_cruz-x+tag@gm',
+        ).queryTokens,
+        ['juan_cruz-x+tag@gm', 'juancruzxtag'],
+      );
+    });
+
+    // `addPrefixes` counts runes. A code-unit cut at maxPrefix splits a
+    // surrogate pair and sends a token Go can never have written.
+    test('queryTokens and isSearchable count runes, not code units', () {
+      // U+1D400 is non-BMP: two UTF-16 code units per rune.
+      final long = '\u{1D400}' * (SearchTokenizer.maxPrefix + 1);
+      final tokens =
+          SearchRequest(scope: SearchScope.clients, term: long).queryTokens;
+      expect(tokens.single.runes.length, SearchTokenizer.maxPrefix);
+      expect(
+        tokens.single,
+        String.fromCharCodes(long.runes.take(SearchTokenizer.maxPrefix)),
+      );
+
+      // One rune, two code units: below minPrefix, so never sent.
+      expect(
+        const SearchRequest(scope: SearchScope.clients, term: '\u{1D400}')
+            .isSearchable,
+        isFalse,
+      );
     });
 
     test('a term shorter than minPrefix is not searchable', () {
@@ -296,7 +357,7 @@ void main() {
   });
 
   group('offers query authorization', () {
-    test('staff offers are scoped to the viewer company (spec :164)', () {
+    test('staff offers are scoped to the viewer company (design spec)', () {
       signInAs(UserRole.loanOfficer, companyId: 'company-1');
       final statements = buildIndex().statementsFor(
         const SearchRequest(
@@ -419,7 +480,6 @@ void main() {
       expect(_stmt(offerStatements, 'search_tokens')?.arrayContainsAny, [
         'salary',
       ]);
-      expect(results.scope, SearchScope.offers);
       expect(results.items, hasLength(1));
       expect(
         (results.items.single as OfferResultItem).productView.productId,
@@ -469,6 +529,85 @@ void main() {
             .toList(),
         ['keep'],
       );
+    });
+
+    // Firestore returns "Dela-Cruz" for the token 'cruz' because the indexer
+    // split the word on the hyphen; refinement must split the same way or it
+    // drops a row the index correctly returned.
+    test('refinement splits words the way the indexer does', () async {
+      signInAs(UserRole.admin, companyId: 'company-1');
+      final fixtures = [
+        _user(id: 'hyphen', lastName: 'Dela-Cruz'),
+        _user(id: 'apostrophe', lastName: "O'Brien", emailAddress: 'pat@x.com'),
+        _user(
+          id: 'email',
+          lastName: 'Reyes',
+          emailAddress: 'juan.delacruz@x.com',
+        ),
+      ];
+      const expected = <String, Map<String, String>>{
+        'cruz': {'hyphen': 'name'},
+        'brien': {'apostrophe': 'name'},
+        "o'br": {'apostrophe': 'name'},
+        'dela-c': {'hyphen': 'name', 'email': 'email'},
+        'delacruz': {'hyphen': 'name', 'email': 'email'},
+        'juan.delacruz@x.com': {'email': 'email'},
+        'juan.dela': {'email': 'email'},
+      };
+
+      for (final entry in expected.entries) {
+        clientResponse = fixtures;
+        final results = await buildIndex().query(
+          SearchRequest(scope: SearchScope.clients, term: entry.key),
+        );
+
+        expect(
+          {
+            for (final item in results.items)
+              (item as ClientResultItem).user.id: item.matchedField,
+          },
+          entry.value,
+          reason: '"${entry.key}"',
+        );
+      }
+    });
+
+    // `PhoneTokens` indexes prefixes of the canonical number AND its last four
+    // digits, and the query sends both forms of a 4-digit term. Refinement
+    // has to accept either, or '0917' and '9175' find nothing.
+    test('a 4-digit term matches a prefix or the tail of the mobile', () async {
+      signInAs(UserRole.admin, companyId: 'company-1');
+
+      for (final term in ['0917', '9175', '0142', '917 5']) {
+        clientResponse = [_user()];
+        final results = await buildIndex().query(
+          SearchRequest(scope: SearchScope.clients, term: term),
+        );
+
+        expect(results.items, hasLength(1), reason: '"$term" must match');
+        expect(results.items.single.matchedField, 'mobile');
+      }
+
+      clientResponse = [_user()];
+      final miss = await buildIndex().query(
+        const SearchRequest(scope: SearchScope.clients, term: '5550'),
+      );
+      expect(miss.items, isEmpty, reason: 'neither a prefix nor the tail');
+    });
+
+    // `Tokenize` emits digit-only parts of an email ('jc.1998@x.com' ->
+    // '1998'), so a digit run the mobile does not match may still be a
+    // correct email match.
+    test('a phone-shaped term falls back to the email parts', () async {
+      signInAs(UserRole.admin, companyId: 'company-1');
+      clientResponse = [_user(emailAddress: 'jc.1998@x.com')];
+
+      final results = await buildIndex().query(
+        const SearchRequest(scope: SearchScope.clients, term: '1998'),
+      );
+
+      expect(results.items, hasLength(1));
+      expect(results.items.single.matchedField, 'email');
     });
 
     test('every phone spelling survives refinement', () async {

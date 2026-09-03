@@ -33,13 +33,13 @@ final ProductViewRepository _searchProductViewRepository =
 
 /// Builds every search query the app issues.
 ///
-/// This is the app's authorization boundary. `SearchTokensForUser`
-/// (`user_changes.go:106-129`) has no role gate, so staff, admin and appAdmin
-/// user documents all carry `search_tokens`; `user_role == customer` is the
-/// only thing keeping staff PII out of clients results. Whether the same rule
-/// is enforced server-side is unverified from this repo — `firebase.json`
-/// declares no `firestore.rules` key and the checked-in rules file expired
-/// 2024-06-22, so it cannot be the live ruleset.
+/// This is the app's authorization boundary. `SearchTokensForUser` has no
+/// role gate, so staff, admin and appAdmin user documents all carry
+/// `search_tokens`; `user_role == customer` is the only thing keeping staff
+/// PII out of clients results. Whether the same rule is enforced server-side
+/// is unverified from this repo — `firebase.json` declares no
+/// `firestore.rules` key and the checked-in rules file expired 2024-06-22, so
+/// it cannot be the live ruleset.
 class FirestoreSearchIndex implements SearchIndex {
   FirestoreSearchIndex({
     AuthenticationService? auth,
@@ -79,10 +79,10 @@ class FirestoreSearchIndex implements SearchIndex {
   /// present, so [query] treats emptiness as "do not ask".
   ///
   /// Deliberately does **not** add `deleted_at`: both services already open
-  /// with `where('deleted_at', isNull: true)`
-  /// (`user_firestore_service.dart:116`, `product_view_firestore_service.dart:120`),
-  /// which is what fills that slot in each composite index. A second identical
-  /// condition trips an assert inside cloud_firestore.
+  /// with `where('deleted_at', isNull: true)` (`UserFirestoreService.load`,
+  /// `ProductViewFirestoreService.load`), which is what fills that slot in
+  /// each composite index. A second identical condition trips an assert
+  /// inside cloud_firestore.
   @visibleForTesting
   List<QueryStatement> statementsFor(SearchRequest request) {
     final role = _auth.user.userRole;
@@ -94,10 +94,9 @@ class FirestoreSearchIndex implements SearchIndex {
     if (!request.isSearchable) return const <QueryStatement>[];
 
     // Read the company only for the roles whose session actually has one.
-    // `AuthenticationService.company` throws for `customer` AND for `appAdmin`
-    // (`authentication_service.dart:42-53`), and `hasCompany` is a null check
-    // where the getter gates on role, so it can be true while `company`
-    // throws.
+    // `AuthenticationService.company` throws for `customer` AND for
+    // `appAdmin`, and `hasCompany` is a null check where the getter gates on
+    // role, so it can be true while `company` throws.
     final viewerCompanyId = UserRole.companyManagedRoles.contains(role)
         ? _auth.company.id
         : null;
@@ -122,7 +121,7 @@ class FirestoreSearchIndex implements SearchIndex {
         ];
 
       case SearchScope.offers:
-        // Spec :164/:167-168 — staff see their own company's products only.
+        // The search design spec: staff see their own company's offers only.
         // Their injected company wins over the facet, which is why the chip is
         // hidden for them; `customer` and `appAdmin` search all companies and
         // the facet is theirs to set.
@@ -141,65 +140,55 @@ class FirestoreSearchIndex implements SearchIndex {
   @override
   Future<SearchResults> query(SearchRequest request) async {
     final statements = statementsFor(request);
-    if (statements.isEmpty) {
-      return SearchResults(items: const [], scope: request.scope);
-    }
+    if (statements.isEmpty) return SearchResults.empty;
 
-    // One over the cap, so `hasMore` is answered by the raw page rather than
-    // by the refined one.
-    final limit = request.candidateLimit + 1;
-    final term = SearchTokenizer.normalize(request.term);
-
-    switch (request.scope) {
-      case SearchScope.clients:
-        final raw = await _loadClients(statements, limit);
-        final page = _page(raw, request.candidateLimit);
-
-        return SearchResults(
-          items: _refine(page, (user) => _matchClient(user, term)),
-          scope: request.scope,
-          hasMore: raw.length > request.candidateLimit,
-        );
-
-      case SearchScope.offers:
-        final raw = await _loadOffers(statements, limit);
-        final page = _page(raw, request.candidateLimit);
-
-        return SearchResults(
-          items: _refine(page, (view) => _matchOffer(view, term)),
-          scope: request.scope,
-          hasMore: raw.length > request.candidateLimit,
-        );
-    }
+    return switch (request.scope) {
+      SearchScope.clients =>
+        _search(request, statements, _loadClients, _matchClient),
+      SearchScope.offers =>
+        _search(request, statements, _loadOffers, _matchOffer),
+    };
   }
 
-  static List<T> _page<T>(List<T> raw, int limit) =>
-      raw.length > limit ? raw.sublist(0, limit) : raw;
+  static Future<SearchResults> _search<T>(
+    SearchRequest request,
+    List<QueryStatement> statements,
+    Future<List<T>> Function(List<QueryStatement>, int) load,
+    SearchResultItem? Function(T, String) match,
+  ) async {
+    // One over the cap, so `hasMore` is answered by the raw page rather than
+    // by the refined one.
+    final raw = await load(statements, request.candidateLimit + 1);
+    final page = raw.take(request.candidateLimit);
+    final term = request.normalizedTerm;
 
-  static List<SearchResultItem> _refine<T>(
-    List<T> page,
-    SearchResultItem? Function(T) match,
-  ) {
-    final items = <SearchResultItem>[];
-    for (final candidate in page) {
-      final item = match(candidate);
-      if (item != null) items.add(item);
-    }
-
-    return items;
+    return SearchResults(
+      items: [
+        for (final candidate in page)
+          if (match(candidate, term) case final item?) item,
+      ],
+      hasMore: raw.length > request.candidateLimit,
+    );
   }
 
   /// Refines a client candidate against the full term.
   ///
   /// A phone-shaped term takes a separate path: its token was never truncated,
   /// so there is nothing to refine away, and the stored `mobile_number` is raw
-  /// (`user_changes.go:116-121` never rewrites it) — comparing the term's
-  /// spelling against it would drop correct matches.
+  /// (`SearchTokensForUser` never rewrites it) — comparing the term's
+  /// spelling against it would drop correct matches. The index also emits
+  /// digit-only parts of the email (`jc.1998@x.com` → `1998`), so a digit run
+  /// the mobile does not explain may still be a correct email match.
   static SearchResultItem? _matchClient(User user, String term) {
     if (SearchRequest.phoneShaped.hasMatch(term)) {
-      return _matchesPhone(term, user.mobileNumber)
-          ? ClientResultItem(user: user, matchedField: 'mobile')
-          : null;
+      if (_matchesPhone(term, user.mobileNumber)) {
+        return ClientResultItem(user: user, matchedField: 'mobile');
+      }
+      if (_matchesWords(term, [user.emailAddress])) {
+        return ClientResultItem(user: user, matchedField: 'email');
+      }
+
+      return null;
     }
 
     if (_matchesWords(term, [user.firstName, user.middleName, user.lastName])) {
@@ -226,38 +215,54 @@ class FirestoreSearchIndex implements SearchIndex {
     return null;
   }
 
-  /// True when every word of [term] is a prefix of some word in [values] —
-  /// the same shape the token index matches on, so refinement narrows the
-  /// candidate set without contradicting it. A term longer than
+  /// True when every word of [term] is a prefix of some word form in
+  /// [values] — the same shape the token index matches on, so refinement
+  /// narrows the candidate set without contradicting it. A term longer than
   /// [SearchTokenizer.maxPrefix] is exactly what this catches: 'bartholomewson'
   /// was sent as 'bartholomews' and must not keep 'Bartholomewsmith'.
+  ///
+  /// Both sides go through [SearchTokenizer.wordForms]: the haystack holds
+  /// every form the indexer prefix-expanded (`Dela-Cruz` → `delacruz`,
+  /// `dela`, `cruz`) and each term word is compared as its joined form, which
+  /// is what [SearchRequest.queryTokens] sent. Splitting the haystack on spaces
+  /// alone
+  /// dropped `Dela-Cruz` for `cruz` and `O'Brien` for `brien` — rows the
+  /// index had correctly returned.
   static bool _matchesWords(String term, List<String?> values) {
     final haystack = values
         .whereType<String>()
         .map(SearchTokenizer.normalize)
         .expand((value) => value.split(' '))
-        .where((word) => word.isNotEmpty)
+        .expand(SearchTokenizer.wordForms)
         .toList();
 
-    return term.split(' ').where((word) => word.isNotEmpty).every(
+    return term
+        .split(' ')
+        .map(SearchTokenizer.wordForms)
+        .where((forms) => forms.isNotEmpty)
+        .map((forms) => forms.first)
+        .every(
           (word) => haystack.any((candidate) => candidate.startsWith(word)),
         );
   }
 
-  /// A 4-digit run is the tail token, and must be compared to the tail — not
-  /// canonicalized, since `canonicalPhone('0142')` is `'142'`. Anything longer
-  /// is a prefix of the canonical number.
+  /// A 4-digit run is ambiguous: `PhoneTokens` indexes it both as a prefix of
+  /// the canonical number and as its last-four tail, and the query sent both
+  /// readings, so either may be the one that matched. The tail is compared
+  /// raw — `canonicalPhone('0142')` is `'142'`. Anything longer is a prefix
+  /// of the canonical number.
   static bool _matchesPhone(String term, String storedMobile) {
     final stored = SearchTokenizer.canonicalPhone(storedMobile);
     if (stored.isEmpty) return false;
 
-    final digits = SearchRequest.digitsOf(term);
-    if (digits.length == SearchTokenizer.lastDigits) {
-      return stored.length >= SearchTokenizer.lastDigits &&
-          stored.substring(stored.length - SearchTokenizer.lastDigits) ==
-              digits;
-    }
+    final prefix = SearchTokenizer.canonicalPhone(term);
+    final isPrefix = prefix.isNotEmpty && stored.startsWith(prefix);
 
-    return stored.startsWith(SearchTokenizer.canonicalPhone(term));
+    final digits = SearchRequest.digitsOf(term);
+    if (digits.length != SearchTokenizer.lastDigits) return isPrefix;
+
+    return isPrefix ||
+        stored.length >= SearchTokenizer.lastDigits &&
+            stored.endsWith(digits);
   }
 }

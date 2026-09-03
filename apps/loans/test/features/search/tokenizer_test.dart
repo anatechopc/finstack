@@ -2,20 +2,24 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:loooans/features/search/search_index.dart';
+import 'package:loooans/features/search/search_scope.dart';
 import 'package:loooans/features/search/search_tokenizer.dart';
+
+import '../../support/search_tokenizer_producers.dart';
 
 /// The producers a golden case may name. Mirrors the `paths` block of
 /// golden_tokens.json and `runGoldenCase` in
-/// `functions/loans/test/utils/search/tokenizer_test.go:279-300`.
+/// `functions/loans/test/utils/search/tokenizer_test.go`.
 const String pathTokenize = 'tokenize';
 const String pathPhoneTokens = 'phone_tokens';
 const String pathUserTokens = 'user_tokens';
 const String pathProductViewTokens = 'product_view_tokens';
 
 /// How many arguments each path takes. `tokenize` is variadic and deliberately
-/// absent. Mirrors `tokenizer_test.go:192-196`: a case with the wrong count is
-/// a failure, not a skip - dispatching it anyway would silently assert a
-/// different function's contract.
+/// absent. Mirrors the Go golden runner's arity check: a case with the wrong
+/// count is a failure, not a skip - dispatching it anyway would silently
+/// assert a different function's contract.
 const Map<String, int> inputArity = <String, int>{
   pathPhoneTokens: 1,
   pathUserTokens: 5,
@@ -31,11 +35,11 @@ List<String> runGoldenCase(String? path, List<String> input) {
   }
   switch (path) {
     case pathTokenize:
-      return SearchTokenizer.tokenize(input);
+      return SearchTokenizerProducers.tokenize(input);
     case pathPhoneTokens:
-      return SearchTokenizer.phoneTokens(input[0]);
+      return SearchTokenizerProducers.phoneTokens(input[0]);
     case pathUserTokens:
-      return SearchTokenizer.userTokens(
+      return SearchTokenizerProducers.userTokens(
         input[0],
         input[1],
         input[2],
@@ -43,11 +47,15 @@ List<String> runGoldenCase(String? path, List<String> input) {
         input[4],
       );
     case pathProductViewTokens:
-      return SearchTokenizer.productViewTokens(input[0], input[1], input[2]);
+      return SearchTokenizerProducers.productViewTokens(
+        input[0],
+        input[1],
+        input[2],
+      );
     default:
-      // golden_tokens.json:5 - an unknown or missing path is a FAILURE, not a
-      // skip. A case nothing dispatches asserts nothing while still counting
-      // as coverage.
+      // `schema.case.path` in golden_tokens.json - an unknown or missing path
+      // is a FAILURE, not a skip. A case nothing dispatches asserts nothing
+      // while still counting as coverage.
       fail(
         'unknown golden path "$path" - add it here AND to the "paths" block '
         'of golden_tokens.json in the same PR',
@@ -58,14 +66,17 @@ List<String> runGoldenCase(String? path, List<String> input) {
 void main() {
   group('SearchTokenizer', () {
     test('two-letter surnames are indexed whole', () {
-      expect(SearchTokenizer.tokenize(['Go']), ['go']);
+      expect(SearchTokenizerProducers.tokenize(['Go']), ['go']);
     });
 
     test('names expand to prefixes from two characters', () {
-      expect(SearchTokenizer.tokenize(['Cruz']), ['cr', 'cru', 'cruz']);
+      expect(
+        SearchTokenizerProducers.tokenize(['Cruz']),
+        ['cr', 'cru', 'cruz'],
+      );
     });
 
-    // phone.go:26-36 loops until neither prefix remains. The last two
+    // `CanonicalPhone` loops until neither prefix remains. The last two
     // spellings need two and three trims respectively; trimming each prefix
     // once leaves a token no document contains, so the client is unfindable
     // by their own number with no error anywhere.
@@ -77,21 +88,21 @@ void main() {
       expect(SearchTokenizer.canonicalPhone('00639175550142'), '9175550142');
     });
 
-    // Mirrors tokenizer_test.go:108-124. Collapsing internal runs, not merely
-    // trimming the ends: a doubled space is an ordinary paste artefact.
+    // Mirrors Go's whitespace-collapse test. Collapsing internal runs, not
+    // merely trimming the ends: a doubled space is an ordinary paste artefact.
     test('normalize collapses internal whitespace runs', () {
       expect(SearchTokenizer.normalize('Juan  Carlos'), 'juan carlos');
       expect(SearchTokenizer.normalize('  dela   Cruz\t'), 'dela cruz');
       expect(SearchTokenizer.normalize('Acme\n\nLending'), 'acme lending');
       expect(SearchTokenizer.normalize('already fine'), 'already fine');
       expect(
-        SearchTokenizer.tokenize(['Juan  Carlos']),
-        SearchTokenizer.tokenize(['Juan Carlos']),
+        SearchTokenizerProducers.tokenize(['Juan  Carlos']),
+        SearchTokenizerProducers.tokenize(['Juan Carlos']),
       );
     });
 
     // Go folds with NFD -> remove every Unicode Mn -> NFC
-    // (tokenizer.go:141-152), so it folds precomposed AND decomposed marks and
+    // (`Normalize`), so it folds precomposed AND decomposed marks and
     // every Latin-Extended letter - but NOT ß or ø, which have no canonical
     // decomposition. The decomposed literal is written as an explicit escape
     // so this file's encoding cannot silently precompose it.
@@ -109,13 +120,15 @@ void main() {
       expect(SearchTokenizer.normalize('S\u00F8ren'), 's\u00F8ren');
     });
 
-    // tokenizer.go:114-116 splits on !IsLetter && !IsDigit, which is Unicode
+    // `Tokenize` splits on !IsLetter && !IsDigit, which is Unicode
     // aware. An ASCII-only `[^a-z0-9]+` emits no prefixes at all for a
     // non-Latin name and mangles ß/ł.
     test('the word split is Unicode-aware, not ASCII-only', () {
       // 'Ivanov' in Cyrillic. The ASCII split emits the full value only.
       expect(
-        SearchTokenizer.tokenize(['\u0418\u0432\u0430\u043D\u043E\u0432']),
+        SearchTokenizerProducers.tokenize(
+          ['\u0418\u0432\u0430\u043D\u043E\u0432'],
+        ),
         <String>[
           '\u0438\u0432',
           '\u0438\u0432\u0430',
@@ -125,25 +138,40 @@ void main() {
         ],
       );
       expect(
-        SearchTokenizer.tokenize(['Stra\u00DFe']),
+        SearchTokenizerProducers.tokenize(['Stra\u00DFe']),
         ['st', 'str', 'stra', 'stra\u00DF', 'stra\u00DFe'],
       );
       // \p{Nd}, not \p{N}: Go's unicode.IsDigit is Nd only, so U+00BD is a
       // separator on both sides and the emitted token is '2'.
-      expect(SearchTokenizer.tokenize(['2\u00BD rate']), contains('2'));
       expect(
-        SearchTokenizer.tokenize(['2\u00BD rate']),
+        SearchTokenizerProducers.tokenize(['2\u00BD rate']),
+        contains('2'),
+      );
+      expect(
+        SearchTokenizerProducers.tokenize(['2\u00BD rate']),
         isNot(contains('2\u00BD')),
       );
     });
 
-    // Mirrors tokenizer_test.go:75-102. No golden case reaches this length -
+    // The one splitting rule both the query token and the refinement use.
+    // Joined form first: it is what `SearchRequest.queryTokens` sends.
+    test('wordForms yields the joined form, then the parts', () {
+      expect(SearchTokenizer.wordForms('cruz'), ['cruz']);
+      expect(SearchTokenizer.wordForms("o'brien"), ['obrien', 'o', 'brien']);
+      expect(
+        SearchTokenizer.wordForms('juan_cruz-x+tag@gmail.com'),
+        ['juancruzxtaggmailcom', 'juan', 'cruz', 'x', 'tag', 'gmail', 'com'],
+      );
+      expect(SearchTokenizer.wordForms('--'), isEmpty);
+    });
+
+    // Mirrors Go's full-value cap test. No golden case reaches this length -
     // the longest input in the file is 25 runes - so without this test the cap
     // is unpinned.
     test('the full-value token is truncated, never dropped', () {
       final long = 'añ' * SearchTokenizer.maxFullValue; // multi-byte, 2x runes
 
-      for (final token in SearchTokenizer.tokenize([long])) {
+      for (final token in SearchTokenizerProducers.tokenize([long])) {
         expect(
           token.runes.length,
           lessThanOrEqualTo(SearchTokenizer.maxFullValue),
@@ -155,17 +183,17 @@ void main() {
         SearchTokenizer.normalize(long).runes.take(SearchTokenizer.maxFullValue),
       );
       expect(
-        SearchTokenizer.tokenize([long]),
+        SearchTokenizerProducers.tokenize([long]),
         contains(want),
         reason: 'the full-value token was dropped, not capped',
       );
 
       // A value at the cap is untouched, so nothing real is truncated.
       final atCap = 'a' * SearchTokenizer.maxFullValue;
-      expect(SearchTokenizer.tokenize([atCap]).last, atCap);
+      expect(SearchTokenizerProducers.tokenize([atCap]).last, atCap);
     });
 
-    // Mirrors tokenizer_test.go:132-155. Token LENGTH was bounded; token COUNT
+    // Mirrors Go's maxWords test. Token LENGTH was bounded; token COUNT
     // was not, and an unbounded array makes the document permanently
     // unwritable rather than merely bloated.
     test('word expansion stops at maxWords, counted in order', () {
@@ -173,7 +201,7 @@ void main() {
         800,
         (i) => 'w${(i + 1).toString().padLeft(4, '0')}',
       );
-      final tokens = SearchTokenizer.tokenize([words.join(' ')]);
+      final tokens = SearchTokenizerProducers.tokenize([words.join(' ')]);
 
       expect(tokens.length, lessThanOrEqualTo(SearchTokenizer.maxTokens));
       expect(
@@ -192,7 +220,7 @@ void main() {
       );
     });
 
-    // Mirrors tokenizer_test.go:160-178. maxWords cannot bound a single
+    // Mirrors Go's maxTokens test. maxWords cannot bound a single
     // pathological *word*; maxTokens is the backstop that makes the array
     // bounded regardless.
     test('the token count is capped for one pathological word', () {
@@ -211,7 +239,7 @@ void main() {
       );
 
       expect(
-        SearchTokenizer.tokenize([word]).length,
+        SearchTokenizerProducers.tokenize([word]).length,
         SearchTokenizer.maxTokens,
         reason: 'fewer means the input stopped being pathological; '
             'more means the cap is gone',
@@ -240,7 +268,7 @@ void main() {
     });
 
     // Dart reads these numbers instead of the Go source, so an absent or
-    // changed one is silent drift. Mirrors tokenizer_test.go:256-273.
+    // changed one is silent drift. Mirrors Go's limits-block test.
     // Per-key, not whole-map equality: Go flags missing/mismatched keys but
     // tolerates extras, and a sixth limit added later should not redden Dart
     // CI before Dart needs it.
@@ -262,9 +290,9 @@ void main() {
         final path = entry['path'] as String?;
         final input = (entry['input'] as List<dynamic>).cast<String>();
         final expected = (entry['tokens'] as List<dynamic>).cast<String>();
-        // ORDERED list, per golden_tokens.json:7 - "deduplicated and sorted
-        // ascending. Compare as an ordered list." Go uses reflect.DeepEqual on
-        // the slice (tokenizer_test.go:241). Ordered equality is safe only
+        // ORDERED list, per `schema.case.tokens` in golden_tokens.json -
+        // "deduplicated and sorted ascending. Compare as an ordered list." Go uses reflect.DeepEqual on
+        // the slice. Ordered equality is safe only
         // while the vectors stay ASCII after folding: Go sorts by UTF-8 bytes
         // and Dart by UTF-16 code units, which diverge for non-BMP tokens. If
         // one is ever added, normalise the sort order on both sides - never
@@ -278,9 +306,92 @@ void main() {
       }
     });
 
+    // The contract the app actually depends on. The producer cases above pin
+    // what Go WRITES; this pins what Dart SENDS against it: for every value a
+    // real document was indexed from, every query a user could plausibly type
+    // for it — each prefix of each word, the email, the phone in every
+    // spelling, the last four digits — must hit that document's token set,
+    // because `array-contains-any` returns the document iff one sent token is
+    // present, and must send nothing the index never wrote. Two fallbacks are
+    // exempt from the second half because they exist to cover a miss: the
+    // whole value of a PARTIAL email paste (only the complete address has a
+    // full-value token) and a 4-digit run, which is sent both raw and
+    // canonical because it may be a tail or a prefix and only one of the two
+    // is ever indexed.
+    test('every query the app would send for an indexed value hits it', () {
+      var checked = 0;
+
+      for (final entry in cases) {
+        final path = entry['path'] as String?;
+        if (path != pathUserTokens && path != pathProductViewTokens) continue;
+        final input = (entry['input'] as List<dynamic>).cast<String>();
+        final indexed = (entry['tokens'] as List<dynamic>).cast<String>();
+
+        final phone = path == pathUserTokens ? input[3] : null;
+        final email = path == pathUserTokens ? input[4] : null;
+        final words = <String>[
+          for (final value in path == pathUserTokens
+              ? [input[0], input[1], input[2], input[4]]
+              : input)
+            ...value.split(RegExp(r'\s+')),
+        ];
+
+        final terms = <String>{
+          for (final word in words)
+            for (var n = SearchTokenizer.minPrefix;
+                n <= word.runes.length;
+                n++)
+              String.fromCharCodes(word.runes.take(n)),
+          if (phone != null) ...[
+            phone,
+            for (final spelling in [
+              '0${SearchTokenizer.canonicalPhone(phone)}',
+              '+63${SearchTokenizer.canonicalPhone(phone)}',
+              '63${SearchTokenizer.canonicalPhone(phone)}',
+            ])
+              for (var n = SearchTokenizer.minPrefix;
+                  n <= spelling.length;
+                  n++)
+                spelling.substring(0, n),
+            phone.substring(phone.length - SearchTokenizer.lastDigits),
+          ],
+        };
+
+        for (final term in terms) {
+          final request = SearchRequest(scope: SearchScope.clients, term: term);
+          // '09' canonicalizes to '9', which the app refuses to send at all.
+          if (!request.isSearchable) continue;
+          checked++;
+
+          final tokens = request.queryTokens;
+          expect(
+            tokens.any(indexed.contains),
+            isTrue,
+            reason: '${entry['name']}\n'
+                'queryTokens("$term") = $tokens hits none of $indexed',
+          );
+
+          final isFourDigitRun = SearchRequest.phoneShaped.hasMatch(term) &&
+              SearchRequest.digitsOf(term).length ==
+                  SearchTokenizer.lastDigits;
+          final isPartialEmail = term.contains('@') && term != email;
+          if (isFourDigitRun) continue;
+          expect(
+            indexed,
+            containsAll(isPartialEmail ? tokens.skip(1) : tokens),
+            reason: '${entry['name']}\n'
+                'queryTokens("$term") = $tokens sends a token the index '
+                'never wrote',
+          );
+        }
+      }
+
+      expect(checked, greaterThan(50), reason: 'the derivation went hollow');
+    });
+
     // Coverage, not correctness: the failure this file prevents is silent, so
     // a path losing its last case must break CI rather than quietly stop being
-    // asserted. Mirrors tokenizer_test.go:250-254.
+    // asserted. Mirrors Go's every-path-exercised test.
     test('all four producers are still exercised', () {
       final seen = cases.map((c) => c['path'] as String?).toSet();
       expect(

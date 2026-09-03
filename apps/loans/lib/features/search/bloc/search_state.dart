@@ -56,9 +56,11 @@ final class SearchState extends Equatable {
     );
   }
 
-  /// `SearchResults` and `OfferFilters` are not `Equatable`, so they compare by
-  /// identity here. That is deliberate: every query builds a fresh instance, so
-  /// two successive result sets are never accidentally deduplicated by `emit`.
+  /// `SearchResults` is not `Equatable`, so it compares by identity here. That
+  /// is deliberate: every query builds a fresh instance, so two successive
+  /// result sets are never accidentally deduplicated by `emit`. `OfferFilters`
+  /// IS value-equal — the bloc relies on that to recognise an unchanged
+  /// query.
   @override
   List<Object?> get props => [status, scope, term, results, filters];
 }

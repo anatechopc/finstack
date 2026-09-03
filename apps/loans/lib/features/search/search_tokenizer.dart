@@ -8,11 +8,13 @@ import 'package:unorm_dart/unorm_dart.dart' as unorm;
 /// vectors at `functions/loans/utils/search/testdata/golden_tokens.json` are
 /// asserted from both languages so drift fails CI instead of production.
 ///
-/// The app never writes `search_tokens` — it builds one query token — so
-/// [tokenize], [phoneTokens], [userTokens] and [productViewTokens] look like
-/// dead code from the app's side. They are not: they are the four producers
-/// the golden file names in its `paths` block, and they exist so that file can
-/// be asserted from Dart at all. Deleting them unpins the contract.
+/// Only what the query path runs lives here. The app never writes
+/// `search_tokens`, so the four token *producers* the golden file names
+/// (`Tokenize`, `PhoneTokens`, `UserTokens`, `ProductViewTokens`) are mirrored
+/// in `test/support/search_tokenizer_producers.dart`, where the golden test
+/// exercises them. They are built from the same [normalize], [wordForms],
+/// [canonicalPhone] and [capFullValue] the query uses, so there is one
+/// splitting rule on the Dart side.
 abstract final class SearchTokenizer {
   /// Shortest prefix emitted. Two, not three, because two-letter Filipino
   /// surnames (Go, Ty, Uy, Sy, Co) are common and would otherwise be
@@ -20,26 +22,26 @@ abstract final class SearchTokenizer {
   static const int minPrefix = 2;
 
   /// Longest prefix emitted. Queries longer than this match on the first
-  /// [maxPrefix] characters and are refined in Dart against the full term.
+  /// [maxPrefix] runes and are refined in Dart against the full term.
   static const int maxPrefix = 12;
 
   /// Longest full-value token. Not a prefix bound: the full value is exempt
-  /// from [maxPrefix], but exempt is not unbounded. Go truncates it at
-  /// `tokenizer.go:180` because `search_tokens` is automatically single-field
+  /// from [maxPrefix], but exempt is not unbounded. Go's `capFullValue`
+  /// truncates it because `search_tokens` is automatically single-field
   /// indexed and Firestore rejects a write whose index entry is oversized —
   /// which would make that document permanently unwritable.
   static const int maxFullValue = 256;
 
   /// Words one composition prefix-expands, counted across its values in order.
-  /// Full-value tokens are exempt. `tokenizer.go:57, :90, :108-112`.
+  /// Full-value tokens are exempt. `MaxWords` in `Tokenize`.
   static const int maxWords = 64;
 
   /// Hard ceiling on the emitted array; the sorted set is truncated to it.
-  /// `tokenizer.go:72, :168-173`.
+  /// `MaxTokens` in `capCount`.
   static const int maxTokens = 2000;
 
   /// Last-4 tail token length. Deliberately NOT in the golden `limits` block:
-  /// the value comes from the `paths.phone_tokens` prose and `phone.go:9`.
+  /// the value comes from the `paths.phone_tokens` prose and `PhoneTokens`.
   ///
   /// Public because the query side needs it too: a 4-digit term is the one
   /// case that must be sent raw as well as canonicalized, since
@@ -47,8 +49,8 @@ abstract final class SearchTokenizer {
   static const int lastDigits = 4;
 
   /// Go splits words on `!unicode.IsLetter(r) && !unicode.IsDigit(r)`
-  /// (`tokenizer.go:114-116`), which is Unicode-aware — an ASCII-only class
-  /// emits no prefixes at all for a non-Latin name.
+  /// (`Tokenize`), which is Unicode-aware — an ASCII-only class emits no
+  /// prefixes at all for a non-Latin name.
   ///
   /// `\p{Nd}`, not `\p{N}`: `\p{N}` is Nd+Nl+No while `unicode.IsDigit` is Nd
   /// only, so `\p{N}` would keep "2½" where Go keeps "2".
@@ -70,7 +72,7 @@ abstract final class SearchTokenizer {
 
   /// Lowercases, folds diacritics, trims the ends, AND collapses every
   /// internal run of whitespace to a single space. Both indexing and querying
-  /// apply it, so it must match `Normalize` (`tokenizer.go:141-152`).
+  /// apply it, so it must match `Normalize`.
   ///
   /// The fold is Go's exact chain — NFD, remove every Mn, NFC, then lowercase
   /// — rather than a lookup table, because a table covers only the characters
@@ -93,99 +95,28 @@ abstract final class SearchTokenizer {
         .join(' ');
   }
 
-  /// Returns the sorted, deduplicated token set for [values] — the mirror of
-  /// `Tokenize` (`tokenizer.go:88-129`), applied to name and email fields.
+  /// The forms `Tokenize` prefix-expands for ONE whitespace-separated word of
+  /// a normalized value: the joined form first, then the parts the word splits
+  /// into on runs of non-alphanumerics. `dela-cruz` →
+  /// `{delacruz, dela, cruz}`, `o'brien` → `{obrien, o, brien}`, `cruz` →
+  /// `{cruz}`.
   ///
-  /// Only the first [maxWords] words are prefix-expanded, counted across all
-  /// values in order; every non-empty value still contributes its full-value
-  /// token regardless of the budget.
-  static List<String> tokenize(List<String> values) {
-    final tokens = <String>{};
-    // Declared outside the values loop: one budget per composition, not per
-    // value (tokenizer.go:90).
-    var budget = maxWords;
+  /// This is the one splitting rule on the Dart side. `SearchRequest` sends
+  /// the joined form's prefix and `FirestoreSearchIndex` refines against the
+  /// same forms, so a document Firestore returned for `cruz` is not then
+  /// dropped because `'dela-cruz'.startsWith('cruz')` is false.
+  static Set<String> wordForms(String word) {
+    final parts = word.split(_nonAlphanumeric).where((part) => part.isNotEmpty);
 
-    for (final value in values) {
-      final normalized = normalize(value);
-      if (normalized.isEmpty) continue;
-
-      // The whole value — exempt from maxPrefix, which is what makes a pasted
-      // email or phone number match: the word split consumes "@" and "." long
-      // before prefixes are taken. Exempt is not unbounded, and truncated is
-      // not dropped: a truncated token still matches a query truncated the
-      // same way, a dropped one turns a paste into a silent miss.
-      tokens.add(capFullValue(normalized));
-
-      for (final word in normalized.split(_whitespaceRun)) {
-        // Go's strings.Fields never yields an empty word; Dart's split can, so
-        // skip before spending budget or the boundary shifts on padded input.
-        if (word.isEmpty) continue;
-        if (budget == 0) break;
-        budget--;
-
-        final parts = word
-            .split(_nonAlphanumeric)
-            .where((part) => part.isNotEmpty)
-            .toList();
-
-        final joined = parts.join();
-        if (joined.isNotEmpty) _addPrefixes(tokens, joined);
-        for (final part in parts) {
-          _addPrefixes(tokens, part);
-        }
-      }
-    }
-
-    return _sortedCapped(tokens);
+    return <String>{parts.join(), ...parts}..remove('');
   }
 
-  /// Mirrors `PhoneTokens` (`phone.go:45-62`): the canonical form, its
-  /// prefixes, and the last four digits as a discrete token. Never route a
-  /// phone number through [tokenize] — it does none of the canonicalization,
-  /// so "0917…" and "+63917…" would index as two different clients.
-  static List<String> phoneTokens(String raw) {
-    final canonical = canonicalPhone(raw);
-    // phone.go:47-49 returns nil. Without this guard every mobile-less user
-    // gets a spurious '' token through userTokens.
-    if (canonical.isEmpty) return const <String>[];
-
-    final tokens = <String>{canonical};
-    _addPrefixes(tokens, canonical);
-    if (canonical.length >= lastDigits) {
-      // Safe to index by code unit: [_nonDigit] leaves only ASCII digits.
-      tokens.add(canonical.substring(canonical.length - lastDigits));
-    }
-    return _sortedCapped(tokens);
-  }
-
-  /// Mirrors `UserTokens` (`entities.go:11-17`). The four name/email fields go
-  /// through ONE [tokenize] call — and therefore share one [maxWords] budget;
-  /// the mobile goes through [phoneTokens]. Swapping that routing is the exact
-  /// drift the `user_tokens` golden cases exist to catch.
-  static List<String> userTokens(
-    String firstName,
-    String middleName,
-    String lastName,
-    String mobile,
-    String email,
-  ) {
-    // entities.go:29-38 re-applies the count cap after the union: the sum of
-    // two capped groups is not itself capped.
-    return _sortedCapped(<String>{
-      ...tokenize([firstName, middleName, lastName, email]),
-      ...phoneTokens(mobile),
-    });
-  }
-
-  /// Mirrors `ProductViewTokens` (`entities.go:22-24`) — one [tokenize] call,
-  /// so all three values share one [maxWords] budget. `product_views` has no
-  /// product-name field; `loan_type` carries that meaning.
-  static List<String> productViewTokens(
-    String companyName,
-    String loanType,
-    String tagLine,
-  ) =>
-      tokenize([companyName, loanType, tagLine]);
+  /// The first [maxPrefix] runes of [token] — the longest prefix the index
+  /// holds for it, matching `addPrefixes`. Runes, not code units: slicing code
+  /// units would send an unpaired surrogate for a non-BMP character, a token
+  /// Go can never have written.
+  static String prefixOf(String token) =>
+      String.fromCharCodes(token.runes.take(maxPrefix));
 
   /// Reduces a phone number to its national significant digits, so that
   /// `09175550142`, `+639175550142`, `639175550142` and `00639175550142` all
@@ -195,7 +126,7 @@ abstract final class SearchTokenizer {
   /// and the E.164 path requires a country the query side does not have.
   static String canonicalPhone(String raw) {
     var digits = raw.replaceAll(_nonDigit, '');
-    // A loop, not two ifs: phone.go:31-40 repeats until neither prefix
+    // A loop, not two ifs: `CanonicalPhone` repeats until neither prefix
     // remains, and an international access code stacks them — 0639… needs two
     // passes, 00639… needs three. Terminates because every branch strictly
     // shortens the string and '' starts with neither prefix.
@@ -211,40 +142,11 @@ abstract final class SearchTokenizer {
   }
 
   /// Truncates the full-value token to [maxFullValue] RUNES, never code units
-  /// — `tokenizer.go:178-179`: "Runes, not bytes, so the cap means the same
+  /// — Go's `capFullValue`: "Runes, not bytes, so the cap means the same
   /// thing in Dart."
   static String capFullValue(String normalized) {
     final runes = normalized.runes.toList();
     if (runes.length <= maxFullValue) return normalized;
     return String.fromCharCodes(runes.take(maxFullValue));
-  }
-
-  /// Flattens a token set into the sorted, count-capped array Go writes.
-  ///
-  /// Go sorts UTF-8 bytes and Dart sorts UTF-16 code units. Those orders agree
-  /// for everything up to U+FFFF and diverge only for non-BMP tokens, which no
-  /// golden vector contains; if one is ever added, sort both sides by code
-  /// point rather than weakening the comparison.
-  static List<String> _sortedCapped(Set<String> tokens) {
-    final sorted = tokens.toList()..sort();
-    return sorted.length <= maxTokens ? sorted : sorted.sublist(0, maxTokens);
-  }
-
-  static void _addPrefixes(Set<String> tokens, String token) {
-    // Runes, matching tokenizer.go:189-203. Slicing code units would emit an
-    // unpaired surrogate for a non-BMP character, a token Go can never
-    // produce.
-    final runes = token.runes.toList();
-    if (runes.isEmpty) return;
-    // tokenizer.go:193-196 — a token shorter than minPrefix (a middle initial,
-    // a two-letter surname) is indexed verbatim, not dropped.
-    if (runes.length < minPrefix) {
-      tokens.add(token);
-      return;
-    }
-    final limit = runes.length < maxPrefix ? runes.length : maxPrefix;
-    for (var i = minPrefix; i <= limit; i++) {
-      tokens.add(String.fromCharCodes(runes.take(i)));
-    }
   }
 }
