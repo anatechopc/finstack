@@ -73,8 +73,10 @@ class _LoanOffersWidgetState extends State<LoanOffersWidget> {
   double _maxLoanableAmount = 0;
   double _maxPeriod = 0;
 
-  /// The last list the grid rendered, so a selection by id can hand the bloc
-  /// the view it already has instead of paying a second Firestore read.
+  /// The last list the grid rendered. A card tap finds its view here and
+  /// hands it to the bloc; a deep link or a search result from another page
+  /// arrives before the grid renders and selects by id alone, which costs the
+  /// bloc one extra read (`viewRepository.load` by `product_id`).
   List<ProductView> _views = const [];
 
   /// The offer this widget last asked the bloc to select.
@@ -122,42 +124,47 @@ class _LoanOffersWidgetState extends State<LoanOffersWidget> {
     }
   }
 
-  /// Makes the selection match [id]. `selectProduct` is an event and may be
-  /// added now; `unselectProduct` and a pop emit synchronously, and this runs
-  /// from `didUpdateWidget` — during build — so those are deferred a frame.
+  /// Makes the selection match [id]. Wide screens only: on compact/medium,
+  /// `MainScreen` has already redirected the same URL to the full-screen
+  /// route, and the selection is what drives that navigation — a second
+  /// select here would push a second detail. Post-frame, as
+  /// `BorrowerScreen._syncDialog` is: the width needs `MediaQuery`, which
+  /// `initState` may not read, and `unselectProduct` and a pop emit
+  /// synchronously, which `didUpdateWidget` — during build — may not do.
   void _sync(String? id) {
-    if (_dialogFor != null) {
-      if (_dialogFor == id) return;
-      // Pop it; its close path in the listener re-syncs to the URL then.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || _dialogFor == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // The URL moved on again before the frame; the next sync owns it.
+      if (!mounted || widget.initialProductId != id) return;
+      if (getScreenSize(context: context).index <= ScreenSize.medium.index) {
+        return;
+      }
+
+      if (_dialogFor != null) {
+        if (_dialogFor == id) return;
+        // Pop it; its close path in the listener re-syncs to the URL then.
         Navigator.of(context, rootNavigator: true)
             .popUntil((route) => route is! PopupRoute);
-      });
-      return;
-    }
+        return;
+      }
 
-    final products = context.read<ProductBloc>();
-    if (id == null) {
-      if (products.selectedProduct == null) return;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) products.unselectProduct();
-      });
-      return;
-    }
+      final products = context.read<ProductBloc>();
+      if (id == null) {
+        if (products.selectedProduct != null) products.unselectProduct();
+        return;
+      }
 
-    _selectedFor = id;
-    if (products.selectedProduct?.id == id) return;
-    final index = _views.indexWhere((view) => view.productId == id);
-    if (index >= 0) {
-      _selectedIndex = index;
-      _selectedColor = AppColors
-          .loanItemColorsList[index % AppColors.loanItemColorsList.length];
-    }
-    products.selectProduct(
-      id,
-      productView: index >= 0 ? _views[index] : null,
-    );
+      _selectedFor = id;
+      // Always select — even when the bloc still holds this product from an
+      // earlier visit. A fresh mount paints from the *state*, and the last
+      // state after a selection is `refresh` (reviews loaded), which the
+      // panel does not paint; a revisit of `/?sec=offers&id=X` then showed
+      // nothing until a third tap. Re-selecting re-emits `selected`.
+      final index = _views.indexWhere((view) => view.productId == id);
+      products.selectProduct(
+        id,
+        productView: index >= 0 ? _views[index] : null,
+      );
+    });
   }
 
   /// This page's URL with `id` set or dropped, keeping whatever else it
@@ -184,6 +191,18 @@ class _LoanOffersWidgetState extends State<LoanOffersWidget> {
     return BlocListener<ProductBloc, ProductState>(
       listener: (context, state) async {
         if (state.status == ProductStatus.selected && state.product != null) {
+          // The card and the panel colour follow the selection, however it
+          // arrived: a deep link or a search result selected before the grid
+          // rendered, so the tap handler's bookkeeping never ran for it.
+          final index = _views.indexWhere(
+            (view) => view.productId == state.product!.id,
+          );
+          if (index >= 0) {
+            _selectedIndex = index;
+            _selectedColor = AppColors.loanItemColorsList[
+                index % AppColors.loanItemColorsList.length];
+          }
+
           if (!AuthenticationService.instance.isAdmin) {
             if (isCompactOrMedium) {
               GoRouter.of(context)
@@ -209,8 +228,8 @@ class _LoanOffersWidgetState extends State<LoanOffersWidget> {
             _dialogFor = null;
             _selectedIndex = -1;
             if (!context.mounted) return;
-            // The URL moved to another offer while the dialog was up (typed
-            // into the address bar; `_sync` popped this one): select that
+            // The URL moved to another offer while the dialog was up (a
+            // programmatic `go`; `_sync` popped this one): select that
             // instead. It replaces this selection with no `unselected` in
             // between — one would strip the newer id from the URL.
             final next = widget.initialProductId;

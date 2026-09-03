@@ -219,9 +219,44 @@ void main() {
 
       expect(router.location, '/?sec=offers');
     });
+
+    testWidgets(
+        'a fresh mount re-selects even when the bloc still holds that offer',
+        (tester) async {
+      // Open X, leave for /search, come back to /?sec=offers&id=X (a search
+      // result, or browser Back). The bloc still holds X, but a fresh mount
+      // paints from the state, and the last state after a selection is
+      // `refresh` — so a sync that skipped "already selected" showed an
+      // empty section under a URL naming X, until a third tap.
+      resize(tester, const Size(1600, 900));
+      when(() => products.selectedProduct).thenReturn(Product()..id = 'p1');
+      when(() => products.state).thenReturn(ProductState.refresh());
+
+      await pump(tester, initialLocation: '/?sec=offers&id=p1');
+      await tester.pumpAndSettle();
+
+      verify(() => products.selectProduct('p1')).called(1);
+    });
   });
 
   group('compact and medium: the selection drives the navigation', () {
+    testWidgets('a URL id is left to MainScreen, which redirects it',
+        (tester) async {
+      // Selecting here as well would fire the listener that navigates on
+      // `selected`, on top of the redirect — on mobile, a second push.
+      resize(tester, const Size(700, 800));
+
+      await pump(tester, initialLocation: '/?sec=offers&id=p1');
+      await tester.pumpAndSettle();
+
+      verifyNever(
+        () => products.selectProduct(
+          any(),
+          productView: any(named: 'productView'),
+        ),
+      );
+    });
+
     testWidgets('a card tap selects directly; this URL never carries the id',
         (tester) async {
       // 700px is `medium`. The listener sends the selection to the

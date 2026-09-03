@@ -722,3 +722,13 @@ Tests: `test/features/products/loan_offers_widget_test.dart` (9; sync and strip 
 proven by mutation) + a wide case in `search_result_tile_test.dart`. The offer card
 overflows its 258px cell under the test font (Ahem, every glyph full-width), so that
 test drops overflow reports only — the card itself is untouched.
+Independent review of that commit (1 important, 4 minor): `_sync` skipped selecting when
+the bloc still held the product from an earlier visit, but a fresh mount paints from the
+*state*, whose last value after a selection is `refresh` — a revisit of
+`/?sec=offers&id=X` showed nothing until a third tap. Fixed: `_sync` is post-frame,
+wide-only (compact/medium leave the id to `MainScreen`'s redirect, as Borrowers does),
+and always selects on a mount; the card highlight and panel colour are set from the
+`selected` state so deep links and search results get them too. Known and left: a bogus
+id in the URL selects nothing and stays in the URL (the bloc's error state is not
+handled here); a fast double-click on the same card can leave the panel open with no id.
+The admin dialog path (`_dialogFor`) is verified by click-through only, not by a test.
