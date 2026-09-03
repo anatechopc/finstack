@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:loooans/features/loans/screens/additional_loan_detail_screen.dart';
 import 'package:loooans/features/users/screens/add_user_widget.dart';
+import 'package:loooans/features/users/screens/borrower_detail_screen.dart';
 import 'package:loooans/features/users/screens/loan_client_detail.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/button_widgets.dart';
@@ -203,6 +204,32 @@ class DialogWidgets {
         );
       },
     );
+  }
+
+  /// The borrower's profile as a dialog over the Borrowers section (wide
+  /// classic UI). [onClosed] runs when the dialog route completes, however
+  /// it was dismissed — Close, the back arrow, a barrier tap.
+  static Future<void> showBorrowerDetailsDialog(
+    BuildContext context,
+    String userId, {
+    VoidCallback? onClosed,
+  }) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          contentPadding: const EdgeInsets.all(24),
+          content: Container(
+            width: 1200,
+            constraints: const BoxConstraints(maxHeight: 1200, maxWidth: 1200),
+            child: BorrowerDetailScreen(
+              userId: userId,
+            ),
+          ),
+          backgroundColor: AppColors.green1,
+        );
+      },
+    ).then((_) => onClosed?.call());
   }
 
   static Future<void> showAdditionalLoanDetailDialog(

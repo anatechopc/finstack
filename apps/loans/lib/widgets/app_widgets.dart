@@ -387,6 +387,17 @@ class AppWidgets {
         productId: productId,
       );
 
+  static Future<void> showBorrowerDetailsDialog(
+    BuildContext context,
+    String userId, {
+    VoidCallback? onClosed,
+  }) =>
+      DialogWidgets.showBorrowerDetailsDialog(
+        context,
+        userId,
+        onClosed: onClosed,
+      );
+
   static Future<void> showAdditionalLoanDetailDialog(
     BuildContext context, {
     required String additionalLoanId,

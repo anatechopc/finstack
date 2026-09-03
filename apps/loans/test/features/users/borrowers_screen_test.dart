@@ -1,6 +1,7 @@
 import 'package:address_repository/address_repository.dart';
 import 'package:bloc_test/bloc_test.dart';
 import 'package:company_repository/company_repository.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -154,7 +155,8 @@ void main() {
         'opens nothing on a compact screen, where MainScreen '
         'redirects the same URL to the full-screen route', (tester) async {
       // 700px is `medium`: the guard still returns, without inheriting the
-      // screen's own 85px header overflow at phone width (:192).
+      // screen's own 85px header overflow at phone width (the search-bar row
+      // in `_BorrowerScreenState.build`).
       resize(tester, const Size(700, 800));
 
       await pump(tester, initialLocation: '/?sec=borrowers&id=user-7');
@@ -223,6 +225,93 @@ void main() {
       expect(find.byType(AlertDialog), findsNothing);
       // The URL said a dialog was open; it must stop saying so — and this
       // is also what makes re-tapping the same borrower a URL change again.
+      expect(router.location, '/?sec=borrowers');
+    });
+
+    testWidgets(
+        'compact classic UI: a list item tap goes straight to the '
+        'full-screen route', (tester) async {
+      // Not via /?sec=borrowers&id= and MainScreen's build-time redirect:
+      // that was a back trap — Back landed on a URL whose build pushed the
+      // profile again. 700px is `medium`, the widest compact list.
+      SettingsService.instance.setClassicUIForTest(enabled: true);
+      resize(tester, const Size(700, 800));
+      when(() => users.userAddresses).thenAnswer(
+        (_) => Stream.value([_borrower('user-7', 'Juan')]),
+      );
+
+      await pump(tester, initialLocation: '/?sec=borrowers');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Dela Cruz, Juan'));
+      await tester.pumpAndSettle();
+
+      expect(router.location, '/borrowers/user-7');
+      expect(find.text('full-screen route'), findsOneWidget);
+    });
+
+    testWidgets(
+        'mobile: the full-screen route is pushed, so its back arrow has '
+        'somewhere to go', (tester) async {
+      // With `go` the profile was the only page on the stack: its back
+      // arrow threw GoError('There is nothing to pop') and system back
+      // left the app. `goSafe` pushes on Android/iOS, as the row tap did
+      // before every open went through the URL.
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      resize(tester, const Size(1600, 900));
+      when(() => users.userAddresses).thenAnswer(
+        (_) => Stream.value([_borrower('user-7', 'Juan')]),
+      );
+
+      await pump(tester, initialLocation: '/?sec=borrowers');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Dela Cruz, Juan'));
+      await tester.pumpAndSettle();
+
+      expect(router.location, '/borrowers/user-7');
+      expect(router.canPop(), isTrue);
+      router.pop();
+      await tester.pumpAndSettle();
+      expect(router.location, '/?sec=borrowers');
+      // Reset here, not only in tearDown: the binding checks foundation
+      // debug variables when the body returns, before tearDowns run.
+      debugDefaultTargetPlatformOverride = null;
+    });
+  });
+
+  group('the URL owns the dialog', () {
+    testWidgets('the id arriving in the URL opens the dialog in place',
+        (tester) async {
+      // A row tap or a search result changes only `&id=`; `MainScreen` is
+      // keyed by section, so this screen sees a prop change, not a remount.
+      resize(tester, const Size(1600, 900));
+
+      await pump(tester, initialLocation: '/?sec=borrowers');
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+
+      router.go('/?sec=borrowers&id=user-7');
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsOneWidget);
+      verify(() => users.selectUser('user-7')).called(1);
+    });
+
+    testWidgets('the id leaving the URL (browser Back) closes the dialog',
+        (tester) async {
+      // Before: Back rewrote the address bar and the dialog stayed open —
+      // a URL saying "no dialog" over a dialog.
+      resize(tester, const Size(1600, 900));
+
+      await pump(tester, initialLocation: '/?sec=borrowers&id=user-7');
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+
+      router.go('/?sec=borrowers');
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsNothing);
+      // And closing it that way must not rewrite the URL a second time.
       expect(router.location, '/?sec=borrowers');
     });
   });

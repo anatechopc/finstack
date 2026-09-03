@@ -1,15 +1,19 @@
 import 'dart:math';
 
+import 'package:address_repository/address_repository.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loan_repository/loan_repository.dart';
+import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
 import 'package:loooans/features/loans/model/principal_borrower.dart';
+import 'package:loooans/features/search/search_scope.dart';
+import 'package:loooans/features/search/search_scope_resolver.dart';
 import 'package:loooans/features/users/bloc/user_bloc.dart';
 import 'package:loooans/features/users/widget/cash_pool_information_widget.dart';
-import 'package:loooans/services/cash_pool_service.dart';
 import 'package:loooans/utils/constants.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
@@ -17,6 +21,7 @@ import 'package:loooans/widgets/app_widgets.dart';
 import 'package:loooans/widgets/file_viewer_widget.dart';
 import 'package:two_dimensional_scrollables/two_dimensional_scrollables.dart';
 import 'package:user_loan_view_repository/user_loan_view_repository.dart';
+import 'package:user_repository/user_repository.dart';
 
 class BorrowerDetailScreen extends StatefulWidget {
   const BorrowerDetailScreen({
@@ -25,6 +30,17 @@ class BorrowerDetailScreen extends StatefulWidget {
 
   final String userId;
 
+  /// Who may open a borrower's profile. `SearchScopeResolver.scopesFor` is
+  /// the one statement of which roles may read client PII; reusing it here
+  /// means search, the `/borrowers/:id` route and `MainScreen`'s compact
+  /// redirect can never disagree. A placeholder user is refused explicitly
+  /// even though its role is `customer`: `isCustomer()` is false for it, so
+  /// the `!isCustomer()` gates elsewhere let it through.
+  static bool permits(User user) =>
+      !user.isPlaceholder &&
+      SearchScopeResolver.scopesFor(user.userRole)
+          .contains(SearchScope.clients);
+
   @override
   State<StatefulWidget> createState() {
     return _BorrowerDetailScreenState();
@@ -32,7 +48,10 @@ class BorrowerDetailScreen extends StatefulWidget {
 }
 
 class _BorrowerDetailScreenState extends State<BorrowerDetailScreen> {
-  final cashPoolService = CashPoolService();
+  /// The width the loans table was designed for: its columns are fractions
+  /// of the viewport (`_buildColumnSpan`), so at phone width every cell is
+  /// an ellipsis. On a phone it is scrolled sideways at this width.
+  static const _designedWidth = 1000.0;
 
   @override
   void initState() {
@@ -47,11 +66,24 @@ class _BorrowerDetailScreenState extends State<BorrowerDetailScreen> {
     context.read<LoansBloc>().getPrincipalBorrowers(widget.userId);
   }
 
+  /// Back arrow and Close, everywhere the screen appears. In the dialog the
+  /// top route is the dialog itself, so `pop` closes it (`BorrowerScreen`
+  /// listens for that and drops `&id=` from the URL). On a pushed full-screen
+  /// page — mobile, where `goSafe` pushes — `pop` returns to the list. A
+  /// full-screen page reached by `go` is the only page on the stack: popping
+  /// it left a blank screen, and off mobile the arrow did nothing at all.
+  /// `GoRouter.canPop` sees dialogs too; they sit on the same root navigator.
+  void _exit(BuildContext context) {
+    final router = GoRouter.of(context);
+    if (router.canPop()) {
+      router.pop();
+    } else {
+      router.go(Paths.index);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    // final isCompactOrMedium =
-    //     getScreenSize(context: context).index <= ScreenSize.medium.index;
-
     return BlocBuilder<UserBloc, UserState>(
       buildWhen: (prev, next) {
         return next.status == UserStatus.selected;
@@ -65,22 +97,19 @@ class _BorrowerDetailScreenState extends State<BorrowerDetailScreen> {
 
         return Scaffold(
           appBar: AppBar(
+            // Arrow (24) plus avatar (40) do not fit the default 56.
+            leadingWidth: 80,
             leading: InkWell(
-              onTap: isMobilePlatform
-                  ? () {
-                      GoRouter.of(context).pop();
-                    }
-                  : null,
+              onTap: () => _exit(context),
               child: Padding(
-                padding: EdgeInsets.only(
-                  left: isMobilePlatform ? 0 : 16,
+                padding: const EdgeInsets.only(
+                  left: 8,
                   top: 16,
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (isMobilePlatform)
-                      const Icon(Icons.arrow_back_ios_new_rounded),
+                    const Icon(Icons.arrow_back_ios_new_rounded),
                     AppWidgets.profileIcon(
                       context,
                       avatarOnly: true,
@@ -126,160 +155,220 @@ class _BorrowerDetailScreenState extends State<BorrowerDetailScreen> {
         final address = context.read<UserBloc>().address;
         final uploadedFiles =
             context.read<LoansBloc>().selectedBorrowerLoanFiles;
+        final hasRows =
+            principalBorrowers.isNotEmpty || userLoanViews.isNotEmpty;
 
-        if (!isCompactOrMedium) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        if (isCompactOrMedium) {
+          // The wide body, stacked: every section, one column, scrolling.
+          return ListView(
             children: [
-              SizedBox(
-                height: 1200 * 0.4,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (user != null) ...[
-                            const Text(
-                              'Basic Information',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 16,
-                              ),
-                            ),
-                            const Gap(16),
-                            AppWidgets.separatedItem(
-                              name: 'Name',
-                              description: user.completeNameEasternOrder,
-                            ),
-                            const Gap(16),
-                            AppWidgets.separatedItem(
-                              name: 'Address',
-                              description: address.toString(),
-                            ),
-                            const Gap(4),
-                            AppWidgets.separatedItem(
-                              name: 'Birthdate',
-                              description: user.birthDate.toDefaultDateFormat(),
-                            ),
-                            const Gap(4),
-                            AppWidgets.separatedItem(
-                              name: 'Mobile number',
-                              description: user.mobileNumber,
-                            ),
-                            const Gap(4),
-                            AppWidgets.separatedItem(
-                              name: 'Facebook profile',
-                              description: user.facebookProfileUrl ?? 'N/A',
-                            ),
-                          ],
-                          const Gap(24),
-                          if (uploadedFiles.isNotEmpty) ...[
-                            AppWidgets.defaultOutlinedButton(
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
-                                      'View uploaded files',
-                                      maxLines: 2,
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 16,
-                                      ),
-                                    ),
-                                    const Spacer(),
-                                    InkWell(
-                                      onTap: () {
-                                        showDialog(
-                                          context: context,
-                                          builder: (context) {
-                                            return AlertDialog(
-                                              content: SizedBox(
-                                                width: 1000,
-                                                height: 800,
-                                                child: FileViewerWidget(
-                                                  items: uploadedFiles,
-                                                ),
-                                              ),
-                                            );
-                                          },
-                                        );
-                                      },
-                                      child:
-                                          const Icon(Icons.visibility_rounded),
-                                    ),
-                                  ],
-                                ),
-                                onPressed: () {
-                                  showDialog(
-                                    context: context,
-                                    builder: (context) {
-                                      return AlertDialog(
-                                        content: SizedBox(
-                                          width: 1000,
-                                          height: 800,
-                                          child: FileViewerWidget(
-                                            items: uploadedFiles,
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                  );
-                                },),
-                          ],
-                        ],
-                      ),
-                    ),
-                    const Gap(24),
-                    Expanded(
-                      flex: 2,
-                      child: CashPoolInformationWidget(
-                        userId: widget.userId,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              if (user != null) ...[
+                _basicInformation(user, address, stacked: true),
+                const Gap(24),
+              ],
+              if (uploadedFiles.isNotEmpty) ...[
+                _uploadedFilesButton(context, uploadedFiles),
+                const Gap(24),
+              ],
+              // Stacks its own two columns at this width.
+              CashPoolInformationWidget(userId: widget.userId),
               const Gap(24),
-              if (principalBorrowers.isNotEmpty ||
-                  userLoanViews.isNotEmpty) ...[
-                Expanded(
-                  child: _buildTable(context),
+              if (hasRows) ...[
+                _sideways(
+                  height: _tableHeight(principalBorrowers, userLoanViews),
+                  child: _buildTable(context, inert: true),
                 ),
                 const Gap(24),
-              ] else
-                const Spacer(),
-              SizedBox(
-                width: double.infinity,
-                child: AppWidgets.defaultFilledButton(
-                  child: const Text('Close'),
-                  onPressed: () {
-                    Navigator.of(context, rootNavigator: true).pop();
-                  },
-                ),
-              ),
+              ],
+              _closeButton(context),
             ],
           );
         }
 
-        return ListView.separated(
-          itemBuilder: (context, index) {
-            return ListTile(
-              title: Text('Item $index'),
-            );
-          },
-          separatorBuilder: (context, index) {
-            return const Gap(16);
-          },
-          itemCount: principalBorrowers.length + userLoanViews.length,
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              height: 1200 * 0.4,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (user != null)
+                          _basicInformation(user, address, stacked: false),
+                        const Gap(24),
+                        if (uploadedFiles.isNotEmpty)
+                          _uploadedFilesButton(context, uploadedFiles),
+                      ],
+                    ),
+                  ),
+                  const Gap(24),
+                  Expanded(
+                    flex: 2,
+                    child: CashPoolInformationWidget(
+                      userId: widget.userId,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Gap(24),
+            if (hasRows) ...[
+              Expanded(
+                child: _buildTable(context),
+              ),
+              const Gap(24),
+            ] else
+              const Spacer(),
+            _closeButton(context),
+          ],
         );
       },
     );
   }
 
-  TableView _buildTable(BuildContext context) {
+  /// [stacked] puts each value under its label — a phone has no room for
+  /// the label-left, value-right row, whose value text has no width to wrap
+  /// in and overflows on a real address.
+  Widget _basicInformation(
+    User user,
+    Address? address, {
+    required bool stacked,
+  }) {
+    final entries = <(String, String)>[
+      ('Name', user.completeNameEasternOrder),
+      ('Address', address?.toString() ?? 'N/A'),
+      ('Birthdate', user.birthDate.toDefaultDateFormat()),
+      ('Mobile number', user.mobileNumber),
+      ('Facebook profile', user.facebookProfileUrl ?? 'N/A'),
+    ];
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Basic Information',
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: 16,
+          ),
+        ),
+        const Gap(16),
+        for (final (i, (name, value)) in entries.indexed) ...[
+          if (i > 0) Gap(i == 1 ? 16 : 4),
+          if (stacked)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                Text(value),
+              ],
+            )
+          else
+            AppWidgets.separatedItem(name: name, description: value),
+        ],
+      ],
+    );
+  }
+
+  Widget _uploadedFilesButton(
+    BuildContext context,
+    List<RequirementSubmission> uploadedFiles,
+  ) {
+    void showFiles() {
+      showDialog<void>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            content: SizedBox(
+              width: 1000,
+              height: 800,
+              child: FileViewerWidget(
+                items: uploadedFiles,
+              ),
+            ),
+          );
+        },
+      );
+    }
+
+    return AppWidgets.defaultOutlinedButton(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'View uploaded files',
+            maxLines: 2,
+            style: TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: 16,
+            ),
+          ),
+          const Spacer(),
+          InkWell(
+            onTap: showFiles,
+            child: const Icon(Icons.visibility_rounded),
+          ),
+        ],
+      ),
+      onPressed: showFiles,
+    );
+  }
+
+  Widget _closeButton(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: AppWidgets.defaultFilledButton(
+        child: const Text('Close'),
+        onPressed: () => _exit(context),
+      ),
+    );
+  }
+
+  /// The table on a phone: the designed width, scrolled sideways.
+  Widget _sideways({required double height, required Widget child}) {
+    return SizedBox(
+      height: height,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: SizedBox(
+          width: _designedWidth,
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  /// The table's own height, so it can sit inside a scrolling column:
+  /// `_buildRowSpan` gives a header 80 and a row 48.
+  double _tableHeight(
+    List<PrincipalBorrower> principalBorrowers,
+    List<UserLoanView> userLoanViews,
+  ) {
+    var height = 0.0;
+    if (principalBorrowers.isNotEmpty) {
+      height += 80 + principalBorrowers.length * 48;
+    }
+    if (userLoanViews.isNotEmpty) {
+      height += 80 + userLoanViews.length * 48;
+    }
+    return height;
+  }
+
+  /// [inert]: the table neither scrolls nor claims drags, for when it is
+  /// sized to its content inside another scrollable that should.
+  TableView _buildTable(BuildContext context, {bool inert = false}) {
     final principalBorrowers =
         context.read<LoansBloc>().selectedBorrowerPrincipalBorrowers;
     final userLoanViews = context.read<LoansBloc>().selectedBorrowerLoanViews;
@@ -301,6 +390,12 @@ class _BorrowerDetailScreenState extends State<BorrowerDetailScreen> {
     }
 
     return TableView.builder(
+      verticalDetails: ScrollableDetails.vertical(
+        physics: inert ? const NeverScrollableScrollPhysics() : null,
+      ),
+      horizontalDetails: ScrollableDetails.horizontal(
+        physics: inert ? const NeverScrollableScrollPhysics() : null,
+      ),
       cellBuilder: _buildCell,
       columnCount: columnCount,
       columnBuilder: _buildColumnSpan,
