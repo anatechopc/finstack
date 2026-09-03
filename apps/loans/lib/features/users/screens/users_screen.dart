@@ -6,7 +6,6 @@ import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/users/bloc/user_bloc.dart';
-import 'package:loooans/features/users/screens/borrower_detail_screen.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/constants.dart';
@@ -399,7 +398,10 @@ class _UsersScreenState extends State<UsersScreen> {
       //           },
       //         );
       //       } else {
-      //         showBorrowerDetailsDialog(context, items[index - 1].id);
+      //         AppWidgets.showBorrowerDetailsDialog(
+      //           context,
+      //           items[index - 1].id,
+      //         );
       //       }
       //     },
       //   ),
@@ -409,29 +411,6 @@ class _UsersScreenState extends State<UsersScreen> {
       //     color: AppColors.white,
       //   );
       // }
-    );
-  }
-
-  void showBorrowerDetailsDialog(
-    BuildContext context,
-    String userId,
-  ) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          contentPadding: const EdgeInsets.all(24),
-          content: Container(
-            width: 1200,
-            // height: 1000,
-            constraints: const BoxConstraints(maxHeight: 1200, maxWidth: 1200),
-            child: BorrowerDetailScreen(
-              userId: userId,
-            ),
-          ),
-          backgroundColor: AppColors.green1,
-        );
-      },
     );
   }
 }

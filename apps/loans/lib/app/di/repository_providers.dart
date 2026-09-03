@@ -9,6 +9,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
+import 'package:loooans/features/search/firestore_search_index.dart';
+import 'package:loooans/features/search/search_index.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:notification_repository/notification_repository.dart';
 import 'package:payment_repository/payment_repository.dart';
@@ -34,6 +36,11 @@ class AppRepositoryProviders extends StatelessWidget {
         RepositoryProvider(create: (context) => AuthenticationRepository()),
         RepositoryProvider(create: (context) => StorageRepository()),
         RepositoryProvider(create: (context) => ProductViewRepository()),
+        // Registered as the interface, not the implementation: `SearchBloc`
+        // reads `SearchIndex`, which is what makes the engine swappable.
+        RepositoryProvider<SearchIndex>(
+          create: (context) => FirestoreSearchIndex(),
+        ),
         RepositoryProvider(create: (context) => ProductRepository()),
         RepositoryProvider(create: (context) => LoanRepository()),
         RepositoryProvider(create: (context) => LoanScheduleRepository()),

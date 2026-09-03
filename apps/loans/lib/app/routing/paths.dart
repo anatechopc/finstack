@@ -36,6 +36,7 @@ class Paths {
   static const PathTemplate setPassword = '/set-password';
   static const PathTemplate chat = '/chat';
   static const PathTemplate chatRoom = '/chat/:roomId';
+  static const PathTemplate search = '/search';
 
   static const PathAction actionCreate = 'create';
   static const PathAction actionUpdate = 'update';
@@ -66,4 +67,11 @@ class Paths {
   static const PathExtra extraAllowUnauthenticated = 'allowUnauthenticated';
   static const QueryParamKey paramMaxLoanable = 'maxLoanable';
   static const QueryParamKey paramMaxPeriod= 'maxPeriod';
+
+  /// `/search` query keys, read by `SearchScreen.fromQueryParameters` and
+  /// written by the overlay's "See all" and the field's `Ctrl K`.
+  static const QueryParamKey paramSearchQuery = 'q';
+  static const QueryParamKey paramSearchScope = 'scope';
+  static const QueryParamKey paramSearchCompany = 'company';
+  static const QueryParamKey paramSearchTerm = 'term';
 }

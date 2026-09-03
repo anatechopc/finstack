@@ -9,6 +9,7 @@ import 'package:loooans/app/model/notification_model.dart';
 import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/capital/bloc/capital_bloc.dart';
 import 'package:loooans/features/chat/bloc/conversations_bloc.dart';
+import 'package:loooans/features/search/widget/search_field.dart';
 import 'package:loooans/features/users/bloc/user_bloc.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/notification_service.dart';
@@ -79,6 +80,12 @@ class LayoutWidgets {
     );
   }
 
+  /// [showSearchField] is not role-derived, unlike the buttons beside it:
+  /// every role has at least one search scope (a customer has offers), so
+  /// there is no role for which the field should be hidden. It keeps the field
+  /// off app bars, not off roles — and it defaults to false because the only
+  /// caller is the `AppWidgets.defaultAppBar` pass-through, which forwards
+  /// each flag by hand.
   static AppBar defaultAppBar(
     BuildContext context, {
     bool showLogin = true,
@@ -88,6 +95,7 @@ class LayoutWidgets {
     bool showAdvertiseButton = false,
     bool showAddBorrowerButton = false,
     bool showMessagesButton = false,
+    bool showSearchField = false,
   }) {
     final isCompact = getScreenSize(context: context) == ScreenSize.compact;
 
@@ -267,21 +275,16 @@ class LayoutWidgets {
               width: 8,
             ),
           ],
-          IconButton(
-            onPressed: () {
-              debugPrint('route location: ${GoRouter.of(context).location}');
-            },
-            style: IconButton.styleFrom(
-              backgroundColor: AppColors.white,
-              foregroundColor: AppColors.black,
+          // Stays inside the `!showSignUp && !showLogin` block above: that
+          // guard is the only thing keeping search off the login, register and
+          // set-password app bars, where `AuthenticationService.instance.user`
+          // throws `Please login`.
+          if (showSearchField) ...[
+            const SearchField(),
+            const SizedBox(
+              width: 8,
             ),
-            icon: const Icon(
-              Icons.search_rounded,
-            ),
-          ),
-          const SizedBox(
-            width: 8,
-          ),
+          ],
           if (showMessagesButton) ...[
             BlocBuilder<ConversationsBloc, ConversationsState>(
               builder: (context, state) {

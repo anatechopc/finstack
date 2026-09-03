@@ -61,6 +61,7 @@ class AppWidgets {
     bool showAdvertiseButton = false,
     bool showAddBorrowerButton = false,
     bool showMessagesButton = false,
+    bool showSearchField = false,
   }) =>
       LayoutWidgets.defaultAppBar(
         context,
@@ -71,6 +72,7 @@ class AppWidgets {
         showAdvertiseButton: showAdvertiseButton,
         showAddBorrowerButton: showAddBorrowerButton,
         showMessagesButton: showMessagesButton,
+        showSearchField: showSearchField,
       );
 
   static Widget separatedItem({
@@ -383,6 +385,17 @@ class AppWidgets {
         userLoanView: userLoanView,
         loanId: loanId,
         productId: productId,
+      );
+
+  static Future<void> showBorrowerDetailsDialog(
+    BuildContext context,
+    String userId, {
+    VoidCallback? onClosed,
+  }) =>
+      DialogWidgets.showBorrowerDetailsDialog(
+        context,
+        userId,
+        onClosed: onClosed,
       );
 
   static Future<void> showAdditionalLoanDetailDialog(

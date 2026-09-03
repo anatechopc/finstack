@@ -11,6 +11,10 @@ on:
     paths:
       - 'apps/loans/**'
       - 'packages/**'
+      # The Dart search golden-vector test asserts this file, which the Go
+      # indexer owns. Without it here, editing the contract does not run the
+      # test that pins Dart to it, and the two normalizers drift silently.
+      - 'functions/loans/utils/search/testdata/**'
       - '.github/workflows/loans-app-*.yml'
   pull_request:
     branches:
@@ -18,6 +22,10 @@ on:
     paths:
       - 'apps/loans/**'
       - 'packages/**'
+      # The Dart search golden-vector test asserts this file, which the Go
+      # indexer owns. Without it here, editing the contract does not run the
+      # test that pins Dart to it, and the two normalizers drift silently.
+      - 'functions/loans/utils/search/testdata/**'
       - '.github/workflows/loans-app-*.yml'
   create:
     branches:

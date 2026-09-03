@@ -555,3 +555,180 @@ Widths worth knowing: the anchor line has ~210px at 390dp, and
 `Loan ₱50k · Business loan` needs ~275px, so it ellipsizes — which is why the
 **amount precedes the product type**. Truncation must not eat the discriminator
 that tells a borrower's several loans apart.
+
+## Search frontend — 8 tasks (branch `docs/amend-search-frontend-plan`, PR #106, 2026-08-31)
+
+Built the query side against the **shipped Go indexer**, not the plan's prose.
+The plan predated the backend and had drifted; the spec had drifted further and
+was corrected in the same PR (it still described single-pass phone trimming, an
+unbounded token rule, and three offer facets where two shipped).
+
+Suite went **104 → 233**. Every guard below was mutation-proven: the mutation was
+applied, the named test observed failing, then reverted and the file re-verified
+byte-identical. **A guard without a proven-failing test is not a guard.**
+
+**Authorization is the whole feature.** Three places could have leaked client PII
+and all three were wrong in the plan:
+- `SearchRequest.companyId` came from `AuthenticationService.company`, which
+  **throws for `customer` AND `appAdmin`** (it gates on `role.index >
+  customer.index`; appAdmin is 0 and customer is 1, so both fail). The throw was
+  swallowed into an error state, so borrower search — the borrower's *only*
+  scope — would have been permanently and silently broken. The index resolves the
+  company itself now, from `UserRole.companyManagedRoles`.
+- `/search?scope=clients` minted a `SearchScope` straight from the query param,
+  and **`router.dart` has no role gate anywhere**. It is now a *candidate* passed
+  to `SearchScopeResolver` as `pinnedScope` and intersected with the role's
+  scopes, exactly like a typed prefix.
+- `FirestoreSearchIndex` reuses `SearchScopeResolver.scopesFor` rather than
+  re-deriving the role check, so the two cannot drift apart.
+
+**Two pre-auth crash guards, same root cause.** `AuthenticationService.user`
+throws `Please login` on `/login`, `/register`, `/set-password`. The app-bar field
+must stay inside `layout_widgets.dart`'s `if (!showSignUp && !showLogin)` block,
+and the `Ctrl/⌘K` wrapper — mounted above the `Router` in `app.dart`, the only
+position reaching the twelve out-of-shell routes — must guard on `isLoggedIn`.
+`isLoggedIn` is safe there because it reads the nullable `_user` field, never the
+throwing getter. Both have regression tests asserting `takeException()` is null
+**first**, so the failure names the crash rather than a downstream flag.
+
+**Dart cannot mirror Go's folding without a normalizer.** Go does NFD → strip
+every Mn → NFC. Dart core has no normalization, so `unorm_dart` was added. The
+plan's 25-char fold table cannot handle `Nguyễn`, `Erdős`, `Ștefan`, `Māori`, and
+must NOT fold `Straße`→`strasse` or `Søren`→`soren`, which Go does not. The
+golden file cannot prove this: its only non-ASCII case is a **precomposed** `Peña`,
+the one character the table already covered.
+
+**Gotchas worth keeping:**
+- `load()` carries `lastDocumentSnapshot` across calls — every search needs
+  `reset: true` or the second query silently paginates the first.
+- `QueryStatement` already supports `arrayContainsAny`, which is what makes the
+  last-4 phone search possible with no package change (`0142` canonicalizes to
+  `142` and matches nothing, so raw and canonical are both sent).
+- `ProductViewRepository` is `final` — it cannot be mocked. The index takes
+  injectable loader typedefs instead, which is also what made the authorization
+  predicates testable.
+- `SearchResults.empty` is pinned to the clients scope; using it on the offers
+  scope leaves `results.scope` disagreeing with `state.scope`.
+- The interest-rate facet is **deferred to finstack#103**: it is a range filter,
+  and `ProductViewFirestoreService` hardcodes `orderBy('updated_at')` before its
+  filter loop, so the query is illegal. Removing the chip is not enough — leaving
+  `params['interest']` parsed keeps the crash reachable by deep link.
+- `LayoutWidgets.defaultAppBar` has exactly ONE caller. A flag added only there
+  is unreachable from `home_screen.dart`; it must be plumbed through
+  `AppWidgets.defaultAppBar` too.
+- `NotificationService.instance` at `layout_widgets.dart:310` is NOT inside the
+  `showMessagesButton` block (288-308) — it is a sibling. Reading line order out
+  of a grep instead of checking the block structure got this wrong twice.
+
+**Known gaps (deliberate, not oversights):** no company picker, so that facet is
+deep-link only (I13 wants the label resolution specified first); tapping a client
+result opens the clients list, not the client, because `Paths.clientsAction`
+demands a productId and loanId a `users` result does not carry; `/offers/:action`,
+`/profile/:action` and `/chat/:roomId` have the shortcut but no visible
+affordance; and `reset: true` is verified by reading, not by a test — testing it
+needs the Firestore services injectable, a `packages/` change.
+
+### Follow-ups after local verification (same PR, 2026-09-02)
+
+The user ran the app locally before accepting each change (see the
+`verify-ui-locally-before-push` memory). Three things that only showed up live:
+
+- **Every way of opening a borrower goes through `BorrowerScreen.openBorrower`** —
+  table row, compact list item, search result. It navigates to
+  `/?sec=borrowers&id=<id>` in classic UI (the section hosts the dialog) and to
+  `/borrowers/:id` full-screen in non-classic, which has no borrower surface. The
+  search tile once carried its own copy of the URL and drifted the same day. Closing
+  the dialog strips `&id=`, otherwise re-tapping the same row is a no-op. The compact
+  list item's `onTap` had been entirely commented out.
+- **Scope default is by role, not route.** `/` used to force offers ("the
+  marketplace"), so a teller typing a client's name on the home page searched
+  products. Now: clients if the role has it, else offers; `/offers/*` still offers.
+  Customers cannot reach clients by any route, prefix, or pin — tested adversarially.
+- **Prefixes accept aliases.** The only offers keyword was `products:` (from the spec);
+  the first admin typed `offer:` and searched clients for "offer: …". Both scopes take
+  the plural, singular, and domain word. `SearchScope.prefix` stays the hint keyword.
+- Testing seams: `SettingsService.setClassicUIForTest`; `tester.view.physicalSize`
+  (not `setSurfaceSize`) is what `MediaQuery`/`getScreenSize` read; providers must sit
+  ABOVE `MaterialApp` for a `showDialog` route to see them.
+
+### Code-review fixes, 29 findings (same PR, 2026-09-03)
+
+A ten-angle inline review found 27 issues and missed the worst one; a single independent
+reviewer found it. Fixed in three packages by file ownership (search core / search
+widgets / routing+borrower screens). What the next session must not undo:
+
+- **`/borrowers/:action` is gated** on `SearchScopeResolver.scopesFor(role).contains(clients)`
+  (`BorrowerDetailScreen.permits`), and so is `MainScreen`'s compact deep-link redirect. A
+  deep-linkable route must carry the same role gate as the section it exposes — this one
+  shipped without it and a customer could read any user's profile and loans. Reuse
+  `scopesFor`; never write a second predicate.
+- **`SearchClearedEvent` on logout** (`ClearSearchOnLogout` in `app.dart`) and the field
+  opens no overlay on an empty controller: the app-lifetime `SearchBloc` otherwise showed
+  the previous account's client rows to the next account on the same device.
+- **`MainScreen` has a stable key** (`ValueKey(sec ?? 'home')`), not `UniqueKey()`. Query-only
+  URL changes update it in place; `BorrowerScreen.didUpdateWidget` opens/closes the dialog
+  on `id` changes without re-running `loadNext`. The remount cost was ~1,200 Firestore
+  reads per dialog open+close on a 300-borrower company.
+- **`openBorrower` rule:** wide classic → `/?sec=borrowers&id=` (dialog over the list);
+  compact/medium and non-classic → `goSafe('/borrowers/:id')` (pushed on mobile so back
+  works). `BorrowerDetailScreen` now has a real compact body and an exit that pops if it
+  can, else goes home. The cash-pool widget stacks its columns below 840 px.
+- **Query/refinement split like the indexer:** `SearchTokenizer.wordForms` (joined form +
+  parts) is used by both `queryTokens` and `_matchesWords`; a 4-digit phone term matches
+  prefix OR tail; everything counts runes. The golden test now asserts
+  `queryTokens(input) ⊆ Go's tokens` for every indexed value — the contract production
+  depends on — and the indexer-mirror producers live in `test/support/`, not `lib/`.
+- **Scope rules:** `_defaultScope` parses the location as a `Uri` (`/offers/*` OR
+  `?sec=offers` → offers); `QueryChangedEvent` carries `filters` (field sends empty;
+  screen sends its chips) and `candidateLimit` (overlay 10); `SearchScreen.didUpdateWidget`
+  re-syncs field/pin/filters on URL change; the shell field is hidden on `/search`;
+  `Ctrl/⌘K` does nothing while a modal is up and carries typed text from the field.
+- Test facts that cost time: `setSurfaceSize` does not change `MediaQuery` (use
+  `tester.view.physicalSize`); providers must sit above `MaterialApp` for a `showDialog`
+  route; on Android `await router.goSafe(...)` awaits a push future that completes only on
+  pop (a 10-minute hang); `find.text` matches table header columns too.
+
+Known leftover: on `/search`, focus on a chip + `Ctrl K` still reaches the root wrapper and
+drops `q`; a pasted `/?sec=borrowers&id=X` on a phone still uses the build-time push.
+
+**Settings/UI-mode facts that cost hours (2026-09-03):** the classic/non-classic layout
+comes from a per-user `dev_settings` doc (`user_id ==`); **no doc → non-classic
+default on every route**, and a cold load shows the pre-settings paint for 20–40 s while
+the session restores. Check the doc (Firestore runQuery on `dev_settings`) BEFORE
+diagnosing "the classic layout isn't applying". Separately, `SettingsService.listen()`
+used to hand a one-shot default stream to any subscriber that arrived before
+`initializeForUser` (the shell's StreamBuilder on a cold load); it is now a live stream,
+and the repository subscription is taken AFTER `loadNext(reset: true)` because that call
+synchronously replaces the repository's broadcast controller. The app registers a
+service worker on every boot: unregister it (or hard-reload) before trusting a rebuilt
+bundle in the browser.
+
+### Offers: the URL owns the selection too (same PR, 2026-09-03)
+
+Reported after the review fixes: an offer opened from search landed on `/?sec=offers`
+with no id, while a borrower opened as `/?sec=borrowers&id=`. `LoanOffersWidget` now
+follows the borrowers rule on wide screens — `initialProductId` from `MainScreen`
+(`&id=`), `_sync` on init and on URL change (select by id, with the grid's own view when
+it has it; unselect when the id leaves), a card tap and `LoanOffersWidget.openOffer`
+(what a search result calls) are URL writes, and the panel/dialog closing strips the id.
+Other query params (`maxLoanable`, `maxPeriod`) survive the rewrite. Compact/medium
+keep the old flow: the selection drives the navigation to the full-screen route, whose
+own URL is the deep link. Admin dialog subtleties: `_dialogFor` tracks the open edit
+dialog; `_sync` pops it when the URL moves, and the close path re-syncs to whatever the
+URL says by then instead of unselecting (an `unselected` there would strip the newer
+id). A deep link before the grid renders selects by id alone — `selectProduct`
+already loads the view by `product_id` for that ("to cover dynamic link").
+Tests: `test/features/products/loan_offers_widget_test.dart` (9; sync and strip guards
+proven by mutation) + a wide case in `search_result_tile_test.dart`. The offer card
+overflows its 258px cell under the test font (Ahem, every glyph full-width), so that
+test drops overflow reports only — the card itself is untouched.
+Independent review of that commit (1 important, 4 minor): `_sync` skipped selecting when
+the bloc still held the product from an earlier visit, but a fresh mount paints from the
+*state*, whose last value after a selection is `refresh` — a revisit of
+`/?sec=offers&id=X` showed nothing until a third tap. Fixed: `_sync` is post-frame,
+wide-only (compact/medium leave the id to `MainScreen`'s redirect, as Borrowers does),
+and always selects on a mount; the card highlight and panel colour are set from the
+`selected` state so deep links and search results get them too. Known and left: a bogus
+id in the URL selects nothing and stays in the URL (the bloc's error state is not
+handled here); a fast double-click on the same card can leave the panel open with no id.
+The admin dialog path (`_dialogFor`) is verified by click-through only, not by a test.

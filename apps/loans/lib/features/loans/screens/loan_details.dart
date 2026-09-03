@@ -17,6 +17,7 @@ import 'package:loooans/features/products/bloc/product_bloc.dart';
 import 'package:loooans/features/products/bloc/product_status.dart';
 import 'package:loooans/features/products/screen/loan_schedule_widget.dart';
 import 'package:loooans/features/products/widget/quotation_widget.dart';
+import 'package:loooans/features/search/widget/search_app_bar_action.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
@@ -164,6 +165,10 @@ class _LoanDetailsState extends State<LoanDetails> {
               ),
             ),
             actions: [
+              // Only in `_bodyFullScreen`, which is the `/loans/:action`
+              // rendering: `loans_screen.dart:110` builds `_body` instead and
+              // already sits under the shell app bar's `SearchField`.
+              const SearchAppBarAction(),
               Padding(
                 padding: const EdgeInsets.only(right: 16),
                 child: InkWell(

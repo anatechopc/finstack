@@ -27,8 +27,10 @@ import 'package:loooans/features/registration/screens/register_screen.dart';
 import 'package:loooans/features/registration/screens/registration_complete_screen.dart';
 import 'package:loooans/features/reports/bloc/reports_bloc.dart';
 import 'package:loooans/features/reports/screen/dashboard_screen.dart';
+import 'package:loooans/features/search/screen/search_screen.dart';
 import 'package:loooans/features/set_password/cubit/set_password_cubit.dart';
 import 'package:loooans/features/set_password/screen/set_password_screen.dart';
+import 'package:loooans/features/users/screens/borrower_detail_screen.dart';
 import 'package:loooans/features/users/screens/loan_client_detail.dart';
 import 'package:loooans/features/users/screens/update_profile_screen.dart';
 import 'package:loooans/features/users/screens/users_screen.dart';
@@ -38,7 +40,10 @@ import 'package:loooans/services/settings_service.dart';
 import 'package:user_loan_view_repository/user_loan_view_repository.dart';
 import 'package:user_repository/user_repository.dart';
 
-RouterConfig<Object> buildAppRoutes() {
+/// Returns the concrete `GoRouter`, not `RouterConfig`: `app.dart` needs
+/// `go` to drive the `Ctrl K` shortcut, which is bound above the `Router`
+/// widget and so has no `GoRouter.of(context)` to reach for.
+GoRouter buildAppRoutes() {
   var servicesInitialized = false;
 
   return GoRouter(
@@ -195,7 +200,16 @@ RouterConfig<Object> buildAppRoutes() {
                 if (state.uri.queryParameters.isEmpty) {
                   GoRouter.of(context).go(Paths.dashboard);
                 } else {
-                  GoRouter.of(context).go(state.uri.toString());
+                  // Re-navigate to the SAME url so `buildMainPage` re-runs
+                  // and re-keys `MainScreen` for the mode that just loaded.
+                  // The mode rides in `extra`, which takes part in route
+                  // equality: the first time it differs this is a real
+                  // navigation, every later build it is deduped as a no-op.
+                  // (`UniqueKey()` used to remount on every build here.)
+                  GoRouter.of(context).go(
+                    state.uri.toString(),
+                    extra: useClassicUI,
+                  );
                 }
               } else if (!useClassicUI && state.uri.path == Paths.dashboard) {
                 GoRouter.of(context).go(Paths.index);
@@ -211,27 +225,7 @@ RouterConfig<Object> buildAppRoutes() {
         routes: [
           GoRoute(
             path: Paths.index,
-            builder: (context, state) {
-              if (!AuthenticationService.instance.isLoggedIn) {
-                return const IndexScreen();
-              }
-              String? sec;
-              String? id;
-
-              if (state.uri.queryParameters.containsKey('sec')) {
-                sec = state.uri.queryParameters['sec'];
-              }
-
-              if (state.uri.queryParameters.containsKey('id')) {
-                id = state.uri.queryParameters['id'];
-              }
-
-              return MainScreen(
-                key: UniqueKey(),
-                section: sec,
-                id: id,
-              );
-            },
+            builder: buildMainPage,
           ),
           GoRoute(
             path: Paths.dashboard,
@@ -254,6 +248,16 @@ RouterConfig<Object> buildAppRoutes() {
           GoRoute(
             path: Paths.chat,
             builder: (context, state) => const ConversationsScreen(),
+          ),
+          // Reading state from query params is what makes results
+          // deep-linkable. The mapping lives on the screen, not here: this
+          // file has no role gate, so `?scope=` must reach it as a raw string
+          // and be intersected with the role's permitted scopes by
+          // `SearchScopeResolver`.
+          GoRoute(
+            path: Paths.search,
+            builder: (context, state) =>
+                SearchScreen.fromQueryParameters(state.uri.queryParameters),
           ),
         ],
       ),
@@ -342,6 +346,10 @@ RouterConfig<Object> buildAppRoutes() {
         },
       ),
       GoRoute(
+        path: Paths.borrowersAction,
+        builder: buildBorrowerPage,
+      ),
+      GoRoute(
         path: Paths.clientsAction,
         builder: (context, state) {
           final action = state.pathParameters['action'];
@@ -355,6 +363,7 @@ RouterConfig<Object> buildAppRoutes() {
                 userId: extras['userId'] as String,
                 loanId: extras['loanId'] as String,
                 userLoanView: extras['userLoanView'] as UserLoanView?,
+                showSearchAction: true,
               );
             }
           }
@@ -380,4 +389,59 @@ RouterConfig<Object> buildAppRoutes() {
       ),
     ],
   );
+}
+
+/// The `/` page. Top-level so a test can mount it behind a small router.
+///
+/// Keyed by SECTION, not `UniqueKey()`. A query-only change — `&id=` arriving
+/// as a borrower opens, leaving as it closes — now updates `MainScreen` in
+/// place. Remounting it re-ran every section's `initState`: the whole
+/// customer list, its addresses and the RTDB report, twice per dialog, and
+/// scrolled the list to the top. A section change still remounts, which is
+/// what the sections' `initState` loads are for.
+@visibleForTesting
+Widget buildMainPage(BuildContext context, GoRouterState state) {
+  if (!AuthenticationService.instance.isLoggedIn) {
+    return const IndexScreen();
+  }
+
+  final sec = state.uri.queryParameters['sec'];
+  final classic = SettingsService.instance.appUseClassicUI;
+
+  return MainScreen(
+    // The mode is part of the key: when the settings stream flips it, the
+    // shell re-navigates here (above) and this remounts once for the new
+    // layout. `id` is deliberately NOT in the key.
+    key: ValueKey('${sec ?? 'home'}:${classic ? 'classic' : 'modern'}'),
+    section: sec,
+    id: state.uri.queryParameters['id'],
+  );
+}
+
+/// The `/borrowers/:action` page. Top-level so a test can pump it with a
+/// seeded `AuthenticationService.instance.user` and no full app.
+///
+/// `redirect` passes every verified user, so this is the role gate: a
+/// customer who pasted another user's id used to get that user's profile
+/// and loan history. `BorrowerDetailScreen.permits` is the boundary search
+/// already uses, not a second one.
+@visibleForTesting
+Widget buildBorrowerPage(BuildContext context, GoRouterState state) {
+  if (!BorrowerDetailScreen.permits(AuthenticationService.instance.user)) {
+    return const PageNotFound();
+  }
+
+  final action = state.pathParameters['action'];
+
+  if (action != null && Paths.isPathId(action)) {
+    // The path id IS the userId, and that is all this screen needs:
+    // `BorrowerDetailScreen.initState` selects the user and loads their
+    // loans and principal borrowers from it alone. Read it from the
+    // path rather than `extra` so the screen is deep-linkable and a
+    // missing `extra` cannot throw, which is what `clientsAction`
+    // does with `state.extra!`.
+    return BorrowerDetailScreen(userId: action);
+  }
+
+  return const PageNotFound();
 }

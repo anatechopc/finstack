@@ -16,6 +16,7 @@ import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 import 'package:loooans_helpers/data_helpers.dart';
+import 'package:product_view_repository/product_view_repository.dart';
 
 class LoanOffersWidget extends StatefulWidget {
   const LoanOffersWidget({
@@ -24,12 +25,43 @@ class LoanOffersWidget extends StatefulWidget {
     this.parentMaxWidthConstraint = 1200,
     this.scrollController,
     this.buildFromIndex = false,
+    this.initialProductId,
   });
 
   final bool expanded;
   final double parentMaxWidthConstraint;
   final ScrollController? scrollController;
   final bool buildFromIndex;
+
+  /// The `&id=` of `/?sec=offers&id=<productId>`: the offer the URL says is
+  /// open. On a wide screen the URL owns the selection — see `_sync`.
+  final String? initialProductId;
+
+  /// The one way to open an offer from outside this widget (a search result,
+  /// whichever surface shows it), so it opens exactly as a card tap does and
+  /// the screen-size decision lives in one place.
+  static void openOffer(BuildContext context, ProductView view) {
+    final router = GoRouter.maybeOf(context);
+    if (getScreenSize(context: context).index > ScreenSize.medium.index) {
+      // Wide: write the URL and let `_sync` select when the id arrives — the
+      // address bar is then a deep link to this offer, as it is to a borrower.
+      router?.go('${Paths.index}?sec=offers&id=${view.productId}');
+      return;
+    }
+    // Compact/medium: the selection drives the navigation instead. The
+    // listener in `build` sends it where a card tap goes on these widths (the
+    // full-screen detail; the edit screen for admins), so the selection must
+    // land AFTER the offers page is mounted to listen. Read before
+    // navigating: `go` deactivates this element on the same frame and a
+    // deactivated context cannot `read`. Deferred a frame: `LoanDetails`
+    // listens to `ProductBloc` and pushes a loading dialog on `loading`, and
+    // selecting in the same tick as the navigation reached it still mounted.
+    final products = context.read<ProductBloc>();
+    router?.go('${Paths.index}?sec=offers');
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => products.selectProduct(view.productId, productView: view),
+    );
+  }
 
   @override
   State<LoanOffersWidget> createState() => _LoanOffersWidgetState();
@@ -40,6 +72,18 @@ class _LoanOffersWidgetState extends State<LoanOffersWidget> {
   var _selectedColor = AppColors.red;
   double _maxLoanableAmount = 0;
   double _maxPeriod = 0;
+
+  /// The last list the grid rendered. A card tap finds its view here and
+  /// hands it to the bloc; a deep link or a search result from another page
+  /// arrives before the grid renders and selects by id alone, which costs the
+  /// bloc one extra read (`viewRepository.load` by `product_id`).
+  List<ProductView> _views = const [];
+
+  /// The offer this widget last asked the bloc to select.
+  String? _selectedFor;
+
+  /// The offer whose edit dialog (admins, wide screens) is open.
+  String? _dialogFor;
 
   @override
   void initState() {
@@ -66,6 +110,76 @@ class _LoanOffersWidgetState extends State<LoanOffersWidget> {
     }
 
     super.initState();
+    _sync(widget.initialProductId);
+  }
+
+  /// `MainScreen` is keyed by section, so a change to `&id=` alone arrives
+  /// here as a prop change, not a remount: a card tap or a search result
+  /// (null → id) selects, and browser Back (id → null) unselects.
+  @override
+  void didUpdateWidget(LoanOffersWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialProductId != oldWidget.initialProductId) {
+      _sync(widget.initialProductId);
+    }
+  }
+
+  /// Makes the selection match [id]. Wide screens only: on compact/medium,
+  /// `MainScreen` has already redirected the same URL to the full-screen
+  /// route, and the selection is what drives that navigation — a second
+  /// select here would push a second detail. Post-frame, as
+  /// `BorrowerScreen._syncDialog` is: the width needs `MediaQuery`, which
+  /// `initState` may not read, and `unselectProduct` and a pop emit
+  /// synchronously, which `didUpdateWidget` — during build — may not do.
+  void _sync(String? id) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // The URL moved on again before the frame; the next sync owns it.
+      if (!mounted || widget.initialProductId != id) return;
+      if (getScreenSize(context: context).index <= ScreenSize.medium.index) {
+        return;
+      }
+
+      if (_dialogFor != null) {
+        if (_dialogFor == id) return;
+        // Pop it; its close path in the listener re-syncs to the URL then.
+        Navigator.of(context, rootNavigator: true)
+            .popUntil((route) => route is! PopupRoute);
+        return;
+      }
+
+      final products = context.read<ProductBloc>();
+      if (id == null) {
+        if (products.selectedProduct != null) products.unselectProduct();
+        return;
+      }
+
+      _selectedFor = id;
+      // Always select — even when the bloc still holds this product from an
+      // earlier visit. A fresh mount paints from the *state*, and the last
+      // state after a selection is `refresh` (reviews loaded), which the
+      // panel does not paint; a revisit of `/?sec=offers&id=X` then showed
+      // nothing until a third tap. Re-selecting re-emits `selected`.
+      final index = _views.indexWhere((view) => view.productId == id);
+      products.selectProduct(
+        id,
+        productView: index >= 0 ? _views[index] : null,
+      );
+    });
+  }
+
+  /// This page's URL with `id` set or dropped, keeping whatever else it
+  /// carries (`maxLoanable` and `maxPeriod` from the apply-loan form).
+  String _location(GoRouter router, {required String? id}) {
+    final params = {
+      ...Uri.parse(router.location).queryParameters,
+      'sec': 'offers',
+    };
+    if (id == null) {
+      params.remove('id');
+    } else {
+      params['id'] = id;
+    }
+    return Uri(path: Paths.index, queryParameters: params).toString();
   }
 
   @override
@@ -77,6 +191,18 @@ class _LoanOffersWidgetState extends State<LoanOffersWidget> {
     return BlocListener<ProductBloc, ProductState>(
       listener: (context, state) async {
         if (state.status == ProductStatus.selected && state.product != null) {
+          // The card and the panel colour follow the selection, however it
+          // arrived: a deep link or a search result selected before the grid
+          // rendered, so the tap handler's bookkeeping never ran for it.
+          final index = _views.indexWhere(
+            (view) => view.productId == state.product!.id,
+          );
+          if (index >= 0) {
+            _selectedIndex = index;
+            _selectedColor = AppColors.loanItemColorsList[
+                index % AppColors.loanItemColorsList.length];
+          }
+
           if (!AuthenticationService.instance.isAdmin) {
             if (isCompactOrMedium) {
               GoRouter.of(context)
@@ -86,21 +212,32 @@ class _LoanOffersWidgetState extends State<LoanOffersWidget> {
           }
 
           if (!isCompactOrMedium) {
+            final productId = state.product!.id;
+            _dialogFor = productId;
             await showDialog(
               context: context,
               builder: (context) {
                 return AlertDialog(
                   backgroundColor: AppColors.green1,
                   content: AddProductScreen(
-                    productId: state.product!.id,
+                    productId: productId,
                   ),
                 );
               },
             );
+            _dialogFor = null;
             _selectedIndex = -1;
-            if (context.mounted) {
-              context.read<ProductBloc>().unselectProduct();
+            if (!context.mounted) return;
+            // The URL moved to another offer while the dialog was up (a
+            // programmatic `go`; `_sync` popped this one): select that
+            // instead. It replaces this selection with no `unselected` in
+            // between — one would strip the newer id from the URL.
+            final next = widget.initialProductId;
+            if (next != null && next != productId) {
+              _sync(next);
+              return;
             }
+            context.read<ProductBloc>().unselectProduct();
 
             return;
           }
@@ -111,6 +248,18 @@ class _LoanOffersWidgetState extends State<LoanOffersWidget> {
           );
         } else if (state.status == ProductStatus.unselected) {
           _selectedIndex = -1;
+          // Closed from inside — the panel's X, the dialog's X: the URL says
+          // an offer is open, so it should stop saying so. Unless it already
+          // moved on (browser Back closed this one), and that URL is the
+          // newer truth. Wide only: on compact/medium the open offer is its
+          // own route, and this URL never carries the id.
+          final router = GoRouter.of(context);
+          if (!isCompactOrMedium &&
+              widget.initialProductId != null &&
+              widget.initialProductId == _selectedFor) {
+            _selectedFor = null;
+            router.go(_location(router, id: null));
+          }
         } else if (state.status == ProductStatus.loading) {
           // if (state.isLoading) {
           //   AppWidgets.showDefaultLoadingDialog(context);
@@ -340,6 +489,7 @@ class _LoanOffersWidgetState extends State<LoanOffersWidget> {
                   if (data == null) {
                     return Container();
                   }
+                  _views = data;
 
                   return GridView.builder(
                     physics: widget.buildFromIndex
@@ -395,16 +545,36 @@ class _LoanOffersWidgetState extends State<LoanOffersWidget> {
                             return;
                           }
 
+                          if (isCompactOrMedium) {
+                            // The selection drives the navigation here: the
+                            // listener above sends it to the full-screen
+                            // route, whose URL is the deep link.
+                            if (_selectedIndex == index) {
+                              _selectedIndex = -1;
+                              context.read<ProductBloc>().unselectProduct();
+                            } else {
+                              _selectedIndex = index;
+                              _selectedColor = colorList[colorIndex];
+                              context.read<ProductBloc>().selectProduct(
+                                    productView.productId,
+                                    productView: productView,
+                                  );
+                            }
+                            return;
+                          }
+                          // Wide: the URL owns the selection (`_sync`), so a
+                          // tap is a URL change — the address bar is then a
+                          // deep link to this offer, as it is to a borrower.
+                          final router = GoRouter.of(context);
                           if (_selectedIndex == index) {
                             _selectedIndex = -1;
-                            context.read<ProductBloc>().unselectProduct();
+                            router.go(_location(router, id: null));
                           } else {
                             _selectedIndex = index;
                             _selectedColor = colorList[colorIndex];
-                            context.read<ProductBloc>().selectProduct(
-                                  productView.productId,
-                                  productView: productView,
-                                );
+                            router.go(
+                              _location(router, id: productView.productId),
+                            );
                           }
                         },
                       );

@@ -13,6 +13,7 @@ import 'package:loooans/features/products/screen/loan_offers_widget.dart';
 import 'package:loooans/features/reports/screen/full_reports_screen.dart';
 import 'package:loooans/features/reports/widgets/credit_karma_widget.dart';
 import 'package:loooans/features/reports/widgets/karma_history_widget.dart';
+import 'package:loooans/features/users/screens/borrower_detail_screen.dart';
 import 'package:loooans/features/users/screens/borrowers_screen.dart';
 import 'package:loooans/features/users/screens/loan_clients_screen.dart';
 import 'package:loooans/features/users/screens/users_screen.dart';
@@ -21,6 +22,35 @@ import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
+import 'package:user_repository/user_repository.dart';
+
+/// Where `/?sec=<section>&id=<id>` goes on a compact or medium screen, which
+/// has no room for a detail beside the section or a dialog over it. Null
+/// means stay. Only a pasted deep link reaches this now — every in-app tap on
+/// a compact screen goes to the full-screen route directly
+/// (`BorrowerScreen.openBorrower`) — and a pasted URL is exactly what the
+/// borrowers gate exists for, so it is the route's own gate
+/// (`BorrowerDetailScreen.permits`), not a second one.
+@visibleForTesting
+String? compactDetailRoute({
+  required String? section,
+  required String? id,
+  required User user,
+}) {
+  if (id == null) return null;
+
+  switch (section) {
+    case 'offers':
+      return Paths.offersAction.replaceAll(':action', id);
+    case 'loans':
+      return Paths.loansAction.replaceAll(':action', id);
+    case 'borrowers':
+      if (!BorrowerDetailScreen.permits(user)) return null;
+      return Paths.borrowersAction.replaceAll(':action', id);
+  }
+
+  return null;
+}
 
 class MainScreen extends StatefulWidget {
 
@@ -71,14 +101,13 @@ class _MainScreenState extends State<MainScreen> {
     if (getScreenSize(context: context).index <= ScreenSize.medium.index) {
       positionBottom = (screenHeight * 0.15).toInt();
 
-      if (widget.id != null) {
-        if (widget.section == 'offers') {
-          GoRouter.of(context)
-              .goSafe(Paths.offersAction.replaceAll(':action', widget.id!));
-        } else if (widget.section == 'loans') {
-          GoRouter.of(context)
-              .goSafe(Paths.loansAction.replaceAll(':action', widget.id!));
-        }
+      final detail = compactDetailRoute(
+        section: widget.section,
+        id: widget.id,
+        user: AuthenticationService.instance.user,
+      );
+      if (detail != null) {
+        GoRouter.of(context).goSafe(detail);
       }
     }
 
@@ -313,6 +342,9 @@ class _MainScreenState extends State<MainScreen> {
                                   parentMaxWidthConstraint:
                                       constraints.maxWidth / 2 - 24,
                                   expanded: widget.section == 'offers',
+                                  initialProductId: widget.section == 'offers'
+                                      ? widget.id
+                                      : null,
                                   scrollController: isMobilePlatform
                                       ? scrollController
                                       : null,
@@ -355,6 +387,10 @@ class _MainScreenState extends State<MainScreen> {
                                           scrollController: isMobilePlatform
                                               ? scrollController
                                               : null,
+                                          initialBorrowerId:
+                                              widget.section == 'borrowers'
+                                                  ? widget.id
+                                                  : null,
                                         ),
                                 ),
                                 if ((widget.section == null ||
@@ -381,6 +417,10 @@ class _MainScreenState extends State<MainScreen> {
                                     parentMaxWidthConstraint:
                                         constraints.maxWidth / 2 - 24,
                                     expanded: widget.section == 'offers',
+                                    initialProductId:
+                                        widget.section == 'offers'
+                                            ? widget.id
+                                            : null,
                                   ),
                                 ),
                             ],

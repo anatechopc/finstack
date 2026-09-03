@@ -8,7 +8,6 @@ import 'package:go_router/go_router.dart';
 import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/users/bloc/user_bloc.dart';
 import 'package:loooans/features/users/model/user_address.dart';
-import 'package:loooans/features/users/screens/borrower_detail_screen.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/constants.dart';
@@ -21,15 +20,59 @@ class BorrowerScreen extends StatefulWidget {
   const BorrowerScreen({
     super.key,
     this.scrollController,
+    this.initialBorrowerId,
   });
 
   final ScrollController? scrollController;
+
+  /// From `/?sec=borrowers&id=<userId>`. The URL owns the dialog: this
+  /// screen opens that borrower's dialog when the id is there — on first
+  /// frame, or when it arrives later — and closes it when the id leaves.
+  /// That is what makes the dialog deep-linkable, what search navigates to,
+  /// and what keeps browser Back honest. Wide screens only: on
+  /// compact/medium, `MainScreen` has already redirected the same URL to the
+  /// full-screen route before this widget mounts, and a dialog there would
+  /// race that navigation.
+  final String? initialBorrowerId;
+
+  /// Every way of opening a borrower goes through the URL — a table row, a
+  /// compact list item, or a search result — so all three present identically
+  /// and every one of them is a link. Calling `showDialog` here directly would
+  /// open the same dialog with the address bar still saying `/?sec=borrowers`.
+  ///
+  /// Wide classic UI: `/?sec=borrowers&id=`, the dialog over this section.
+  /// Everywhere else the profile is its own screen, `/borrowers/:id`, and
+  /// the navigation goes there DIRECTLY: the non-classic UI has no
+  /// Borrowers section for a dialog to sit over (its clients panel opens the
+  /// loan-scoped LoanClientDetail), and a compact screen has no room for
+  /// one. Routing a compact tap through `/?sec=borrowers&id=` and
+  /// `MainScreen`'s build-time redirect was a back trap: Back landed on a
+  /// URL whose build pushed the profile again. `goSafe` pushes on
+  /// Android/iOS so the profile's back arrow has a page to return to; `go`
+  /// left it the only page, and popping threw.
+  static void openBorrower(BuildContext context, String userId) {
+    // `maybeOf`: widget tests that render a tile or a row without a router
+    // are asserting other things (dismissal, layout) and must not throw here.
+    final router = GoRouter.maybeOf(context);
+    if (router == null) return;
+
+    final fullScreen = !SettingsService.instance.appUseClassicUI ||
+        getScreenSize(context: context).index <= ScreenSize.medium.index;
+    if (fullScreen) {
+      router.goSafe(Paths.borrowersAction.replaceAll(':action', userId));
+      return;
+    }
+    router.go('${Paths.index}?sec=borrowers&id=$userId');
+  }
 
   @override
   State<BorrowerScreen> createState() => _BorrowerScreenState();
 }
 
 class _BorrowerScreenState extends State<BorrowerScreen> {
+  /// The borrower whose dialog this screen opened and has not yet seen close.
+  String? _openBorrowerId;
+
   @override
   void initState() {
     super.initState();
@@ -37,6 +80,70 @@ class _BorrowerScreenState extends State<BorrowerScreen> {
           companyId: AuthenticationService.instance.company.id,
           customerOnly: true,
         );
+    _syncDialog(widget.initialBorrowerId);
+  }
+
+  /// `MainScreen` is keyed by section, so a change to `&id=` alone arrives
+  /// here as a prop change, not a remount: a row tap or a search result
+  /// (null → id) opens the dialog, and browser Back (id → null) closes the
+  /// one it reopened. The list is NOT reloaded — that is what the remount
+  /// used to do, twice per dialog.
+  @override
+  void didUpdateWidget(BorrowerScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialBorrowerId != oldWidget.initialBorrowerId) {
+      _syncDialog(widget.initialBorrowerId);
+    }
+  }
+
+  /// Makes the open dialog match [id]: closes one for another borrower,
+  /// opens one for [id]. Post-frame, because neither `showDialog` nor a pop
+  /// may run during build; the pattern here is
+  /// `_PaymentOtpDialogState.initState`.
+  void _syncDialog(String? id) {
+    if (id == null && _openBorrowerId == null) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_openBorrowerId != null && _openBorrowerId != id) {
+        // Everything above this section is a dialog — this one, or a loan
+        // detail opened from it — so pop until a page is on top again.
+        Navigator.of(context, rootNavigator: true)
+            .popUntil((route) => route is! PopupRoute);
+      }
+      // The URL moved on again before the frame; the next sync owns it.
+      if (id == null || widget.initialBorrowerId != id) return;
+      // Wide screens only: on compact/medium, `MainScreen` has already
+      // redirected the same URL to the full-screen route, and a dialog here
+      // would race that navigation.
+      if (getScreenSize(context: context).index <= ScreenSize.medium.index) {
+        return;
+      }
+      _showDialog(id);
+    });
+  }
+
+  void _showDialog(String userId) {
+    _openBorrowerId = userId;
+    // The router is captured before the gap: after it, only `this.context`
+    // is known-valid, and only once `mounted` says so.
+    final router = GoRouter.of(context);
+    AppWidgets.showBorrowerDetailsDialog(
+      context,
+      userId,
+      onClosed: () {
+        if (_openBorrowerId == userId) _openBorrowerId = null;
+        if (!mounted) return;
+        // Once closed, drop the id: the URL says a dialog is open, so it
+        // should stop saying so. It also makes tapping the same borrower
+        // again a URL change, which is what reopens the dialog. Unless the
+        // URL has already moved on — browser Back closed this dialog, and
+        // that URL is the newer truth.
+        if (widget.initialBorrowerId == userId) {
+          router.go('${Paths.index}?sec=borrowers');
+        }
+      },
+    );
   }
 
   @override
@@ -83,19 +190,8 @@ class _BorrowerScreenState extends State<BorrowerScreen> {
                   final item = data[index];
                   return InkWell(
                     borderRadius: BorderRadius.circular(16),
-                    onTap: () {
-                      // GoRouter.of(context).goSafe(
-                      //     Paths.clientsAction.replaceAll(
-                      //       ':action',
-                      //       userLoanView.userId,
-                      //     ),
-                      //     extra: {
-                      //       'useLoanView': userLoanView,
-                      //       'loanId': userLoanView.loanId,
-                      //       'productId': userLoanView.productId,
-                      //       'userId': userLoanView.userId,
-                      //     });
-                    },
+                    onTap: () =>
+                        BorrowerScreen.openBorrower(context, item.user.id),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -343,24 +439,8 @@ class _BorrowerScreenState extends State<BorrowerScreen> {
         TapGestureRecognizer:
             GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
           TapGestureRecognizer.new,
-          (TapGestureRecognizer t) => t.onTap = () {
-            // GoRouter.of(context).goSafe('${Paths.index}?sec=loans&id=123abc');
-            if (getScreenSize(context: context).index <=
-                ScreenSize.medium.index) {
-              final item = items[index - 1];
-              GoRouter.of(context).goSafe(
-                Paths.borrowersAction.replaceAll(
-                  ':action',
-                  item.user.id,
-                ),
-                extra: {
-                  'userId': item.user.id,
-                },
-              );
-            } else {
-              showBorrowerDetailsDialog(context, items[index - 1].user.id);
-            }
-          },
+          (TapGestureRecognizer t) => t.onTap = () =>
+              BorrowerScreen.openBorrower(context, items[index - 1].user.id),
         ),
       },
       // onEnter: (_) {
@@ -368,29 +448,6 @@ class _BorrowerScreenState extends State<BorrowerScreen> {
       //     color: AppColors.white,
       //   );
       // }
-    );
-  }
-
-  void showBorrowerDetailsDialog(
-    BuildContext context,
-    String userId,
-  ) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          contentPadding: const EdgeInsets.all(24),
-          content: Container(
-            width: 1200,
-            // height: 1000,
-            constraints: const BoxConstraints(maxHeight: 1200, maxWidth: 1200),
-            child: BorrowerDetailScreen(
-              userId: userId,
-            ),
-          ),
-          backgroundColor: AppColors.green1,
-        );
-      },
     );
   }
 }

@@ -21,7 +21,7 @@ users, possibly millions).
 **In v1**
 
 - Text search over **clients** (`users`) and **offers** (`product_views`).
-- Filter controls on offer results (company, interest rate, term).
+- Filter controls on offer results (company, term).
 - Role-derived scopes, enforced in query construction.
 - Two surfaces: app-bar field with results overlay, and a `/search` page.
 
@@ -30,6 +30,9 @@ users, possibly millions).
 - BigQuery reporting migration — finstack#98.
 - Moving remaining client-written view projections to Go triggers — finstack#99.
 - Typo tolerance and relevance ranking (needs a real search engine — see *Swap point*).
+- The **interest-rate** offer filter — finstack#103. A range filter needs the
+  inequality field as the first `orderBy`, which the shipped repository does not
+  allow; see *Indexes*.
 - A typed `field:value` query DSL. Rejected in favour of filter controls; see *Rejected*.
 
 ## Decisions
@@ -39,7 +42,7 @@ users, possibly millions).
 | 1 | Scope defaults from route; explicit `products:`-style prefix overrides | The original issue's "no prefix = no search" rule makes the feature invisible to anyone not told the syntax |
 | 2 | Indexed prefix search on a denormalized token array | Full-collection reads per keystroke do not survive the expected growth |
 | 3 | Role decides which scopes exist at all | A borrower must never be able to construct a clients query |
-| 4 | Prefix-expansion token array, prefixes of length 2–12 | Preserves the substring-ish behaviour `.contains()` gives today |
+| 4 | Prefix-expansion token array, prefixes of length 2–12, plus per-document caps | Preserves the substring-ish behaviour `.contains()` gives today; the caps bound the write amplification it costs |
 | 5 | v1 includes offer filter **controls**, not a typed DSL | Firestore forces enumerated filter combinations anyway; controls are discoverable |
 | 6 | Hybrid surface: overlay + `/search` page | Staff want speed; borrowers want room. One surface serves the other badly |
 | 7 | Client result row shows name + mobile | Matches the existing typeahead; needs no data the user document lacks |
@@ -89,15 +92,31 @@ David Andrew Francis Duldulao -> 22 prefix entries, plus the full value
   than 12 characters match on the first 12, then refine in Dart.
 - **Full value token.** Without it, pasting a complete email or phone number — the most
   likely teller action — returns **nothing**, because the split happens before matching.
-  This is the failure mode the rule exists to prevent.
+  This is the failure mode the rule exists to prevent. The full value is exempt from the
+  upper bound of 12, but not unbounded — it is itself capped at **256** characters.
+- **Per-document caps.** Prefix expansion is quadratic in the input, so an unbounded
+  document is an unbounded write. At most **64** words are tokenized per document and at
+  most **2000** tokens are emitted; beyond either limit the remainder is dropped rather
+  than the write being rejected, because a partially searchable user is better than a
+  failed user write. Firestore's own ceiling is 40,000 index entries per document.
+- **Whitespace is collapsed.** Normalization lowercases, folds diacritics, and collapses
+  every internal run of whitespace to a single space before splitting, so `"Dela  Cruz"`
+  and `"Dela Cruz"` produce identical tokens.
 
 **Phone normalization.** `0917…`, `+63917…` and `63917…` must collapse to one canonical
 form, or a client is findable by one spelling of their own number and not another. Also
 index the **last 4 digits** as a discrete token; staff often have only the tail, and
 prefix expansion cannot match a suffix.
 
-Tokens use a plain digit canonicalization — strip non-digits, then a leading `63`, then a
-leading `0` — applied identically when indexing and when querying.
+Tokens use a plain digit canonicalization — strip non-digits, then **repeatedly** trim a
+leading `63` or a leading `0` until neither is present — applied identically when indexing
+and when querying. The trimming must loop: `639170001234` and `09170001234` both reduce to
+`9170001234`, but so must `06309170001234`, which a single pass of each rule leaves as
+`09170001234`. Real stored numbers carry these stacked prefixes.
+
+Because the last-4 token is a discrete token rather than a prefix, a 4-digit query is
+matched with `array-contains-any` over both the raw digits and their canonical form —
+`0142` canonicalizes to `142`, which is nobody's last four.
 
 > **Revised 2026-08-24 during planning.** This section originally said to reuse
 > `NormalizePhoneE164` (`functions/loans/api/service/phone_service.go:55`). Planning
@@ -128,13 +147,27 @@ by both the Go and Dart suites, so drift fails CI rather than production.
 
 **Indexes.** Composite indexes must enumerate supported query shapes ahead of time; they
 cannot be open-ended. All must respect the `deleted_at` soft-delete convention already
-present in every index in `apps/loans/firestore.indexes.json`.
+present in every index. Indexes are committed per environment —
+`apps/loans/firestore.indexes.{dev,stg,prod}.json`; `firestore.indexes.json` is a scratch
+file that `deploy-indexes.sh` overwrites, and edits made there are lost.
 
-- `users`: `company_id` + `search_tokens` (array-contains) + `user_role` + `deleted_at`
-- `product_views`: `search_tokens` plus one index per supported filter combination.
-  v1 supports three facets — **company**, **interest rate**, **term** — so the index set
-  is the combinations of those three with `search_tokens` and `deleted_at`. Adding a
-  fourth facet later means new indexes, not a code change.
+- `users`: `search_tokens` (array-contains) + `deleted_at` + `user_role` + `last_name`,
+  in both a `company_id`-scoped and an unscoped shape — the unscoped one serves `appAdmin`,
+  who belongs to no company. `last_name` is last because that is what the shipped
+  `load()` orders by; an index whose trailing field is not the query's sort is unusable.
+- `product_views`: `search_tokens` + `deleted_at` + `updated_at`, times the supported
+  filter combinations. v1 ships **two** facets — **company** and **term** — for four
+  index shapes. Adding a facet later means new indexes, not a code change.
+
+  **Interest rate is deferred to finstack#103**, not shipped. It is a *range* filter, and
+  Firestore requires the first `orderBy` to be the inequality field — but
+  `product_view_firestore_service.dart` hardcodes `orderBy('updated_at')` before its
+  filter loop and exposes no way to change it. The query is therefore illegal as
+  specified. Shipping the index anyway would be write amplification for a query that
+  cannot be issued. Enabling it needs a `searchOffers` method on
+  `ProductViewFirestoreService` ordering by `interest_rate` first — a
+  `packages/loans/product_view_repository` change, landing before any frontend that uses
+  it — and four further index shapes.
 
 **Backfill.** A re-runnable job over existing documents. It will need more than one pass;
 assume that rather than discovering it.
