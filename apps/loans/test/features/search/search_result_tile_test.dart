@@ -170,11 +170,10 @@ void main() {
       expect(tapped, isTrue);
     });
 
-    // `LoanDetails` listens to `ProductBloc` and pushes a loading dialog on
-    // `loading`. Selecting in the same tick as the navigation reached a
-    // still-mounted listener, which pushed a dialog nothing on the offers
-    // page ever popped. The selection is deferred a frame — and still lands.
-    testWidgets('opens the offers page first and selects a frame later',
+    // Opening is `LoanOffersWidget.openOffer`, tested there; this pins that
+    // the row defers to it on both widths. The 800px default surface is
+    // `medium`: navigate first, select a frame later.
+    testWidgets('medium: opens the offers page first and selects a frame later',
         (tester) async {
       final products = _MockProductBloc();
       when(() => products.state).thenReturn(const ProductState());
@@ -222,6 +221,59 @@ void main() {
       expect(find.text('offers page'), findsOneWidget);
       verify(() => products.selectProduct('product-1', productView: view))
           .called(1);
+    });
+
+    testWidgets('wide: the URL is the deep link, and nothing selects here',
+        (tester) async {
+      // The reported gap: an offer opened from search with the address bar
+      // stuck on `/?sec=offers`. On a wide screen the URL now owns the
+      // selection, so the row writes the id and the offers page selects.
+      tester.view
+        ..physicalSize = const Size(1600, 900)
+        ..devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final products = _MockProductBloc();
+      when(() => products.state).thenReturn(const ProductState());
+      final item =
+          OfferResultItem(productView: _productView(), matchedField: 'loan_type');
+
+      final router = GoRouter(
+        initialLocation: Paths.users,
+        routes: [
+          GoRoute(
+            path: Paths.users,
+            builder: (_, __) => Scaffold(
+              body: Builder(
+                builder: (context) => SearchResultTile(
+                  item: item,
+                  onTap: () => SearchResultTile.open(context, item),
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: Paths.index,
+            builder: (_, __) => const Scaffold(body: Text('offers page')),
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
+
+      await tester.pumpWidget(
+        BlocProvider<ProductBloc>.value(
+          value: products,
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.tap(find.byType(SearchResultTile));
+      await tester.pumpAndSettle();
+
+      expect(router.location, '/?sec=offers&id=product-1');
+      verifyNever(
+        () => products.selectProduct(any(), productView: any(named: 'productView')),
+      );
     });
   });
 }

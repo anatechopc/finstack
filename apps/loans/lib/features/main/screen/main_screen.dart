@@ -342,6 +342,9 @@ class _MainScreenState extends State<MainScreen> {
                                   parentMaxWidthConstraint:
                                       constraints.maxWidth / 2 - 24,
                                   expanded: widget.section == 'offers',
+                                  initialProductId: widget.section == 'offers'
+                                      ? widget.id
+                                      : null,
                                   scrollController: isMobilePlatform
                                       ? scrollController
                                       : null,
@@ -414,6 +417,10 @@ class _MainScreenState extends State<MainScreen> {
                                     parentMaxWidthConstraint:
                                         constraints.maxWidth / 2 - 24,
                                     expanded: widget.section == 'offers',
+                                    initialProductId:
+                                        widget.section == 'offers'
+                                            ? widget.id
+                                            : null,
                                   ),
                                 ),
                             ],

@@ -702,3 +702,23 @@ and the repository subscription is taken AFTER `loadNext(reset: true)` because t
 synchronously replaces the repository's broadcast controller. The app registers a
 service worker on every boot: unregister it (or hard-reload) before trusting a rebuilt
 bundle in the browser.
+
+### Offers: the URL owns the selection too (same PR, 2026-09-03)
+
+Reported after the review fixes: an offer opened from search landed on `/?sec=offers`
+with no id, while a borrower opened as `/?sec=borrowers&id=`. `LoanOffersWidget` now
+follows the borrowers rule on wide screens — `initialProductId` from `MainScreen`
+(`&id=`), `_sync` on init and on URL change (select by id, with the grid's own view when
+it has it; unselect when the id leaves), a card tap and `LoanOffersWidget.openOffer`
+(what a search result calls) are URL writes, and the panel/dialog closing strips the id.
+Other query params (`maxLoanable`, `maxPeriod`) survive the rewrite. Compact/medium
+keep the old flow: the selection drives the navigation to the full-screen route, whose
+own URL is the deep link. Admin dialog subtleties: `_dialogFor` tracks the open edit
+dialog; `_sync` pops it when the URL moves, and the close path re-syncs to whatever the
+URL says by then instead of unselecting (an `unselected` there would strip the newer
+id). A deep link before the grid renders selects by id alone — `selectProduct`
+already loads the view by `product_id` for that ("to cover dynamic link").
+Tests: `test/features/products/loan_offers_widget_test.dart` (9; sync and strip guards
+proven by mutation) + a wide case in `search_result_tile_test.dart`. The offer card
+overflows its 258px cell under the test font (Ahem, every glyph full-width), so that
+test drops overflow reports only — the card itself is untouched.

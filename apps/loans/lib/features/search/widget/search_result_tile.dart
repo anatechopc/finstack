@@ -1,9 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:go_router/go_router.dart';
-import 'package:loooans/app/routing/paths.dart';
-import 'package:loooans/features/products/bloc/product_bloc.dart';
+import 'package:loooans/features/products/screen/loan_offers_widget.dart';
 import 'package:loooans/features/search/search_index.dart';
 import 'package:loooans/features/users/screens/borrowers_screen.dart';
 import 'package:loooans/utils/extensions.dart';
@@ -31,34 +28,17 @@ class SearchResultTile extends StatelessWidget {
   /// because "where does this result live" is a property of the row and not of
   /// the surface that happens to be showing it.
   ///
-  /// Navigates to the surface that renders the row *before* selecting into it:
-  /// `ProductState.selected` is only rendered by `loan_offers_widget.dart`, so
-  /// selecting first would select a product with nothing mounted to show it.
+  /// Both cases defer to the entry point the section's own row uses, so a
+  /// result opens exactly as a row does and the screen-size and UI-mode
+  /// decisions are made in ONE place. A URL written here as well drifted
+  /// immediately: the non-classic branch was added to `openBorrower` and this
+  /// path kept sending non-classic users to the home page with an id in the
+  /// address bar.
   static void open(BuildContext context, SearchResultItem item) {
-    final router = GoRouter.maybeOf(context);
-
     switch (item) {
       case OfferResultItem(:final productView):
-        // Read before navigating: `go` deactivates this element on the same
-        // frame and a deactivated context cannot `read`.
-        final products = context.read<ProductBloc>();
-        router?.go('${Paths.index}?sec=offers');
-        // Deferred a frame. `LoanDetails` listens to `ProductBloc` and pushes
-        // a loading dialog on `loading`; selecting in the same tick as the
-        // navigation reached a still-mounted listener, which pushed a dialog
-        // that nothing on the offers page ever popped.
-        WidgetsBinding.instance.addPostFrameCallback(
-          (_) => products.selectProduct(
-            productView.productId,
-            productView: productView,
-          ),
-        );
+        LoanOffersWidget.openOffer(context, productView);
       case ClientResultItem(:final user):
-        // The same entry point a Borrowers row uses, so a result opens exactly
-        // as a row does and the UI mode is decided in ONE place. A URL written
-        // here as well drifted immediately: the non-classic branch was added
-        // to openBorrower and this path kept sending non-classic users to the
-        // home page with an id in the address bar.
         BorrowerScreen.openBorrower(context, user.id);
     }
   }
