@@ -26,7 +26,7 @@ void main() {
     });
 
     test('fills defaults for missing keys', () {
-      final penalty = Penalty.fromJson({
+      final penalty = Penalty.fromJson(const {
         'id': 'x',
         'name': 'Surcharge',
         'amount': 2,
@@ -38,7 +38,7 @@ void main() {
     });
 
     test('unknown frequency falls back to once', () {
-      final penalty = Penalty.fromJson({
+      final penalty = Penalty.fromJson(const {
         'id': 'x',
         'name': 'Surcharge',
         'amount': 2,
