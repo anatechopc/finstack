@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:loooans_helpers/logging_helpers.dart';
@@ -41,35 +43,65 @@ class SettingsService {
       limit: null,
       reset: true,
     );
+
+    // AFTER loadNext, deliberately: its synchronous prefix calls
+    // `resetStreamController()`, which REPLACES the repository's broadcast
+    // controller, so a subscription taken before the call listens to a
+    // controller nothing will ever write to. Feed every listener that
+    // subscribed before this ran — the shell's StreamBuilder subscribes on a
+    // cold load, before the session is restored, and used to be handed a
+    // one-shot default stream that the real settings never reached.
+    _instance!._repoSubscription?.cancel();
+    _instance!._repoSubscription = repository.dataStream
+        .handleError((Object error) {
+          log.severe('error when listening to settings: $error');
+        })
+        .map(_instance!._settingsOf)
+        .listen(_instance!._settingsController.add);
     log.info('listening settings for user: $userId');
   }
 
   Settings? _currentSettings;
 
+  /// One live stream for the whole app. `initializeForUser` pipes the
+  /// repository into it, whenever that happens relative to subscribers.
+  final _settingsController = StreamController<Settings>.broadcast();
+  StreamSubscription<Settings>? _repoSubscription;
+
+  /// The current settings first, then every change — including the first
+  /// real settings if the user's session is restored after subscribing.
   Stream<Settings> listen() {
     if (_settingsRepository == null || _userId == null) {
       log.warning(
           'SettingsRepository and user is not initialized. Disregard if this is intentional.',);
-      _currentSettings = Settings.create(userId: 'userId');
-      return Stream.value(_currentSettings!);
+      _currentSettings ??= Settings.create(userId: 'userId');
     }
 
-    return _settingsRepository!.dataStream.handleError((Object error) {
-      log.severe('error when listening to settings: $error');
-    }).map((settings) {
-      if (settings.isNotEmpty) {
-        if (settings.length > 1) {
-          log.warning(
-              'There are more than 1 settings for this user. The app only gets the first setting for this user.',);
-        }
-
-        _currentSettings = settings.first;
-      } else {
-        _currentSettings = Settings.create(userId: 'userId');
-      }
-
-      return _currentSettings!;
+    return Stream<Settings>.multi((controller) {
+      final current = _currentSettings;
+      if (current != null) controller.add(current);
+      controller.addStream(_settingsController.stream);
     });
+  }
+
+  Settings _settingsOf(List<Settings> settings) {
+    if (settings.isNotEmpty) {
+      if (settings.length > 1) {
+        log.warning(
+            'There are more than 1 settings for this user. The app only gets the first setting for this user.',);
+      }
+      _currentSettings = settings.first;
+    } else {
+      _currentSettings = Settings.create(userId: 'userId');
+    }
+    return _currentSettings!;
+  }
+
+  /// Tests only: stand in for the repository stream without Firestore.
+  @visibleForTesting
+  void feedSettingsForTest(Stream<List<Settings>> stream) {
+    _repoSubscription?.cancel();
+    _repoSubscription = stream.map(_settingsOf).listen(_settingsController.add);
   }
 
   /// There is now a classic version of the UI.

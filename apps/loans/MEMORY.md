@@ -650,3 +650,55 @@ The user ran the app locally before accepting each change (see the
 - Testing seams: `SettingsService.setClassicUIForTest`; `tester.view.physicalSize`
   (not `setSurfaceSize`) is what `MediaQuery`/`getScreenSize` read; providers must sit
   ABOVE `MaterialApp` for a `showDialog` route to see them.
+
+### Code-review fixes, 29 findings (same PR, 2026-09-03)
+
+A ten-angle inline review found 27 issues and missed the worst one; a single independent
+reviewer found it. Fixed in three packages by file ownership (search core / search
+widgets / routing+borrower screens). What the next session must not undo:
+
+- **`/borrowers/:action` is gated** on `SearchScopeResolver.scopesFor(role).contains(clients)`
+  (`BorrowerDetailScreen.permits`), and so is `MainScreen`'s compact deep-link redirect. A
+  deep-linkable route must carry the same role gate as the section it exposes — this one
+  shipped without it and a customer could read any user's profile and loans. Reuse
+  `scopesFor`; never write a second predicate.
+- **`SearchClearedEvent` on logout** (`ClearSearchOnLogout` in `app.dart`) and the field
+  opens no overlay on an empty controller: the app-lifetime `SearchBloc` otherwise showed
+  the previous account's client rows to the next account on the same device.
+- **`MainScreen` has a stable key** (`ValueKey(sec ?? 'home')`), not `UniqueKey()`. Query-only
+  URL changes update it in place; `BorrowerScreen.didUpdateWidget` opens/closes the dialog
+  on `id` changes without re-running `loadNext`. The remount cost was ~1,200 Firestore
+  reads per dialog open+close on a 300-borrower company.
+- **`openBorrower` rule:** wide classic → `/?sec=borrowers&id=` (dialog over the list);
+  compact/medium and non-classic → `goSafe('/borrowers/:id')` (pushed on mobile so back
+  works). `BorrowerDetailScreen` now has a real compact body and an exit that pops if it
+  can, else goes home. The cash-pool widget stacks its columns below 840 px.
+- **Query/refinement split like the indexer:** `SearchTokenizer.wordForms` (joined form +
+  parts) is used by both `queryTokens` and `_matchesWords`; a 4-digit phone term matches
+  prefix OR tail; everything counts runes. The golden test now asserts
+  `queryTokens(input) ⊆ Go's tokens` for every indexed value — the contract production
+  depends on — and the indexer-mirror producers live in `test/support/`, not `lib/`.
+- **Scope rules:** `_defaultScope` parses the location as a `Uri` (`/offers/*` OR
+  `?sec=offers` → offers); `QueryChangedEvent` carries `filters` (field sends empty;
+  screen sends its chips) and `candidateLimit` (overlay 10); `SearchScreen.didUpdateWidget`
+  re-syncs field/pin/filters on URL change; the shell field is hidden on `/search`;
+  `Ctrl/⌘K` does nothing while a modal is up and carries typed text from the field.
+- Test facts that cost time: `setSurfaceSize` does not change `MediaQuery` (use
+  `tester.view.physicalSize`); providers must sit above `MaterialApp` for a `showDialog`
+  route; on Android `await router.goSafe(...)` awaits a push future that completes only on
+  pop (a 10-minute hang); `find.text` matches table header columns too.
+
+Known leftover: on `/search`, focus on a chip + `Ctrl K` still reaches the root wrapper and
+drops `q`; a pasted `/?sec=borrowers&id=X` on a phone still uses the build-time push.
+
+**Settings/UI-mode facts that cost hours (2026-09-03):** the classic/non-classic layout
+comes from a per-user `dev_settings` doc (`user_id ==`); **no doc → non-classic
+default on every route**, and a cold load shows the pre-settings paint for 20–40 s while
+the session restores. Check the doc (Firestore runQuery on `dev_settings`) BEFORE
+diagnosing "the classic layout isn't applying". Separately, `SettingsService.listen()`
+used to hand a one-shot default stream to any subscriber that arrived before
+`initializeForUser` (the shell's StreamBuilder on a cold load); it is now a live stream,
+and the repository subscription is taken AFTER `loadNext(reset: true)` because that call
+synchronously replaces the repository's broadcast controller. The app registers a
+service worker on every boot: unregister it (or hard-reload) before trusting a rebuilt
+bundle in the browser.
