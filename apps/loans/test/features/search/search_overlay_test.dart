@@ -46,7 +46,6 @@ SearchResults _clients(int count, {bool hasMore = false}) => SearchResults(
         for (var i = 0; i < count; i++)
           ClientResultItem(user: _user(i), matchedField: 'name'),
       ],
-      scope: SearchScope.clients,
       hasMore: hasMore,
     );
 
@@ -171,7 +170,6 @@ void main() {
                   matchedField: 'loan_type',
                 ),
             ],
-            scope: SearchScope.offers,
           ),
         ),
       );
@@ -195,10 +193,61 @@ void main() {
       expect(router.location, '/search?q=salary&scope=offers');
     });
 
+    // The bloc lives for the whole app, so `state.filters` is whatever last
+    // narrowed these rows; a "See all" that dropped it would show a wider
+    // set than the one the user was looking at.
+    testWidgets('See all carries the facets to /search', (tester) async {
+      seed(
+        SearchState(
+          status: SearchStatus.results,
+          scope: SearchScope.offers,
+          term: 'salary',
+          filters: const OfferFilters(companyId: 'company-1', term: '1m'),
+          results: SearchResults(
+            items: [
+              for (var i = 0; i < 7; i++)
+                OfferResultItem(
+                  productView: _productView(),
+                  matchedField: 'loan_type',
+                ),
+            ],
+          ),
+        ),
+      );
+
+      final router = GoRouter(
+        initialLocation: Paths.index,
+        routes: [
+          GoRoute(path: Paths.index, builder: (_, __) => subject()),
+          GoRoute(
+            path: Paths.search,
+            builder: (_, __) => const Scaffold(body: Text('search page')),
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
+
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.tap(find.text('See all results'));
+      await tester.pumpAndSettle();
+
+      expect(
+        router.location,
+        '/search?q=salary&scope=offers&company=company-1&term=1m',
+      );
+    });
+
     testWidgets('tapping a client opens that borrower, not the clients list',
         (tester) async {
-      // Classic UI: the Borrowers section hosts the dialog, so the URL is the
-      // section deep link. Non-classic is the next test.
+      // Classic UI on a wide screen: the Borrowers section hosts the dialog,
+      // so the URL is the section deep link. Below 840px `openBorrower` goes
+      // straight to the full-screen route instead (next test), and the
+      // default 800px test view is below it.
+      // `setSurfaceSize` resizes the surface but not `MediaQuery`, which is
+      // what the collapse rule reads; the view's own size drives both.
+      tester.view.physicalSize = const Size(1600, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       SettingsService.instance.setClassicUIForTest(enabled: true);
       seed(
         SearchState(
@@ -208,7 +257,6 @@ void main() {
             items: [
               ClientResultItem(user: _user(7), matchedField: 'name'),
             ],
-            scope: SearchScope.clients,
           ),
         ),
       );
@@ -236,6 +284,48 @@ void main() {
       expect(router.location, '/?sec=borrowers&id=user-7');
     });
 
+    testWidgets('on a compact screen a client opens the full-screen route',
+        (tester) async {
+      // Classic UI too: a dialog on a phone is the full-screen route with a
+      // worse back button, so `openBorrower` does not open one there.
+      // `setSurfaceSize` resizes the surface but not `MediaQuery`, which is
+      // what the collapse rule reads; the view's own size drives both.
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      SettingsService.instance.setClassicUIForTest(enabled: true);
+      seed(
+        SearchState(
+          status: SearchStatus.results,
+          term: 'juan',
+          results: SearchResults(
+            items: [
+              ClientResultItem(user: _user(7), matchedField: 'name'),
+            ],
+          ),
+        ),
+      );
+
+      final router = GoRouter(
+        initialLocation: Paths.index,
+        routes: [
+          GoRoute(path: Paths.index, builder: (_, __) => subject()),
+          GoRoute(
+            path: Paths.borrowersAction,
+            builder: (_, __) => const Scaffold(body: Text('borrower page')),
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
+
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.tap(find.text('Dela Cruz, Juan7'));
+      await tester.pumpAndSettle();
+
+      expect(router.location, '/borrowers/user-7');
+      expect(find.text('borrower page'), findsOneWidget);
+    });
+
     testWidgets('in the non-classic UI a client opens the full-screen route',
         (tester) async {
       // Caught live, not by a test: the tile carried its own copy of the
@@ -250,7 +340,6 @@ void main() {
             items: [
               ClientResultItem(user: _user(7), matchedField: 'name'),
             ],
-            scope: SearchScope.clients,
           ),
         ),
       );
@@ -393,6 +482,8 @@ void main() {
       // back to the clients scope.
       expect(retries.single.query, 'salary');
       expect(retries.single.pinnedScope, SearchScope.offers);
+      // The same page the field asked for, not the default fifty.
+      expect(retries.single.candidateLimit, SearchOverlay.candidateLimit);
     });
   });
 
@@ -409,7 +500,6 @@ void main() {
               matchedField: 'company_name',
             ),
           ],
-          scope: SearchScope.clients,
         ),
       ),
     );

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
+import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/authentication/bloc/authentication_bloc.dart';
 import 'package:loooans/features/index/screens/index_screen.dart';
 import 'package:loooans/features/index/widgets/menu_drawer_widget.dart';
@@ -46,7 +48,13 @@ class HomeScreen extends StatelessWidget {
                       AuthenticationService.instance.allowAddClients,
                   showAddCapitalButton: AuthenticationService.instance.isAdmin,
                   showMessagesButton: true,
-                  showSearchField: true,
+                  // Not on `/search`: that page carries its own field, and a
+                  // second one in the shell app bar fed the same bloc with
+                  // the overlay floating over the page's own results. On
+                  // compact it was a search icon whose tap went to `/search`
+                  // from `/search`.
+                  showSearchField:
+                      GoRouterState.of(context).uri.path != Paths.search,
                 ),
                 body: child,
               ),

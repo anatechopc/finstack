@@ -2,11 +2,14 @@ import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/search/bloc/search_bloc.dart';
 import 'package:loooans/features/search/screen/search_screen.dart';
 import 'package:loooans/features/search/search_index.dart';
 import 'package:loooans/features/search/search_scope.dart';
 import 'package:loooans/features/search/widget/offer_filter_bar.dart';
+import 'package:loooans/features/search/widget/search_field.dart';
 import 'package:loooans/features/search/widget/search_result_tile.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:mocktail/mocktail.dart';
@@ -56,7 +59,6 @@ SearchResults _offerResults({bool hasMore = false}) => SearchResults(
           matchedField: 'company_name',
         ),
       ],
-      scope: SearchScope.offers,
       hasMore: hasMore,
     );
 
@@ -97,7 +99,12 @@ void main() {
   /// `SearchScopeResolver` and not by the assertion's own arithmetic. A mocked
   /// bloc could only prove which event the screen dispatched, which is exactly
   /// the thing that must not be trusted.
+  ///
+  /// The screen reads the role off `AuthenticationService.instance`, as every
+  /// other widget does; the bloc gets the injected mock, as `CLAUDE.md`
+  /// requires of blocs. Both are seeded with the same user.
   SearchBloc realBloc(UserRole role) {
+    AuthenticationService.instance.user = _user(userRole: role);
     when(() => auth.user).thenReturn(_user(userRole: role));
     when(() => index.query(any())).thenAnswer((_) async => SearchResults.empty);
 
@@ -105,10 +112,9 @@ void main() {
   }
 
   SearchBloc mockBloc(SearchState state, {UserRole role = UserRole.admin}) {
-    when(() => auth.user).thenReturn(_user(userRole: role));
+    AuthenticationService.instance.user = _user(userRole: role);
     final bloc = _MockSearchBloc();
     when(() => bloc.state).thenReturn(state);
-    when(() => bloc.authService).thenReturn(auth);
 
     return bloc;
   }
@@ -154,9 +160,8 @@ void main() {
       expect(issued().last.scope, SearchScope.offers);
     });
 
-    // `SearchScope.offers.prefix` is 'products'; the deep link spells it
-    // 'offers' (`search_scope.dart:3-5`). Matching on the wrong one would make
-    // `?scope=offers` silently mean clients.
+    // `products` is an alias a user may type before a colon, never a
+    // deep-link spelling: `?scope=` matches `SearchScope.name` only.
     testWidgets('an unrecognised ?scope= falls back to the role default',
         (tester) async {
       final bloc = realBloc(UserRole.admin);
@@ -295,7 +300,7 @@ void main() {
 
   group('the term facet', () {
     // Two values is the whole vocabulary a product can be created with
-    // (`loan_term_section.dart:40-50`), so the chip pair IS the picker.
+    // (`LoanTermSection`'s term options), so the chip pair IS the picker.
     SearchBloc offersBloc({String? term}) => mockBloc(
           SearchState(
             status: SearchStatus.empty,
@@ -336,20 +341,149 @@ void main() {
     });
   });
 
-  // I14: `_runQuery` reads `state.filters`, so a deep-linked facet dispatched
-  // after the query would miss the query it was meant to narrow.
-  testWidgets('deep-linked filters reach the bloc before the query',
-      (tester) async {
-    final bloc = mockBloc(const SearchState());
+  group('the route drives the screen', () {
+    /// `/search` behind a one-route router, built exactly as `router.dart`
+    /// builds it.
+    GoRouter searchRouter(SearchBloc bloc, String initialLocation) {
+      final router = GoRouter(
+        initialLocation: initialLocation,
+        routes: [
+          GoRoute(
+            path: Paths.search,
+            builder: (_, state) => BlocProvider<SearchBloc>.value(
+              value: bloc,
+              child: SearchScreen.fromQueryParameters(
+                state.uri.queryParameters,
+              ),
+            ),
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
 
-    await tester.pumpApp(
-      subject(bloc: bloc, filters: const OfferFilters(term: '1m')),
-    );
+      return router;
+    }
 
-    final events = verify(() => bloc.add(captureAny())).captured;
+    List<SearchEvent> events(SearchBloc bloc) =>
+        verify(() => bloc.add(captureAny())).captured.cast<SearchEvent>();
 
-    expect(events.first, isA<FiltersChangedEvent>());
-    expect(events[1], isA<QueryChangedEvent>());
+    // A `FiltersChangedEvent` dispatched ahead of the query re-ran the
+    // PREVIOUS term with the new facets: a billed read and a flash of the
+    // wrong results. The facets ride on the query instead.
+    testWidgets('deep-linked filters ride on the one query', (tester) async {
+      final bloc = mockBloc(const SearchState());
+
+      await tester.pumpApp(
+        subject(bloc: bloc, filters: const OfferFilters(term: '1m')),
+      );
+
+      final dispatched = events(bloc);
+      expect(dispatched, hasLength(1));
+      final query = dispatched.single as QueryChangedEvent;
+      expect(query.query, 'acme');
+      expect(query.filters, const OfferFilters(term: '1m'));
+    });
+
+    // go_router keys the page by path, so a second "See all", `Ctrl K` from
+    // the app bar or browser Back reaches a mounted screen as new props. The
+    // field, the pin and the facets all used to keep showing the first link.
+    testWidgets('a change of query parameters re-syncs field, pin and facets',
+        (tester) async {
+      final bloc = mockBloc(const SearchState());
+      final router = searchRouter(bloc, '/search?q=juan');
+
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pump();
+      expect(find.widgetWithText(TextField, 'juan'), findsOneWidget);
+      expect((events(bloc).single as QueryChangedEvent).query, 'juan');
+
+      router.go('/search?q=maria&scope=offers&term=1m');
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(TextField, 'maria'), findsOneWidget);
+      expect(find.widgetWithText(TextField, 'juan'), findsNothing);
+      // The field is the same one; `/search` was not remounted.
+      expect(
+        tester.widget<SearchField>(find.byType(SearchField)).pinnedScope,
+        SearchScope.offers,
+      );
+
+      final dispatched = events(bloc);
+      expect(dispatched, hasLength(1), reason: 'exactly one event, no facet');
+      final query = dispatched.single as QueryChangedEvent;
+      expect(query.query, 'maria');
+      expect(query.pinnedScope, SearchScope.offers);
+      expect(query.filters, const OfferFilters(term: '1m'));
+    });
+
+    testWidgets('the same parameters again dispatch nothing', (tester) async {
+      final bloc = mockBloc(const SearchState());
+      final router = searchRouter(bloc, '/search?q=juan');
+
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pump();
+      events(bloc);
+
+      router.go('/search?q=juan');
+      await tester.pumpAndSettle();
+
+      verifyNever(() => bloc.add(any()));
+    });
+  });
+
+  group('the typed query', () {
+    Future<void> type(WidgetTester tester, String text) async {
+      await tester.enterText(find.byType(TextField), text);
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    QueryChangedEvent lastQuery(SearchBloc bloc) =>
+        verify(() => bloc.add(captureAny()))
+            .captured
+            .whereType<QueryChangedEvent>()
+            .last;
+
+    // The bloc holds the chips; every typed query carries them, so a facet
+    // never has to be re-sent ahead of the term it narrows.
+    testWidgets('carries the chips the bloc holds', (tester) async {
+      final bloc = mockBloc(
+        const SearchState(
+          status: SearchStatus.empty,
+          scope: SearchScope.offers,
+          term: 'acme',
+          filters: OfferFilters(term: '15d'),
+        ),
+        role: UserRole.customer,
+      );
+
+      await tester.pumpApp(subject(bloc: bloc));
+      await type(tester, 'acme lending');
+
+      final query = lastQuery(bloc);
+      expect(query.query, 'acme lending');
+      expect(query.filters, const OfferFilters(term: '15d'));
+    });
+
+    testWidgets('carries the active tab as the pin', (tester) async {
+      final bloc = mockBloc(const SearchState());
+
+      await tester.pumpApp(subject(bloc: bloc));
+      await tester.tap(find.byKey(const Key('search_scope_offers')));
+      await tester.pump();
+      await type(tester, 'salary');
+
+      expect(lastQuery(bloc).pinnedScope, SearchScope.offers);
+    });
+
+    // The page shows every row; only the app-bar panel trims the page.
+    testWidgets('asks for the full candidate page', (tester) async {
+      final bloc = mockBloc(const SearchState());
+
+      await tester.pumpApp(subject(bloc: bloc));
+      await type(tester, 'dela');
+
+      expect(lastQuery(bloc).candidateLimit, isNull);
+    });
   });
 
   group('states', () {

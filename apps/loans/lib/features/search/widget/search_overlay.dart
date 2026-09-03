@@ -20,6 +20,12 @@ class SearchOverlay extends StatelessWidget {
   /// A preview, not the result set. Everything past this lives on `/search`.
   static const int maxItems = 5;
 
+  /// The candidate page the field asks for. Five rows are shown, so the
+  /// default fifty was forty-five reads per keystroke for nothing; double the
+  /// preview leaves refinement room and still fills `hasMore` when there is
+  /// more. `/search` keeps `SearchRequest.defaultCandidateLimit`.
+  static const int candidateLimit = maxItems * 2;
+
   /// Tall enough for [maxItems] rows plus the "See all" row; the panel floats
   /// over the page, so it must not grow to the height of the result list.
   static const double maxHeight = 400;
@@ -127,15 +133,20 @@ class SearchOverlay extends StatelessWidget {
         title: const Text('See all results'),
         trailing: const Icon(Icons.arrow_forward_rounded),
         onTap: () {
-          // `state.term` is prefix-stripped and `state.scope` is what the
-          // resolver already decided, so `/search` reproduces exactly what the
-          // overlay was showing instead of re-deriving it from raw text.
+          // `state.term` is prefix-stripped, `state.scope` is what the
+          // resolver already decided and `state.filters` is what narrowed
+          // these rows, so `/search` reproduces exactly what the overlay was
+          // showing instead of re-deriving any of it from raw text.
           GoRouter.maybeOf(context)?.go(
             Uri(
               path: Paths.search,
               queryParameters: <String, String>{
-                'q': state.term,
-                'scope': state.scope.name,
+                Paths.paramSearchQuery: state.term,
+                Paths.paramSearchScope: state.scope.name,
+                if (state.filters.companyId case final company?)
+                  Paths.paramSearchCompany: company,
+                if (state.filters.term case final term?)
+                  Paths.paramSearchTerm: term,
               },
             ).toString(),
           );
@@ -161,6 +172,7 @@ class SearchOverlay extends StatelessWidget {
                       state.term,
                       location: GoRouter.maybeOf(context)?.location ?? '',
                       pinnedScope: state.scope,
+                      candidateLimit: candidateLimit,
                     ),
                   ),
               child: const Text('Retry'),

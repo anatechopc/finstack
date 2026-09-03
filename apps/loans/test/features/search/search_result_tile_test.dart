@@ -1,11 +1,21 @@
+import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:loooans/app/routing/paths.dart';
+import 'package:loooans/features/products/bloc/product_bloc.dart';
 import 'package:loooans/features/search/search_index.dart';
 import 'package:loooans/features/search/widget/search_result_tile.dart';
+import 'package:loooans/utils/extensions.dart';
+import 'package:mocktail/mocktail.dart';
 import 'package:product_view_repository/product_view_repository.dart';
 import 'package:user_repository/user_repository.dart';
 
 import '../../helpers/helpers.dart';
+
+class _MockProductBloc extends MockBloc<ProductEvent, ProductState>
+    implements ProductBloc {}
 
 User _user() => User()
   ..id = 'user-1'
@@ -16,7 +26,8 @@ User _user() => User()
 
 /// Built through `ProductView.create`, which mirrors what the projection
 /// writes. Note it is NOT given an `id` — the offer row must render without
-/// one (`product_view_projection.go:48-59`: legacy view ids are meaningless).
+/// one (legacy `product_views` ids are auto-generated and meaningless; every
+/// consumer selects by `product_id`).
 ProductView _productView({
   String companyName = 'Acme Lending',
   String loanType = 'Salary Loan',
@@ -95,6 +106,22 @@ void main() {
       expect(find.textContaining('4.5'), findsOneWidget);
     });
 
+    // `term` is the stored code. `loan_offer_item.dart` renders the label,
+    // and a result row that reads `30d` beside a formatted amount does not.
+    testWidgets('spells the term out', (tester) async {
+      await tester.pumpApp(
+        subject(
+          OfferResultItem(
+            productView: _productView(),
+            matchedField: 'loan_type',
+          ),
+        ),
+      );
+
+      expect(find.textContaining('30 days'), findsOneWidget);
+      expect(find.textContaining('30d'), findsNothing);
+    });
+
     testWidgets('surfaces the tag line when the tag line matched',
         (tester) async {
       await tester.pumpApp(
@@ -141,6 +168,60 @@ void main() {
 
       await tester.tap(find.byType(SearchResultTile));
       expect(tapped, isTrue);
+    });
+
+    // `LoanDetails` listens to `ProductBloc` and pushes a loading dialog on
+    // `loading`. Selecting in the same tick as the navigation reached a
+    // still-mounted listener, which pushed a dialog nothing on the offers
+    // page ever popped. The selection is deferred a frame — and still lands.
+    testWidgets('opens the offers page first and selects a frame later',
+        (tester) async {
+      final products = _MockProductBloc();
+      when(() => products.state).thenReturn(const ProductState());
+      final view = _productView();
+      final item = OfferResultItem(productView: view, matchedField: 'loan_type');
+
+      final router = GoRouter(
+        initialLocation: Paths.users,
+        routes: [
+          GoRoute(
+            path: Paths.users,
+            builder: (_, __) => Scaffold(
+              body: Builder(
+                builder: (context) => SearchResultTile(
+                  item: item,
+                  onTap: () => SearchResultTile.open(context, item),
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: Paths.index,
+            builder: (_, __) => const Scaffold(body: Text('offers page')),
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
+
+      await tester.pumpWidget(
+        BlocProvider<ProductBloc>.value(
+          value: products,
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.tap(find.byType(SearchResultTile));
+
+      // Same tick: navigated, not yet selected.
+      expect(router.location, '/?sec=offers');
+      verifyNever(
+        () => products.selectProduct(any(), productView: any(named: 'productView')),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('offers page'), findsOneWidget);
+      verify(() => products.selectProduct('product-1', productView: view))
+          .called(1);
     });
   });
 }

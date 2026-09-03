@@ -9,17 +9,17 @@ import 'package:loooans/features/search/search_scope.dart';
 import 'package:loooans/features/search/search_scope_resolver.dart';
 import 'package:loooans/features/search/search_tokenizer.dart';
 import 'package:loooans/features/search/widget/offer_filter_bar.dart';
+import 'package:loooans/features/search/widget/search_field.dart';
 import 'package:loooans/features/search/widget/search_result_tile.dart';
-import 'package:loooans/utils/debounce.dart';
+import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:user_repository/user_repository.dart';
 
 /// The `/search` page: the deep-linkable surface, beside the app-bar overlay.
 ///
-/// It carries its own field rather than reusing `SearchField`. That widget owns
-/// a private, empty controller and dispatches without a scope pin, so mounting
-/// it here would drop both the deep-linked `q` and the `?scope=` the page
-/// exists to honour.
+/// It renders `SearchField` in its page dressing — no overlay, full width —
+/// and owns the field's controller, because a scope tap has to read the text
+/// back and a deep-link change has to overwrite it.
 class SearchScreen extends StatefulWidget {
   const SearchScreen({
     required this.initialQuery,
@@ -36,11 +36,11 @@ class SearchScreen extends StatefulWidget {
   /// back within reach of a deep link even with the chip gone.
   factory SearchScreen.fromQueryParameters(Map<String, String> params) =>
       SearchScreen(
-        initialQuery: params['q'] ?? '',
-        initialScopeParam: params['scope'],
+        initialQuery: params[Paths.paramSearchQuery] ?? '',
+        initialScopeParam: params[Paths.paramSearchScope],
         initialFilters: OfferFilters(
-          companyId: params['company'],
-          term: params['term'],
+          companyId: params[Paths.paramSearchCompany],
+          term: params[Paths.paramSearchTerm],
         ),
       );
 
@@ -57,7 +57,6 @@ class SearchScreen extends StatefulWidget {
 }
 
 class _SearchScreenState extends State<SearchScreen> {
-  final _debounce = Debounce(milliseconds: 250);
   late final _controller = TextEditingController(text: widget.initialQuery);
 
   SearchScope? _pinnedScope;
@@ -65,40 +64,57 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void initState() {
     super.initState();
+    _syncWithRoute();
+  }
 
-    // Matched on `name`, not `prefix`: `SearchScope.offers.prefix` is
-    // 'products' — the keyword a user types — while the deep link spells it
-    // 'offers' (`search_scope.dart:3-5`). An unrecognised value stays null and
-    // the role's route default applies.
-    _pinnedScope = SearchScope.values
-        .firstWhereOrNull((scope) => scope.name == widget.initialScopeParam);
+  /// go_router keys the page by path, so `/search?q=a` → `/search?q=b` — a
+  /// second "See all", `Ctrl K` from the app bar, browser Back — arrives here
+  /// as new props on the same state, not as a remount. Without this the field,
+  /// the pin and the facets all kept showing the previous link.
+  @override
+  void didUpdateWidget(SearchScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
 
-    // Filters FIRST. `_runQuery` reads `state.filters`, so a deep-linked facet
-    // dispatched after the query would miss the very query it narrows.
-    if (!widget.initialFilters.isEmpty) {
-      context.read<SearchBloc>().add(
-            FiltersChangedEvent(widget.initialFilters),
-          );
+    if (widget.initialQuery == oldWidget.initialQuery &&
+        widget.initialScopeParam == oldWidget.initialScopeParam &&
+        widget.initialFilters == oldWidget.initialFilters) {
+      return;
     }
-    _dispatchQuery();
+
+    _controller.text = widget.initialQuery;
+    _syncWithRoute();
   }
 
   @override
   void dispose() {
-    _debounce.dispose();
     _controller.dispose();
     super.dispose();
   }
 
+  void _syncWithRoute() {
+    // Matched on `name`, the deep-link spelling (`SearchScope` says so);
+    // `aliases` are what a user types before a colon. An unrecognised value
+    // stays null and the role's route default applies.
+    _pinnedScope = SearchScope.values
+        .firstWhereOrNull((scope) => scope.name == widget.initialScopeParam);
+
+    // ONE event, facets riding on it. A `FiltersChangedEvent` dispatched
+    // ahead of the query re-ran the PREVIOUS term with the new facets — a
+    // billed read, and a flash of the wrong results.
+    _dispatchQuery(filters: widget.initialFilters);
+  }
+
   /// `location` is hardcoded because this widget only ever renders at
   /// `Paths.search`; reading it back off the router would buy nothing and
-  /// would fail in tests that mount the screen without one.
-  void _dispatchQuery() {
+  /// would fail in tests that mount the screen without one. A null [filters]
+  /// keeps the chips the bloc already holds.
+  void _dispatchQuery({OfferFilters? filters}) {
     context.read<SearchBloc>().add(
           QueryChangedEvent(
             _controller.text,
             location: Paths.search,
             pinnedScope: _pinnedScope,
+            filters: filters,
           ),
         );
   }
@@ -108,11 +124,9 @@ class _SearchScreenState extends State<SearchScreen> {
     _dispatchQuery();
   }
 
-  UserRole get _role => context.read<SearchBloc>().authService.user.userRole;
-
   @override
   Widget build(BuildContext context) {
-    final role = _role;
+    final role = AuthenticationService.instance.user.userRole;
     final permitted = SearchScopeResolver.scopesFor(role);
     final isCompact = getScreenSize(context: context) == ScreenSize.compact;
 
@@ -131,7 +145,16 @@ class _SearchScreenState extends State<SearchScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _field(),
+              // The chips the bloc holds ride on every typed query, so a
+              // facet never has to be re-sent ahead of the term it narrows.
+              SearchField(
+                controller: _controller,
+                pinnedScope: _pinnedScope,
+                filters: state.filters,
+                showOverlay: false,
+                showShortcutBadge: false,
+                autofocus: true,
+              ),
               // A single-scope role gets no tab row: one tab is a control with
               // nothing to switch to.
               if (permitted.length > 1) ...[
@@ -157,23 +180,6 @@ class _SearchScreenState extends State<SearchScreen> {
       ),
     );
   }
-
-  Widget _field() => TextField(
-        controller: _controller,
-        autofocus: true,
-        onChanged: (_) => _debounce.run(_dispatchQuery),
-        decoration: InputDecoration(
-          isDense: true,
-          filled: true,
-          fillColor: AppColors.white,
-          hintText: 'Search',
-          prefixIcon: const Icon(Icons.search_rounded),
-          border: OutlineInputBorder(
-            borderRadius: defaultBorderRadius,
-            borderSide: BorderSide.none,
-          ),
-        ),
-      );
 
   Widget _scopeTabs(Set<SearchScope> permitted, SearchScope active) => Wrap(
         spacing: AppSpacing.sm,

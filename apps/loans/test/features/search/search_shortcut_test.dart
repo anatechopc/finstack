@@ -6,85 +6,99 @@ import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/search/widget/search_app_bar_action.dart';
 import 'package:loooans/features/search/widget/search_shortcut_wrapper.dart';
 import 'package:loooans/features/users/screens/loan_client_detail.dart';
+import 'package:loooans/l10n/arb/app_localizations.dart';
 import 'package:loooans/services/authentication_service.dart';
-import 'package:mocktail/mocktail.dart';
+import 'package:user_repository/user_repository.dart';
 
-import '../../helpers/helpers.dart';
-
-class _MockAuthenticationService extends Mock
-    implements AuthenticationService {}
+User _admin() => User()
+  ..id = 'user-1'
+  ..firstName = 'Juan'
+  ..lastName = 'Dela Cruz'
+  ..userRole = UserRole.admin;
 
 void main() {
-  late _MockAuthenticationService auth;
+  late GlobalKey<NavigatorState> navigatorKey;
 
   setUp(() {
-    auth = _MockAuthenticationService();
-    when(() => auth.isLoggedIn).thenReturn(true);
+    navigatorKey = GlobalKey<NavigatorState>();
     // Process-wide singleton: a previous test's user would leak into the
     // pre-auth case below.
     AuthenticationService.instance.dispose();
   });
 
-  Future<bool> pumpAndPress(
-    WidgetTester tester,
-    LogicalKeyboardKey modifier, {
-    AuthenticationService? authService,
-  }) async {
-    var opened = false;
-    await tester.pumpApp(
-      SearchShortcutWrapper(
-        onActivate: () => opened = true,
-        authService: authService,
-        // A focusable child: key events dispatch from the primary focus
-        // upwards, so with nothing focused below the wrapper its handler is
-        // never reached. Every real route puts a focus scope here.
-        child: const Scaffold(body: Focus(autofocus: true, child: SizedBox())),
-      ),
-    );
+  /// The wrapper above a `MaterialApp` whose root navigator it holds the key
+  /// to — the shape `app.dart` gives it.
+  Future<void> pumpWrapper(
+    WidgetTester tester, {
+    required VoidCallback onActivate,
+    required Widget child,
+  }) =>
+      tester.pumpWidget(
+        SearchShortcutWrapper(
+          navigatorKey: navigatorKey,
+          onActivate: onActivate,
+          child: MaterialApp(
+            navigatorKey: navigatorKey,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: child,
+          ),
+        ),
+      );
 
+  Future<void> press(WidgetTester tester, LogicalKeyboardKey modifier) async {
     await tester.sendKeyDownEvent(modifier);
     await tester.sendKeyEvent(LogicalKeyboardKey.keyK);
     await tester.sendKeyUpEvent(modifier);
     await tester.pumpAndSettle();
+  }
+
+  Future<bool> pumpAndPress(
+    WidgetTester tester,
+    LogicalKeyboardKey modifier,
+  ) async {
+    var opened = false;
+    await pumpWrapper(
+      tester,
+      onActivate: () => opened = true,
+      // A focusable child: key events dispatch from the primary focus
+      // upwards, so with nothing focused below the wrapper its handler is
+      // never reached. Every real route puts a focus scope here.
+      child: const Scaffold(body: Focus(autofocus: true, child: SizedBox())),
+    );
+    await press(tester, modifier);
 
     return opened;
   }
 
   group('SearchShortcutWrapper', () {
     testWidgets('Ctrl+K opens search', (tester) async {
+      AuthenticationService.instance.user = _admin();
+
       expect(
-        await pumpAndPress(
-          tester,
-          LogicalKeyboardKey.controlLeft,
-          authService: auth,
-        ),
+        await pumpAndPress(tester, LogicalKeyboardKey.controlLeft),
         isTrue,
       );
     });
 
     testWidgets('Cmd+K opens search', (tester) async {
-      expect(
-        await pumpAndPress(
-          tester,
-          LogicalKeyboardKey.metaLeft,
-          authService: auth,
-        ),
-        isTrue,
-      );
+      AuthenticationService.instance.user = _admin();
+
+      expect(await pumpAndPress(tester, LogicalKeyboardKey.metaLeft), isTrue);
     });
 
     testWidgets('does not fire pre-auth, where there is no user',
         (tester) async {
-      // No injection: this is the real singleton in the state the login,
-      // register and set-password screens leave it in. The wrapper sits above
-      // the router, so it covers those routes too.
+      // The singleton is in the state the login, register and set-password
+      // screens leave it in. The wrapper sits above the router, so it covers
+      // those routes too.
       //
       // `onActivate` reproduces the actual crash rather than flipping a flag:
-      // reaching `/search` builds `SearchScreen`, whose first statement is
-      // `authService.user.userRole` (`search_screen.dart:111`), and
-      // `AuthenticationService.user` throws `Please login` with no user set
-      // (`authentication_service.dart:16-22`). A flag-only assertion would go
-      // green against a wrapper that fires and crashes.
+      // reaching `/search` builds `SearchScreen`, whose first statement reads
+      // `AuthenticationService.instance.user.userRole`, and
+      // `AuthenticationService.user` throws `Please login` with no user set.
+      // A flag-only assertion would go green against a wrapper that fires
+      // and crashes.
       var opened = false;
       String? role;
 
@@ -92,22 +106,17 @@ void main() {
         LogicalKeyboardKey.controlLeft,
         LogicalKeyboardKey.metaLeft,
       ]) {
-        await tester.pumpApp(
-          SearchShortcutWrapper(
-            onActivate: () {
-              opened = true;
-              role = AuthenticationService.instance.user.userRole.toString();
-            },
-            child: const Scaffold(
-              body: Focus(autofocus: true, child: SizedBox()),
-            ),
+        await pumpWrapper(
+          tester,
+          onActivate: () {
+            opened = true;
+            role = AuthenticationService.instance.user.userRole.toString();
+          },
+          child: const Scaffold(
+            body: Focus(autofocus: true, child: SizedBox()),
           ),
         );
-
-        await tester.sendKeyDownEvent(modifier);
-        await tester.sendKeyEvent(LogicalKeyboardKey.keyK);
-        await tester.sendKeyUpEvent(modifier);
-        await tester.pumpAndSettle();
+        await press(tester, modifier);
 
         // Exception first: with the guard gone the framework catches the
         // `Please login` throw inside the key message handler and parks it
@@ -120,31 +129,72 @@ void main() {
 
     testWidgets('does not fire for a placeholder (pre-login) browser',
         (tester) async {
-      when(() => auth.isLoggedIn).thenReturn(false);
+      AuthenticationService.instance.user =
+          User.createPlaceholder(lastName: 'Guest');
 
       expect(
-        await pumpAndPress(
-          tester,
-          LogicalKeyboardKey.controlLeft,
-          authService: auth,
-        ),
+        await pumpAndPress(tester, LogicalKeyboardKey.controlLeft),
         isFalse,
       );
     });
 
+    // Key events bubble up from the dialog's focus scope, so the wrapper
+    // sees them. Firing would navigate the page underneath to `/search` and
+    // leave the dialog stranded on top of it.
+    testWidgets('does nothing while a dialog is open', (tester) async {
+      AuthenticationService.instance.user = _admin();
+      var opened = 0;
+
+      await pumpWrapper(
+        tester,
+        onActivate: () => opened++,
+        child: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) => const AlertDialog(
+                  content: Focus(autofocus: true, child: Text('modal')),
+                ),
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(find.text('modal'), findsOneWidget);
+
+      await press(tester, LogicalKeyboardKey.controlLeft);
+
+      expect(opened, 0);
+      expect(find.text('modal'), findsOneWidget);
+
+      // Closed again, the shortcut is back.
+      navigatorKey.currentState!.pop();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      navigatorKey.currentState!.pop();
+      await tester.pumpAndSettle();
+      await press(tester, LogicalKeyboardKey.controlLeft);
+
+      expect(opened, 1);
+    });
+
     testWidgets('does not hijack a literal k typed into a text field',
         (tester) async {
+      AuthenticationService.instance.user = _admin();
       var opened = false;
       final controller = TextEditingController();
       addTearDown(controller.dispose);
 
-      await tester.pumpApp(
-        SearchShortcutWrapper(
-          onActivate: () => opened = true,
-          authService: auth,
-          child: Scaffold(
-            body: TextField(controller: controller, autofocus: true),
-          ),
+      await pumpWrapper(
+        tester,
+        onActivate: () => opened = true,
+        child: Scaffold(
+          body: TextField(controller: controller, autofocus: true),
         ),
       );
       await tester.pumpAndSettle();
@@ -158,21 +208,16 @@ void main() {
     });
 
     testWidgets('still fires while a text field has focus', (tester) async {
+      AuthenticationService.instance.user = _admin();
       var opened = false;
 
-      await tester.pumpApp(
-        SearchShortcutWrapper(
-          onActivate: () => opened = true,
-          authService: auth,
-          child: const Scaffold(body: TextField(autofocus: true)),
-        ),
+      await pumpWrapper(
+        tester,
+        onActivate: () => opened = true,
+        child: const Scaffold(body: TextField(autofocus: true)),
       );
       await tester.pumpAndSettle();
-
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyK);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
-      await tester.pumpAndSettle();
+      await press(tester, LogicalKeyboardKey.controlLeft);
 
       expect(opened, isTrue);
     });
@@ -226,9 +271,9 @@ void main() {
     });
 
     test('LoanClientDetail keeps the action off by default', () {
-      // `dialog_widgets.dart:196` mounts the same widget — app bar included —
-      // inside a dialog that already sits under the shell's `SearchField`.
-      // Only `router.dart`'s `/clients/:action` opts in.
+      // `DialogWidgets.showLoanClientDetail` mounts the same widget — app bar
+      // included — inside a dialog that already sits under the shell's
+      // `SearchField`. Only `router.dart`'s `/clients/:action` opts in.
       expect(
         const LoanClientDetail(userId: 'user-1').showSearchAction,
         isFalse,

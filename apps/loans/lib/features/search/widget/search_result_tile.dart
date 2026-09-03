@@ -14,9 +14,9 @@ import 'package:user_repository/user_repository.dart';
 /// One result row, shared by the overlay and `/search`.
 ///
 /// Switches on the sum type rather than on an `id`: an offer row has no usable
-/// document id (`product_view_projection.go:48-59` — legacy views carry
-/// auto-generated ids and every consumer selects by `product_id`), so the two
-/// scopes share no key to render from.
+/// document id (legacy `product_views` carry auto-generated ids and every
+/// consumer selects by `product_id` — see `HandleProductWrittenCore` in the
+/// Go projection), so the two scopes share no key to render from.
 class SearchResultTile extends StatelessWidget {
   const SearchResultTile({
     required this.item,
@@ -39,11 +39,20 @@ class SearchResultTile extends StatelessWidget {
 
     switch (item) {
       case OfferResultItem(:final productView):
+        // Read before navigating: `go` deactivates this element on the same
+        // frame and a deactivated context cannot `read`.
+        final products = context.read<ProductBloc>();
         router?.go('${Paths.index}?sec=offers');
-        context.read<ProductBloc>().selectProduct(
-              productView.productId,
-              productView: productView,
-            );
+        // Deferred a frame. `LoanDetails` listens to `ProductBloc` and pushes
+        // a loading dialog on `loading`; selecting in the same tick as the
+        // navigation reached a still-mounted listener, which pushed a dialog
+        // that nothing on the offers page ever popped.
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => products.selectProduct(
+            productView.productId,
+            productView: productView,
+          ),
+        );
       case ClientResultItem(:final user):
         // The same entry point a Borrowers row uses, so a result opens exactly
         // as a row does and the UI mode is decided in ONE place. A URL written
@@ -85,8 +94,8 @@ class SearchResultTile extends StatelessWidget {
   }
 
   Widget _offerTile(BuildContext context, ProductView view) {
-    // `ImageUrl.url` throws when thumbnail and original are both null
-    // (`image_url.dart:27-37`), so the photo is null-checked, not defaulted.
+    // `ImageUrl.url` throws when thumbnail and original are both null, so the
+    // photo is null-checked, not defaulted.
     final photo = view.companyProfilePhotoUrl;
 
     // A tag-line match is otherwise invisible — company name and loan type
@@ -121,9 +130,11 @@ class SearchResultTile extends StatelessWidget {
           Wrap(
             spacing: AppSpacing.sm,
             children: [
+              // `completeTerm`, as `loan_offer_item.dart` renders it: the raw
+              // `term` is the stored code (`1m`, `15d`), not a label.
               Text(
                 '${view.interestRate}% · '
-                '${view.maxLoanableAmount.toCurrency()} · ${view.term}',
+                '${view.maxLoanableAmount.toCurrency()} · ${view.completeTerm}',
                 style: _meta,
               ),
               Text(_rating(view), style: _meta),
@@ -135,8 +146,9 @@ class SearchResultTile extends StatelessWidget {
   }
 
   /// `review_rating_avg` is seeded to `0.0` whenever `review_count` is `0`
-  /// (`product_view_projection.go:145-151`), so a raw average would render an
-  /// honest-looking zero-star rating for a lender nobody has reviewed.
+  /// (`projectedProductFields` in the Go projection), so a raw average would
+  /// render an honest-looking zero-star rating for a lender nobody has
+  /// reviewed.
   static const _meta = TextStyle(fontSize: AppTypography.bodySmall);
 
   String _rating(ProductView view) => view.reviewCount == 0
