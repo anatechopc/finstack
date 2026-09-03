@@ -54,6 +54,20 @@ void main() {
 
       expect(Penalty.listToJson([a, b]), [a.toJson(), b.toJson()]);
     });
+
+    test('per-installment frequency serializes as per_installment', () {
+      const penalty = Penalty(
+        id: 'p',
+        name: 'Installment fee',
+        amount: 100,
+        frequency: PenaltyFrequency.perInstallment,
+      );
+
+      final json = penalty.toJson();
+
+      expect(json['frequency'], 'per_installment');
+      expect(Penalty.fromJson(json), penalty);
+    });
   });
 
   group('PenaltyFrequency.periods', () {
@@ -66,14 +80,20 @@ void main() {
       expect(PenaltyFrequency.daily.periods(19), 19);
     });
 
-    test('weekly rounds a started week up', () {
-      expect(PenaltyFrequency.weekly.periods(7), 1);
-      expect(PenaltyFrequency.weekly.periods(8), 2);
-    });
-
     test('monthly rounds a started 30-day month up', () {
       expect(PenaltyFrequency.monthly.periods(30), 1);
       expect(PenaltyFrequency.monthly.periods(31), 2);
+    });
+
+    test('per installment rounds a started term period up', () {
+      expect(PenaltyFrequency.perInstallment.periods(15, termDays: 15), 1);
+      expect(PenaltyFrequency.perInstallment.periods(16, termDays: 15), 2);
+      expect(PenaltyFrequency.perInstallment.periods(30), 1);
+      expect(PenaltyFrequency.perInstallment.periods(31), 2);
+    });
+
+    test('per installment treats a bad termDays as 30', () {
+      expect(PenaltyFrequency.perInstallment.periods(31, termDays: 0), 2);
     });
 
     test('never charges when not late', () {
@@ -81,6 +101,18 @@ void main() {
         expect(frequency.periods(0), 0, reason: frequency.name);
         expect(frequency.periods(-3), 0, reason: frequency.name);
       }
+    });
+  });
+
+  group('termDaysOf', () {
+    test('monthly term is 30 days', () => expect(termDaysOf('1m'), 30));
+    test('twice-a-month term is 15 days', () => expect(termDaysOf('15d'), 15));
+    test('two salary dates are 15 days', () => expect(termDaysOf('15,30'), 15));
+    test('one salary date is 30 days', () => expect(termDaysOf('30'), 30));
+    test('multi-month term scales by 30', () => expect(termDaysOf('2m'), 60));
+    test('unparseable term falls back to 30', () {
+      expect(termDaysOf(''), 30);
+      expect(termDaysOf('weekly'), 30);
     });
   });
 }

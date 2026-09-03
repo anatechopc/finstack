@@ -18,11 +18,11 @@ void main() {
     frequency: PenaltyFrequency.monthly,
   );
   const once500 = Penalty(id: 'p3', name: 'Bounced cheque', amount: 500);
-  const weekly50 = Penalty(
-    id: 'p4',
-    name: 'Weekly',
-    amount: 50,
-    frequency: PenaltyFrequency.weekly,
+  const perInstallment100 = Penalty(
+    id: 'p5',
+    name: 'Installment fee',
+    amount: 100,
+    frequency: PenaltyFrequency.perInstallment,
   );
 
   group('calculateDaysLate', () {
@@ -121,15 +121,22 @@ void main() {
       );
     });
 
-    test('weekly: 7 days is one week, 8 days is two', () {
+    test('per installment uses the term days it is given', () {
       expect(
-        computePenalties(amountDue: 5000, penalties: [weekly50], daysLate: 7)
-            .total,
-        50,
+        computePenalties(
+          amountDue: 5000,
+          penalties: [perInstallment100],
+          daysLate: 16,
+          termDays: 15,
+        ).total,
+        200,
       );
       expect(
-        computePenalties(amountDue: 5000, penalties: [weekly50], daysLate: 8)
-            .total,
+        computePenalties(
+          amountDue: 5000,
+          penalties: [perInstallment100],
+          daysLate: 16,
+        ).total,
         100,
       );
     });
@@ -169,6 +176,7 @@ void main() {
     Loan loan({
       bool allowLatePayments = false,
       List<Penalty> penalties = const [monthly2pct],
+      String term = '1m',
     }) {
       return Loan.create(
         userId: 'u1',
@@ -184,7 +192,7 @@ void main() {
         dueAt: null,
         reason: 'test',
         interestRate: 3,
-        term: '1m',
+        term: term,
         amortization: 5000,
         penalties: penalties,
         allowLatePayments: allowLatePayments,
@@ -251,6 +259,22 @@ void main() {
       );
 
       expect(result.total, 0);
+    });
+
+    test('per installment follows the loan term', () {
+      final monthly = previewPenalty(
+        schedule: schedule(),
+        loan: loan(penalties: const [perInstallment100]),
+        asOf: asOf,
+      );
+      final twiceAMonth = previewPenalty(
+        schedule: schedule(),
+        loan: loan(penalties: const [perInstallment100], term: '15d'),
+        asOf: asOf,
+      );
+
+      expect(monthly.total, 100);
+      expect(twiceAMonth.total, 200);
     });
   });
 }

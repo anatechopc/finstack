@@ -48,10 +48,13 @@ int calculateDaysLate({
 /// `amortization` for term loans, `outstandingBalance` for open-term rows.
 /// Percentage penalties are a percent of [amountDue]; every penalty is then
 /// multiplied by its frequency's periods for [daysLate].
+/// [termDays] is the loan's installment period in days; only per-installment
+/// penalties use it.
 PenaltyResult computePenalties({
   required double amountDue,
   required List<Penalty> penalties,
   required int daysLate,
+  int termDays = 30,
 }) {
   if (daysLate <= 0 || penalties.isEmpty) {
     return PenaltyResult.none;
@@ -61,7 +64,7 @@ PenaltyResult computePenalties({
   var total = 0.0;
 
   for (final penalty in penalties) {
-    final periods = penalty.frequency.periods(daysLate);
+    final periods = penalty.frequency.periods(daysLate, termDays: termDays);
     final base = penalty.isPercentage
         ? amountDue * penalty.amount / 100
         : penalty.amount;
@@ -101,5 +104,6 @@ PenaltyResult previewPenalty({
         schedule.isOpenTerm ? schedule.outstandingBalance : schedule.amortization,
     penalties: loan.penalties,
     daysLate: daysLate,
+    termDays: termDaysOf(loan.term),
   );
 }

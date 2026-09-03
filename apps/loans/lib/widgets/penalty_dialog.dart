@@ -110,9 +110,11 @@ Future<Penalty?> showPenaltyDialog(BuildContext context) {
                 ),
                 const Gap(8),
                 const Text(
-                  'Percentages apply to the installment amount. Daily, weekly, '
-                  'and monthly penalties multiply by how late the payment is; '
-                  'a started period counts in full.',
+                  'Percentages apply to the installment amount. Daily and '
+                  'monthly penalties multiply by how late the payment is; '
+                  '"Per installment" follows the product\'s loan term '
+                  '(monthly or twice a month). A started period counts in '
+                  'full.',
                   style: TextStyle(fontSize: 10),
                 ),
               ],
