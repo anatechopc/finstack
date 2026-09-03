@@ -22,6 +22,8 @@ class Product extends ProductEntity implements BaseModel<ProductEntity> {
     int requiredCoMakerCount = 0,
     bool allowAddOns = true,
     List<FileUrl> additionalLoanDocs = const [],
+    List<Penalty> penalties = const [],
+    bool allowLatePayments = false,
   }) {
     final now = DateTime.timestamp();
 
@@ -43,7 +45,9 @@ class Product extends ProductEntity implements BaseModel<ProductEntity> {
       ..maxPeriod = maxPeriod
       ..requiredCoMakerCount = requiredCoMakerCount
       ..allowAddOns = allowAddOns
-      ..additionalLoanDocs = additionalLoanDocs;
+      ..additionalLoanDocs = additionalLoanDocs
+      ..penalties = penalties
+      ..allowLatePayments = allowLatePayments;
   }
 
   @override

@@ -26,6 +26,8 @@ class Loan extends LoanEntity implements BaseModel<LoanEntity> {
     double additionalChargeUpfrontCollection = 0,
     List<String> coMakerUserIds = const [],
     String? parentId,
+    List<Penalty> penalties = const [],
+    bool allowLatePayments = false,
   }) {
     final now = DateTime.timestamp();
 
@@ -50,7 +52,9 @@ class Loan extends LoanEntity implements BaseModel<LoanEntity> {
       ..amortization = amortization
       ..additionalChargeUpfrontCollection = additionalChargeUpfrontCollection
       ..coMakerUserIds = coMakerUserIds
-      ..parentId = parentId;
+      ..parentId = parentId
+      ..penalties = penalties
+      ..allowLatePayments = allowLatePayments;
   }
 
   // for nw, term only supports day and month

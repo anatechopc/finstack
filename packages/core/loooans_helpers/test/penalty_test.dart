@@ -14,7 +14,7 @@ void main() {
 
       final json = penalty.toJson();
 
-      expect(json, {
+      expect(json, const {
         'id': 'abc12345',
         'name': 'Late fee',
         'description': 'Per day late',
