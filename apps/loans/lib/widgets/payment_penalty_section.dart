@@ -129,7 +129,13 @@ class _PaymentPenaltySectionState extends State<PaymentPenaltySection> {
                   sub: true,
                 ),
               const Divider(),
-              _row('Total to collect', total.toCurrency(), bold: true),
+              _row(
+                widget.schedules.length > 1
+                    ? 'Installments + penalty'
+                    : 'Installment + penalty',
+                total.toCurrency(),
+                bold: true,
+              ),
             ],
           ),
         ),
