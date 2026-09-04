@@ -7,6 +7,7 @@ import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
 import 'package:loooans/utils/constants.dart';
 import 'package:loooans/utils/extensions.dart';
+import 'package:loooans/utils/screen_helpers.dart';
 import 'package:two_dimensional_scrollables/two_dimensional_scrollables.dart';
 
 class LoanScheduleWidget extends StatelessWidget {
@@ -18,6 +19,7 @@ class LoanScheduleWidget extends StatelessWidget {
     this.forDialogHeight,
     this.buildTable = false,
     this.tableHeight,
+    this.loan,
   });
 
   final double? forDialogHeight;
@@ -30,6 +32,10 @@ class LoanScheduleWidget extends StatelessWidget {
   final double amortization;
   final String completeTerm;
   final List<LoanSchedule> schedules;
+
+  /// The loan these rows belong to. Null for offer previews, where there is
+  /// no loan yet and no penalty can be shown.
+  final Loan? loan;
 
   @override
   Widget build(BuildContext context) {
@@ -87,6 +93,7 @@ class LoanScheduleWidget extends StatelessWidget {
           context,
           schedule: schedules[index],
           index: index,
+          loan: loan,
         );
       },
       separatorBuilder: (context, index) {
@@ -111,6 +118,7 @@ class LoanScheduleWidget extends StatelessWidget {
     BuildContext context, {
     required LoanSchedule schedule,
     int index = 0,
+    Loan? loan,
   }) {
     final trailingText = !schedule.isOpenTerm
         ? context.read<LoansBloc>().monthlyAmortization
@@ -135,6 +143,7 @@ class LoanScheduleWidget extends StatelessWidget {
               fontSize: 12,
             ),
           ),
+          ..._penaltyLines(schedule, loan),
         ],
       ),
       isThreeLine: true,
@@ -162,8 +171,13 @@ class LoanScheduleWidget extends StatelessWidget {
       } else if (vicinity.column == 1) {
         defaultCellDisplay = Padding(
           padding: const EdgeInsets.only(right: 16),
-          child: Text(
-            schedule.amortization.toCurrency(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(schedule.amortization.toCurrency()),
+              ..._penaltyLines(schedule, loan),
+            ],
           ),
         );
       } else if (vicinity.column == 2) {
@@ -193,6 +207,21 @@ class LoanScheduleWidget extends StatelessWidget {
   /// as Not paid / Not paid (overdue) based on the due date. A rejected payment
   /// reverts the schedule to not_paid here (the borrower can resubmit) and is
   /// surfaced separately via the rejection notification.
+  /// Running penalty on an unpaid row, or the charged amount on a paid one.
+  static List<Widget> _penaltyLines(LoanSchedule schedule, Loan? loan) {
+    const style = TextStyle(color: AppColors.red2, fontSize: 11);
+    final preview = loan == null
+        ? PenaltyResult.none
+        : previewPenalty(schedule: schedule, loan: loan);
+
+    return [
+      if (preview.total > 0)
+        Text('+ ${preview.total.toCurrency()} penalty', style: style),
+      if (schedule.penalty > 0)
+        Text('+ ${schedule.penalty.toCurrency()} penalty charged', style: style),
+    ];
+  }
+
   String _statusLabel(LoanSchedule schedule) {
     const realPaymentStatuses = {
       LoanStatus.payment_submitted,

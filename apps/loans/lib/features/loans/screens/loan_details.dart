@@ -272,6 +272,7 @@ class _LoanDetailsState extends State<LoanDetails> {
                       context,
                       schedule: schedules[index - 5],
                       index: index - 5,
+                      loan: loan,
                     ),
                 };
               },
@@ -398,6 +399,7 @@ class _LoanDetailsState extends State<LoanDetails> {
                 completeTerm: loan.completeTerm,
                 buildTable: true,
                 tableHeight: (schedules.length + 1) * 48.0,
+                loan: loan,
               ),
             ],
           ),

@@ -90,6 +90,7 @@ class ClientDetailLoanBody extends StatelessWidget {
                 index: 0,
                 schedule: clientLoanSchedules.first,
                 isHeader: true,
+                loan: selectedLoan,
                 onMakePayment: (schedule) =>
                     _onMakePayment(context, schedule),
               );
@@ -99,6 +100,7 @@ class ClientDetailLoanBody extends StatelessWidget {
               return ClientDetailScheduleItem(
                 index: finalIndex,
                 schedule: schedule,
+                loan: selectedLoan,
                 onMakePayment: (schedule) =>
                     _onMakePayment(context, schedule),
                 onReviewPayment: (schedule) =>
