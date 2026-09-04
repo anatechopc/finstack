@@ -123,6 +123,78 @@ void main() {
     expect(s.collectedAt, isNotNull);
   });
 
+  test('confirm threads a waive through to the row', () async {
+    when(() => schedules.get(id: any(named: 'id'))).thenAnswer(
+      (_) async =>
+          sched()..dueAt = DateTime.now().subtract(const Duration(days: 3)),
+    );
+    when(() => loans.get(id: any(named: 'id'))).thenAnswer(
+      (_) async => Loan()
+        ..id = 'loan-1'
+        ..period = 1
+        ..term = '1m'
+        ..penalties = [
+          const Penalty(
+            id: 'p1',
+            name: 'Late fee',
+            amount: 100,
+            frequency: PenaltyFrequency.daily,
+          ),
+        ],
+    );
+
+    await svc.confirm(
+      payment: pay(),
+      confirmedById: 'lender-1',
+      waivePenalty: true,
+      waiveReason: 'goodwill',
+    );
+
+    final s = verify(() => schedules.update(data: captureAny(named: 'data')))
+        .captured
+        .single as LoanSchedule;
+    expect(s.status, LoanStatus.paid_late);
+    expect(s.penalty, 0);
+    expect(s.penaltyWaivedBy, 'lender-1');
+    expect(s.penaltyWaiveReason, 'goodwill');
+    expect(s.penalties.single.id, 'p1');
+  });
+
+  test('confirm refuses a waive with no reason and writes nothing',
+      () async {
+    when(() => schedules.get(id: any(named: 'id'))).thenAnswer(
+      (_) async =>
+          sched()..dueAt = DateTime.now().subtract(const Duration(days: 3)),
+    );
+    when(() => loans.get(id: any(named: 'id'))).thenAnswer(
+      (_) async => Loan()
+        ..id = 'loan-1'
+        ..period = 1
+        ..term = '1m'
+        ..penalties = [
+          const Penalty(
+            id: 'p1',
+            name: 'Late fee',
+            amount: 100,
+            frequency: PenaltyFrequency.daily,
+          ),
+        ],
+    );
+
+    await expectLater(
+      () => svc.confirm(
+        payment: pay(),
+        confirmedById: 'lender-1',
+        waivePenalty: true,
+        waiveReason: ' ',
+      ),
+      throwsException,
+    );
+
+    verifyNever(() => payments.update(data: any(named: 'data')));
+    verifyNever(() => schedules.update(data: any(named: 'data')));
+  });
+
   test('confirm with an explicit collection date on the due date is on time',
       () async {
     final due = DateTime.now().subtract(const Duration(days: 3));
