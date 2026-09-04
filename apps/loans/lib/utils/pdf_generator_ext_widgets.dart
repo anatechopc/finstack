@@ -77,6 +77,20 @@ pw.Widget _quotationWidget({
           );
         },
       ),
+      if (loan.allowLatePayments)
+        _quotationItem(
+          title: 'Late payments',
+          detail: 'Allowed, no penalties',
+        )
+      else
+        ...loan.penalties.map(
+          (penalty) {
+            return _quotationItem(
+              title: 'Penalty if paid late: ${penalty.name}',
+              detail: penalty.amountLabel,
+            );
+          },
+        ),
       pw.Divider(),
       _quotationItem(
         title: 'Total payable',

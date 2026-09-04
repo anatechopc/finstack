@@ -136,6 +136,22 @@ class LoanEntity implements BaseEntity {
   )
   late String? parentId;
 
+  /// Penalty terms in force for this loan, copied from the product at
+  /// creation. Payment confirmation reads these, never the live product.
+  @JsonKey(
+    defaultValue: [],
+    toJson: Penalty.listToJson,
+  )
+  List<Penalty> penalties = [];
+
+  /// Copied from the product at creation. When true, late payments are
+  /// neither tagged paid_late nor penalized.
+  @JsonKey(
+    name: 'allow_late_payments',
+    defaultValue: false,
+  )
+  bool allowLatePayments = false;
+
   @override
   List<Object?> get props => [
         createdAt,
@@ -160,6 +176,8 @@ class LoanEntity implements BaseEntity {
         additionalChargeUpfrontCollection,
         coMakerUserIds,
         parentId,
+        penalties,
+        allowLatePayments,
       ];
 
   @override
@@ -192,7 +210,9 @@ class LoanEntity implements BaseEntity {
       ..amortization = amortization
       ..additionalChargeUpfrontCollection = additionalChargeUpfrontCollection
       ..coMakerUserIds = coMakerUserIds
-      ..parentId = parentId;
+      ..parentId = parentId
+      ..penalties = penalties
+      ..allowLatePayments = allowLatePayments;
   }
 
   static List<Map<String, dynamic>> _handleRequirementSubmissionsToJson(

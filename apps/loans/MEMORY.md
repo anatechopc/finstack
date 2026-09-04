@@ -732,3 +732,24 @@ and always selects on a mount; the card highlight and panel colour are set from 
 id in the URL selects nothing and stays in the URL (the bloc's error state is not
 handled here); a fast double-click on the same card can leave the panel open with no id.
 The admin dialog path (`_dialogFor`) is verified by click-through only, not by a test.
+
+## Penalties definitions — loooans#72 part 2 (2026-09-04)
+
+Branch `feat/penalties-72-definitions` → `develop`. Design: `docs/superpowers/specs/2026-09-04-penalties-design.md`; plan: `docs/superpowers/plans/2026-09-04-penalties-2-definitions-port.md`. Issues live on the OLD tracker: loooans#72 (penalties), loooans#71 (late tagging vs collection date), loooans#78 (allow late payments). Do not confuse with finstack#71/#72.
+
+### What was added
+- `Penalty` + `PenaltyFrequency` (once, daily, monthly, per_installment) + `termDaysOf` in `packages/core/loooans_helpers`; `company.default_penalties`; `product.penalties` + `product.allow_late_payments`; loan snapshots both at creation; six schedule-row fields (`collected_at`, `days_late`, `penalty`, `penalties`, `penalty_waived_by`, `penalty_waive_reason`) for part 3. All fields default; old documents load.
+- Pure `computePenalties` / `calculateDaysLate` / `previewPenalty` in `packages/loans/loan_schedule_repository` (tests: 19 there, 19 in helpers). Not called by any payment path yet.
+- `apps/loans/lib/widgets/penalty_dialog.dart`, `PenaltiesSection` (wizard, after Deductions, with the `allow_late_payments` checkbox), `DefaultPenaltiesSection` (company card, admins), `ProductBloc` penalties state seeded copy-on-create from company defaults, penalties listed as "Penalty if paid late" in every quotation and the PDF, always from the loan snapshot where a loan exists.
+
+### Decisions
+- Flutter-only fields → not Class B; no Go PR (spec D10). If a Go trigger ever reads `penalties`, it becomes Class B: backend tolerates the shape first.
+- Two loan-math bugs found on the way are NOT in this branch (campaign gate): finstack#107 (stored percentage charges use the running total; `loans_bloc.dart` `Loan.create` folds vs `ChargeCalculator` base) and finstack#108 (campaign D5 in `loan_changes.go`).
+- `CompanyState` has no refresh status and is not Equatable, so the defaults section is a StatefulWidget owning its list; the bloc listener is scoped by `CompanyBloc.defaultPenaltiesSavedMessage` / `defaultPenaltiesFailedMessage` because `CompanyBloc` is shared with the edit-profile dialog.
+
+### Process lesson
+- This feature was first built (14 commits, two draft PRs) against the stale pre-monorepo repos `anatechopc/loooans` and `loooans_cloud_functions`, because the issue link pointed there. Those PRs were closed and the work ported here. Check repo recency before building; the old repos still host the issues.
+
+### Resume state
+- Part 3 (`feat/penalties-72-application`): confirmation handler with collection date, waive, red penalty line on `client_detail_schedule_item.dart` and `loan_schedule_widget.dart`, statement-of-account column. Reference plan (old paths) in the loooans worktree `docs/superpowers/plans/2026-09-03-penalties-3-application.md`; `resolveLateness` must pass `termDays: termDaysOf(loan.term)`.
+- `sumCharges.upfrontOnly` idea and the quotation-loop unification are deferred with finstack#107.

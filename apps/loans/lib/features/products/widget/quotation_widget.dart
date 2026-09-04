@@ -11,17 +11,30 @@ import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/pdf_generator.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
+import 'package:loooans_helpers/data_helpers.dart';
 
 class QuotationWidget extends StatelessWidget {
   const QuotationWidget({
-    required this.loanAmount, required this.period, required this.interestRate, super.key,
+    required this.loanAmount,
+    required this.period,
+    required this.interestRate,
+    super.key,
     this.foregroundColor = AppColors.black,
+    this.penalties,
+    this.allowLatePayments,
   });
 
   final double loanAmount;
   final int period;
   final double interestRate;
   final Color foregroundColor;
+
+  /// When null, the product bloc's working list is shown (offer preview and
+  /// application). Pass a loan's snapshot to show the terms in force.
+  final List<Penalty>? penalties;
+
+  /// Only known for a loan (its snapshot). Null hides the line.
+  final bool? allowLatePayments;
 
   @override
   Widget build(BuildContext context) {
@@ -154,6 +167,38 @@ class QuotationWidget extends StatelessWidget {
                   );
                 },
               ).toList(),
+            );
+          },
+        ),
+        BlocBuilder<ProductBloc, ProductState>(
+          buildWhen: (prev, next) {
+            return next.status == ProductStatus.refresh ||
+                next.status == ProductStatus.selected;
+          },
+          builder: (context, state) {
+            final list = penalties ?? context.read<ProductBloc>().penalties;
+            final allowsLate = allowLatePayments ??
+                context.read<ProductBloc>().selectedProduct?.allowLatePayments ??
+                false;
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (allowsLate)
+                  _quotationItem(
+                    title: 'Late payments',
+                    detail: 'Allowed, no penalties',
+                  )
+                else
+                  ...list.map(
+                    (penalty) {
+                      return _quotationItem(
+                        title: 'Penalty if paid late: ${penalty.name}',
+                        detail: penalty.amountLabel,
+                      );
+                    },
+                  ),
+              ],
             );
           },
         ),
