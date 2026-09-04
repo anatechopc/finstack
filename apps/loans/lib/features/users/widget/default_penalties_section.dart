@@ -96,7 +96,14 @@ class _DefaultPenaltiesSectionState extends State<DefaultPenaltiesSection> {
                 runSpacing: 8,
                 children: _penalties.map((penalty) {
                   return Chip(
-                    label: Text(penalty.chipLabel),
+                    label: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 260),
+                      child: Text(
+                        penalty.chipLabel,
+                        overflow: TextOverflow.ellipsis,
+                        softWrap: false,
+                      ),
+                    ),
                     backgroundColor: AppColors.white,
                     onDeleted: () => _removePenalty(penalty),
                   );

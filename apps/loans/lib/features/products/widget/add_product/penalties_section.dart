@@ -89,6 +89,9 @@ class PenaltiesSection extends StatelessWidget {
                 ),
                 if (defaults.isNotEmpty)
                   TextButton(
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppColors.black,
+                    ),
                     onPressed: bloc.resetPenalties,
                     child: const Text('Reset to company defaults'),
                   ),
@@ -141,7 +144,13 @@ class _PenaltyChip extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('${inherited ? 'Default · ' : ''}${penalty.chipLabel}'),
+          Flexible(
+            child: Text(
+              '${inherited ? 'Default · ' : ''}${penalty.chipLabel}',
+              overflow: TextOverflow.ellipsis,
+              softWrap: false,
+            ),
+          ),
           const Gap(4),
           IconButton(
             onPressed: () {
