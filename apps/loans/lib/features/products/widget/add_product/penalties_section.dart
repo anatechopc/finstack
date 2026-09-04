@@ -14,7 +14,7 @@ import 'package:product_repository/product_repository.dart';
 
 class PenaltiesSection extends StatelessWidget {
   const PenaltiesSection({
-    required this.product,
+    this.product,
     super.key,
   });
 

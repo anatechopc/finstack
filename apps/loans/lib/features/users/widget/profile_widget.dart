@@ -9,6 +9,7 @@ import 'package:loooans/features/authentication/bloc/authentication_bloc.dart';
 import 'package:loooans/features/companies/bloc/company_bloc.dart';
 import 'package:loooans/features/users/bloc/user_bloc.dart';
 import 'package:loooans/features/users/screens/update_profile_screen.dart';
+import 'package:loooans/features/users/widget/default_penalties_section.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/extensions.dart';
@@ -175,6 +176,8 @@ class ProfileWidget extends StatelessWidget {
                   ),
                   const Gap(16),
                   ..._buildCompanyWidgets(),
+                  if (AuthenticationService.instance.isAdmin)
+                    DefaultPenaltiesSection(foregroundColor: foregroundColor),
                   const Gap(24),
                   if (showUpdateButtonBelow &&
                       AuthenticationService.instance.isAdmin) ...[

@@ -22,6 +22,7 @@ class CompanyBloc extends Bloc<CompanyEvent, CompanyState> {
         addressRepository = context.read<AddressRepository>(),
         super(const CompanyState()) {
     on(_handleUpdateCompanyEvent);
+    on(_handleUpdateDefaultPenaltiesEvent);
   }
 
   final AuthenticationService authService;
@@ -33,6 +34,10 @@ class CompanyBloc extends Bloc<CompanyEvent, CompanyState> {
 
   void updateCompany(Company company, Map<String, dynamic> fields) {
     add(UpdateCompanyEvent(company: company, fields: fields));
+  }
+
+  void updateDefaultPenalties(List<Penalty> penalties) {
+    add(UpdateDefaultPenaltiesEvent(penalties: penalties));
   }
 
   Future<void> _handleUpdateCompanyEvent(
@@ -102,6 +107,31 @@ class CompanyBloc extends Bloc<CompanyEvent, CompanyState> {
       emit(
         CompanyState.error(
           errorMessage: 'Cannot update companyu: $err',
+        ),
+      );
+    }
+  }
+
+  Future<void> _handleUpdateDefaultPenaltiesEvent(
+    UpdateDefaultPenaltiesEvent event,
+    Emitter<CompanyState> emit,
+  ) async {
+    final company = authService.company;
+    final previous = company.defaultPenalties;
+    try {
+      emit(const CompanyState.loading(isLoading: true));
+      company.defaultPenalties = List<Penalty>.of(event.penalties);
+      final updated = await companyRepository.update(data: company);
+      authService.company = updated;
+      emit(const CompanyState.loading());
+      emit(const CompanyState.success(message: 'Default penalties updated'));
+    } catch (err) {
+      company.defaultPenalties = previous;
+      log.severe('UpdateDefaultPenaltiesError: $err', err);
+      emit(const CompanyState.loading());
+      emit(
+        const CompanyState.error(
+          errorMessage: 'Cannot update default penalties',
         ),
       );
     }
