@@ -208,11 +208,14 @@ extension ReportsBlocExtensionSoa on ReportsBloc {
           interestCharge = entry.interestCharge;
           interestPayment = entry.interestPayment;
           principalPayment = entry.principalPayment;
-          penalty = entry.penalty;
-          entry.toRemove = Jiffy.parseFromDateTime(entry.date).isSame(
+          // Only a same-day entry is replaced by this one; copying its penalty
+          // on the fallback path would bill it twice.
+          final sameDay = Jiffy.parseFromDateTime(entry.date).isSame(
             Jiffy.parseFromDateTime(amount.createdAt),
             unit: Unit.day,
           );
+          penalty = sameDay ? entry.penalty : 0;
+          entry.toRemove = sameDay;
         }
 
         entries.add(
