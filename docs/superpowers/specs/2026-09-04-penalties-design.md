@@ -117,7 +117,7 @@ total         = sum(line.amount)
 - **7.2 Add-product wizard**: a "Penalties" section widget under `apps/loans/lib/features/products/widget/add_product/`, placed after Deductions in both layouts, pre-filled from company defaults on a new product (inherited chips marked "Default"), "Reset to company defaults", and an "Allow late payments" checkbox (form key `allow_late_payments`) inside the same section because the AutoCollect toggles are placeholders here.
 - **7.3 Shared dialog**: `apps/loans/lib/widgets/penalty_dialog.dart` with Amount, Name, Description, Frequency (once, daily, monthly, per installment).
 - **7.4–7.5 Schedule rows and confirm dialog**: PR 3.
-- **7.6 Loan and offer detail**: every `QuotationWidget` with a loan in scope passes `penalties: loan.penalties` and `allowLatePayments: loan.allowLatePayments`; product previews show the bloc's working list. Lines read "Penalty if paid late: <name>" with `amountLabel`; a loan that allows late payments shows "Late payments: Allowed, no penalties". The PDF quotation lists `loan.penalties` the same way.
+- **7.6 Loan and offer detail**: every `QuotationWidget` with a loan in scope passes `penalties: loan.penalties` and `allowLatePayments: loan.allowLatePayments`; product previews fall back to the bloc's working list and the selected product's flag. When late payments are allowed, the quotation shows only "Late payments: Allowed, no penalties" and no penalty lines (the definitions are kept on the product for when the flag is turned off); otherwise each penalty reads "Penalty if paid late: <name>" with `amountLabel`. The PDF quotation follows the same rule from `loan.allowLatePayments` and `loan.penalties`.
 - **7.7 Statement of account**: PR 3.
 
 ## 8. Not in this feature
