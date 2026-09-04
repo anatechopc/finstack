@@ -559,6 +559,8 @@ class LoansBloc extends Bloc<LoansEvent, LoansState> {
           additionalChargeUpfrontCollection: totalUpfrontCollection,
           coMakerUserIds: event.coMakers.map((e) => e.id).toList(),
           parentId: event.parentId,
+          penalties: List<Penalty>.of(product.penalties),
+          allowLatePayments: product.allowLatePayments,
         );
 
         final loan =
