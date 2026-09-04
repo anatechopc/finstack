@@ -356,5 +356,21 @@ void main() {
       expect(result.isLate, true);
       expect(result.penalties.total, 100);
     });
+
+    test('per installment follows the loan term', () {
+      final monthly = resolveLateness(
+        schedule: schedule(),
+        loan: loan(penalties: const [perInstallment100]),
+        collectedAt: DateTime(2026, 9, 3),
+      );
+      final twiceAMonth = resolveLateness(
+        schedule: schedule(),
+        loan: loan(penalties: const [perInstallment100], term: '15d'),
+        collectedAt: DateTime(2026, 9, 3),
+      );
+
+      expect(monthly.penalties.total, 100);
+      expect(twiceAMonth.penalties.total, 200);
+    });
   });
 }
