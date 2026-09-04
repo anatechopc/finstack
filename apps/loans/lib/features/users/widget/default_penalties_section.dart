@@ -34,6 +34,9 @@ class _DefaultPenaltiesSectionState extends State<DefaultPenaltiesSection> {
   @override
   Widget build(BuildContext context) {
     return BlocListener<CompanyBloc, CompanyState>(
+      listenWhen: (previous, current) =>
+          current.message == CompanyBloc.defaultPenaltiesSavedMessage ||
+          current.message == CompanyBloc.defaultPenaltiesFailedMessage,
       listener: (context, state) {
         if (state.status == CompanyStateStatus.error) {
           setState(() {

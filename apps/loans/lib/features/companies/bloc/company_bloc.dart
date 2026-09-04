@@ -25,6 +25,10 @@ class CompanyBloc extends Bloc<CompanyEvent, CompanyState> {
     on(_handleUpdateDefaultPenaltiesEvent);
   }
 
+  static const defaultPenaltiesSavedMessage = 'Default penalties updated';
+  static const defaultPenaltiesFailedMessage =
+      'Cannot update default penalties';
+
   final AuthenticationService authService;
   final CompanyRepository companyRepository;
   final StorageRepository storageRepository;
@@ -124,14 +128,16 @@ class CompanyBloc extends Bloc<CompanyEvent, CompanyState> {
       final updated = await companyRepository.update(data: company);
       authService.company = updated;
       emit(const CompanyState.loading());
-      emit(const CompanyState.success(message: 'Default penalties updated'));
+      emit(
+        const CompanyState.success(message: defaultPenaltiesSavedMessage),
+      );
     } catch (err) {
       company.defaultPenalties = previous;
       log.severe('UpdateDefaultPenaltiesError: $err', err);
       emit(const CompanyState.loading());
       emit(
         const CompanyState.error(
-          errorMessage: 'Cannot update default penalties',
+          errorMessage: defaultPenaltiesFailedMessage,
         ),
       );
     }
