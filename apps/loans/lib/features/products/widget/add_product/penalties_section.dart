@@ -8,6 +8,7 @@ import 'package:loooans/features/products/bloc/product_status.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
+import 'package:loooans/widgets/app_widgets.dart';
 import 'package:loooans/widgets/penalty_dialog.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:product_repository/product_repository.dart';
@@ -87,28 +88,42 @@ class PenaltiesSection extends StatelessWidget {
                   'Chips marked "Default" came from the company defaults.',
                   style: TextStyle(fontSize: 10),
                 ),
-                if (defaults.isNotEmpty)
-                  TextButton(
-                    style: TextButton.styleFrom(
-                      foregroundColor: AppColors.black,
+                if (defaults.isNotEmpty) ...[
+                  const Gap(16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: AppWidgets.defaultOutlinedButton(
+                      child: const Text('Reset to company defaults'),
+                      onPressed: bloc.resetPenalties,
                     ),
-                    onPressed: bloc.resetPenalties,
-                    child: const Text('Reset to company defaults'),
                   ),
+                ],
               ],
             );
           },
         ),
+        const Gap(16),
+        const Text(
+          'When on, late payments are not tagged and no penalties are '
+          'charged on this product.',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w300,
+          ),
+        ),
         const Gap(8),
-        FormBuilderCheckbox(
+        FormBuilderSwitch(
           name: 'allow_late_payments',
           initialValue: product?.allowLatePayments ?? false,
           title: const Text('Allow late payments'),
           activeColor: AppColors.black,
-          subtitle: const Text(
-            'When on, late payments are not tagged and no penalties are '
-            'charged on this product.',
-            style: TextStyle(fontSize: 10),
+          inactiveTrackColor: AppColors.green1,
+          decoration: const InputDecoration(
+            border: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            errorBorder: InputBorder.none,
+            disabledBorder: InputBorder.none,
           ),
         ),
       ],
