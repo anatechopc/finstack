@@ -266,6 +266,7 @@ class PaymentCenterBloc
 
       // Group submissionId -> payments and accumulate schedule amounts.
       final paymentsBySubmission = <String, List<Payment>>{};
+      final schedulesBySubmission = <String, List<LoanSchedule>>{};
       final amountBySubmission = <String, double>{};
 
       for (final schedule in submittedSchedules) {
@@ -286,6 +287,7 @@ class PaymentCenterBloc
         // submission still surfaces as its own item.
         final key = payment.submissionId ?? payment.id;
         paymentsBySubmission.putIfAbsent(key, () => []).add(payment);
+        schedulesBySubmission.putIfAbsent(key, () => []).add(schedule);
         amountBySubmission.update(
           key,
           (value) => value + schedule.amortization,
@@ -300,6 +302,8 @@ class PaymentCenterBloc
             (entry) => PendingSubmission(
               submissionId: entry.key,
               payments: entry.value,
+              loan: loan,
+              schedules: schedulesBySubmission[entry.key] ?? const [],
               totalAmount: amountBySubmission[entry.key],
             ),
           )

@@ -2,12 +2,14 @@ import 'package:bank_details_repository/bank_details_repository.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_form_builder/flutter_form_builder.dart';
 import 'package:gap/gap.dart';
 import 'package:loooans/features/payment_center/bloc/payment_center_bloc.dart';
 import 'package:loooans/features/payment_center/model/pending_submission.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
+import 'package:loooans/widgets/payment_penalty_section.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:photo_view/photo_view.dart';
 
@@ -157,11 +159,10 @@ class _PendingSubmissionCard extends StatelessWidget {
                   vertical: 12,
                   horizontal: 16,
                 ),
-                onPressed: () {
-                  context
-                      .read<PaymentCenterBloc>()
-                      .confirmSubmission(submission.payments);
-                },
+                onPressed: () => showConfirmSubmissionDialog(
+                  context,
+                  submission: submission,
+                ),
                 child: const Text('Confirm'),
               ),
             ],
@@ -292,4 +293,58 @@ class _PaidToLineState extends State<_PaidToLine> {
       },
     );
   }
+}
+
+/// Confirms a borrower submission after the teller reviews the collection
+/// date (defaults to when the borrower submitted) and any penalty.
+Future<void> showConfirmSubmissionDialog(
+  BuildContext context, {
+  required PendingSubmission submission,
+}) {
+  final bloc = context.read<PaymentCenterBloc>();
+  final key = GlobalKey<FormBuilderState>(debugLabel: 'confirm_submission');
+
+  return showDialog<void>(
+    context: context,
+    builder: (dialogContext) {
+      return AlertDialog(
+        title: const Text('Confirm submission'),
+        backgroundColor: AppColors.green1,
+        content: SizedBox(
+          width: 420,
+          child: FormBuilder(
+            key: key,
+            child: SingleChildScrollView(
+              child: PaymentPenaltySection(
+                schedules: submission.schedules,
+                loan: submission.loan,
+                initialCollectedAt: submission.payments.first.createdAt,
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          AppWidgets.defaultFilledButton(
+            onPressed: () {
+              if (!(key.currentState?.saveAndValidate() ?? false)) return;
+              final values = key.currentState!.value;
+              Navigator.of(dialogContext, rootNavigator: true).pop();
+              bloc.confirmSubmission(
+                submission.payments,
+                collectedAt: values['collected_at'] as DateTime?,
+                waivePenalty: values['waive_penalty'] as bool? ?? false,
+                waiveReason: values['waive_reason'] as String?,
+              );
+            },
+            child: const Text('Confirm'),
+          ),
+          AppWidgets.defaultOutlinedButton(
+            onPressed: () =>
+                Navigator.of(dialogContext, rootNavigator: true).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      );
+    },
+  );
 }
