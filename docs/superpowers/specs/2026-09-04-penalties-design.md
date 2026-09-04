@@ -107,31 +107,40 @@ total         = sum(line.amount)
 
 `daysLate` is the difference in local calendar dates between `due_at` and the collection date, floored at 0; collected on the due date is on time. `previewPenalty(schedule, loan, asOf)` applies the allow-late gate and is what unpaid rows display before confirmation. Worked example: amortization 5,000; ₱100 daily + 2% monthly; 19 days late → 1,900 + 100 = 2,000.
 
-## 6. Trigger: payment confirmation (PR 3, not in this branch)
+## 6. Trigger: payment confirmation (PR 3)
 
-`PayLoanScheduleEvent` gains `collectedAt` (default now), `waivePenalty`, `waiveReason`. The self-managed confirmation branch resolves lateness from the collection date against the loan snapshot (`resolveLateness`), sets `paid_late` only when late on a loan that does not allow late payments, and writes `collected_at`, `days_late`, `penalty`, `penalties`, and the waive fields onto the row before the payment record is created. `paid_late` rows already feed the Go trigger `loan_schedule_changes.go`; verify report aggregates when this ships.
+finstack has four confirmation paths, all self-managed: the client-detail teller dialog (`PaymentBloc`), the Payment Center single payment and bulk overdue payment (`PaymentCenterBloc`), and the borrower bank-transfer submission confirm (`PaymentConfirmationService.confirm`, reached from the Payment Center card and the client-detail review dialog). All four call `PaymentConfirmationService.applyLateness`, which runs `resolveLateness` (pure, `loan_schedule_repository`) against the loan snapshot and writes `collected_at`, `days_late`, `penalty`, `penalties`, `penalty_waived_by`, and `penalty_waive_reason` onto the row before the payment record is created. `paid_late` is written only when the collection date is after the due date on a loan with `allow_late_payments == false`.
+
+Collection date: chosen by the teller in the dialog; defaults to now for teller payments and to the borrower's submission time (`Payment.created_at`) for submissions. Bulk overdue applies one date to every row; each row gets its own days late and penalty. A waive needs a reason; bulk and submission loops validate it before the first write.
+
+Borrower submissions: the transferred amount does not include the penalty. The penalty is still recorded on the row and appears on the row and the statement of account as owed; collecting it is manual in this pass.
+
+Reporting: the Go trigger `loan_schedule_changes.go` reads only company_id, status, loan_id, interest_payment, principal_payment on document creation and ignores the new fields, so this is not Class B. Penalties are not added to `total_collections`; doing so would be a Class B change with its own Go PR. Side effect to note: allow-late loans stop producing `paid_late`, which changes which newly-created open-term rows pass the trigger's status gate.
 
 ## 7. UI
 
 - **7.1 Company defaults**: "Default penalties" section on the company card in `profile_widget.dart` (admins only), chips plus an add button opening the shared dialog; saved through `CompanyBloc`, with the in-memory list rolled back and an error snackbar on a failed save.
 - **7.2 Add-product wizard**: a "Penalties" section widget under `apps/loans/lib/features/products/widget/add_product/`, placed after Deductions in both layouts, pre-filled from company defaults on a new product (inherited chips marked "Default"), "Reset to company defaults", and an "Allow late payments" checkbox (form key `allow_late_payments`) inside the same section because the AutoCollect toggles are placeholders here.
 - **7.3 Shared dialog**: `apps/loans/lib/widgets/penalty_dialog.dart` with Amount, Name, Description, Frequency (once, daily, monthly, per installment).
-- **7.4–7.5 Schedule rows and confirm dialog**: PR 3.
+- **7.4 Schedule rows**: `ClientDetailScheduleItem` and `LoanScheduleWidget` (table and list tile) take the loan and print `previewPenalty` in red under the amount due (`+ ₱… penalty · N days late` on the lender side, `+ ₱… penalty` for the borrower), plus `penalty charged` / `penalty waived` on confirmed rows. Offer previews pass no loan and show nothing.
+- **7.5 Confirm dialogs**: one shared `PaymentPenaltySection` (`lib/widgets/`) with the collection date picker, a live breakdown (one line per penalty per row, `name · amount label × periods`), `Total to collect`, and a `Waive penalties` checkbox that reveals a required reason. Hosted in the client-detail make-payment dialog, both Payment Center dialogs, the Payment Center submission confirm dialog, and the client-detail review dialog.
 - **7.6 Loan and offer detail**: every `QuotationWidget` with a loan in scope passes `penalties: loan.penalties` and `allowLatePayments: loan.allowLatePayments`; product previews fall back to the bloc's working list and the selected product's flag. When late payments are allowed, the quotation shows only "Late payments: Allowed, no penalties" and no penalty lines (the definitions are kept on the product for when the flag is turned off); otherwise each penalty reads "Penalty if paid late: <name>" with `amountLabel`. The PDF quotation follows the same rule from `loan.allowLatePayments` and `loan.penalties`.
-- **7.7 Statement of account**: PR 3.
+- **7.7 Statement of account**: a `Penalty` column (last) per row, and total penalties appended to `additionalCharges` so the existing `Add: <description>` rendering and `totalAmountDue` include them on the screen and the PDF.
 
 ## 8. Not in this feature
 
 - Daily accrual job; AutoCollect (app-managed) payments; backfilling penalties onto pre-existing loans; grace days and caps; re-syncing a pending loan to a product's newer penalties (decline and re-apply instead).
 - finstack#107 (stored percentage charges against the running total) and finstack#108 (campaign D5): loan-math and reporting-engine changes gated by the campaign.
+- Penalties in report aggregates (`total_collections`); collecting the penalty on a borrower submission (recorded as owed only).
 
 ## 9. Testing
 
 - Unit tests: `packages/core/loooans_helpers/test/penalty_test.dart` (model, periods, termDaysOf); `packages/loans/loan_schedule_repository/test/penalty_calculator_test.dart`; `apps/loans/test/widgets/penalty_dialog_test.dart`.
+- Unit tests (part 3): `packages/loans/loan_schedule_repository/test/penalty_calculator_test.dart` (`resolveLateness` group); `apps/loans/test/services/payment_confirmation_service_test.dart` (`applyLateness`); `apps/loans/test/features/payment_center/payment_center_confirm_test.dart` (late confirm); `apps/loans/test/widgets/payment_penalty_section_test.dart`; `apps/loans/test/features/products/loan_schedule_widget_penalty_test.dart` (overdue and waived rows render without overflow).
 - Gate: `.claude/skills/finstack-testing-and-validation/scripts/analyze-source-only.sh` (0 errors outside `build/`, no new warnings/infos) and `cd apps/loans && fvm flutter test`; package suites green except the two known scaffold failures (`address_repository`, `bank_details_repository`).
 - Manual verification on the development flavor recorded in the PR body and `apps/loans/MEMORY.md`: company defaults, wizard pre-fill/reset/allow-late, product edit, quotation listing, loan snapshot persistence, pre-existing loans unaffected.
 
 ## 10. Delivery
 
 1. This branch, `feat/penalties-72-definitions` → `develop`: model, fields, calculator, dialog, bloc, wizard, company defaults, loan snapshot, quotations. No payment behavior change.
-2. `feat/penalties-72-application` → `develop`, after 1: confirmation, collection date, waive, schedule-row lines, statement of account. Becomes Class B only if a Go trigger starts reading penalty fields.
+2. `feat/penalties-72-application` → `develop`, after 1: confirmation, collection date, waive, schedule-row lines, statement of account. Becomes Class B only if a Go trigger starts reading penalty fields. This branch stacks on 1; merge waits for PR #109 and the loan-engine campaign's Gate 1 because penalty math is on the money path.
