@@ -451,6 +451,11 @@ class _StatementOfAccountScreenState extends State<StatementOfAccountScreen> {
           defaultCellDisplay = wrapPadding(
             Text(amount > 0 ? amount.toCurrency() : ''),
           );
+        } else if (column == 8) {
+          final amount = entry.penalty;
+          defaultCellDisplay = wrapPadding(
+            Text(amount > 0 ? amount.toCurrency() : ''),
+          );
         }
       } else {
         // other things
@@ -545,7 +550,7 @@ class _StatementOfAccountScreenState extends State<StatementOfAccountScreen> {
                 ),
               ),
             );
-          } else if (column == 7) {
+          } else if (column == Constants.statementOfAccountHeaders.length - 1) {
             // last column
             _deductionBuildCount += 1;
           }
@@ -604,7 +609,8 @@ class _StatementOfAccountScreenState extends State<StatementOfAccountScreen> {
                   ),
                 ),
               );
-            } else if (column == 7) {
+            } else if (column ==
+                Constants.statementOfAccountHeaders.length - 1) {
               _additionalChargesBuildCount += 1;
             }
           }
