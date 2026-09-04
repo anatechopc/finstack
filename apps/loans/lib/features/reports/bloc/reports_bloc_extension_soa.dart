@@ -201,12 +201,14 @@ extension ReportsBlocExtensionSoa on ReportsBloc {
         var interestCharge = 0.0;
         var interestPayment = 0.0;
         var principalPayment = 0.0;
+        var penalty = 0.0;
 
         if (entry != null) {
           outstandingBalance = entry.principalBalance;
           interestCharge = entry.interestCharge;
           interestPayment = entry.interestPayment;
           principalPayment = entry.principalPayment;
+          penalty = entry.penalty;
           entry.toRemove = Jiffy.parseFromDateTime(entry.date).isSame(
             Jiffy.parseFromDateTime(amount.createdAt),
             unit: Unit.day,
@@ -223,6 +225,7 @@ extension ReportsBlocExtensionSoa on ReportsBloc {
             principalPayment: principalPayment,
             principalBalance: outstandingBalance + amount.amount,
             numberOfDays: '',
+            penalty: penalty,
           ),
         );
       }
