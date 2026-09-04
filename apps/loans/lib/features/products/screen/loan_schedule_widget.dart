@@ -175,7 +175,12 @@ class LoanScheduleWidget extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(schedule.amortization.toCurrency()),
+              Text(
+                schedule.amortization.toCurrency(),
+                style: const TextStyle(fontSize: 14),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
               ..._penaltyLines(schedule, loan),
             ],
           ),
@@ -193,21 +198,20 @@ class LoanScheduleWidget extends StatelessWidget {
       }
     }
 
+    // Column 1 (amortization) can carry a second, 11px penalty line inside
+    // the 48px fixed row — tighter vertical padding gives it the extra room.
+    final verticalPadding = vicinity.column == 1 && vicinity.row > 0 ? 4.0 : 8.0;
+
     return TableViewCell(
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: EdgeInsets.symmetric(vertical: verticalPadding),
         child: defaultCellDisplay,
       ),
     );
   }
 
-  /// Borrower-facing status for a schedule row. Shows the real payment state
-  /// (Payment submitted / Paid on time / Paid late); anything else (not_paid,
-  /// or a loan-level status that leaked onto a persisted schedule) is presented
-  /// as Not paid / Not paid (overdue) based on the due date. A rejected payment
-  /// reverts the schedule to not_paid here (the borrower can resubmit) and is
-  /// surfaced separately via the rejection notification.
-  /// Running penalty on an unpaid row, or the charged amount on a paid one.
+  /// Running penalty on an unpaid row, or the charged/waived amount on a
+  /// paid one.
   static List<Widget> _penaltyLines(LoanSchedule schedule, Loan? loan) {
     const style = TextStyle(color: AppColors.red2, fontSize: 11);
     final preview = loan == null
@@ -216,12 +220,35 @@ class LoanScheduleWidget extends StatelessWidget {
 
     return [
       if (preview.total > 0)
-        Text('+ ${preview.total.toCurrency()} penalty', style: style),
+        Text(
+          '+ ${preview.total.toCurrency()} penalty',
+          style: style,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
       if (schedule.penalty > 0)
-        Text('+ ${schedule.penalty.toCurrency()} penalty charged', style: style),
+        Text(
+          '+ ${schedule.penalty.toCurrency()} penalty charged',
+          style: style,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      if (schedule.penaltyWaivedBy != null)
+        const Text(
+          'penalty waived',
+          style: TextStyle(fontSize: 11),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
     ];
   }
 
+  /// Borrower-facing status for a schedule row. Shows the real payment state
+  /// (Payment submitted / Paid on time / Paid late); anything else (not_paid,
+  /// or a loan-level status that leaked onto a persisted schedule) is presented
+  /// as Not paid / Not paid (overdue) based on the due date. A rejected payment
+  /// reverts the schedule to not_paid here (the borrower can resubmit) and is
+  /// surfaced separately via the rejection notification.
   String _statusLabel(LoanSchedule schedule) {
     const realPaymentStatuses = {
       LoanStatus.payment_submitted,
