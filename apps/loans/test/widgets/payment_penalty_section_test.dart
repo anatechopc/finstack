@@ -108,12 +108,45 @@ void main() {
   testWidgets('many rows sum their penalties', (tester) async {
     await tester.pumpApp(
       host(
-        schedules: [row(DateTime(2026, 8, 31)), row(DateTime(2026, 9, 1))],
+        schedules: [row(DateTime(2026, 8, 31)), row(DateTime(2026, 9, 2))],
         loan: loan(),
       ),
     );
 
-    // 3 days × ₱100 + 2 days × ₱100 on top of 2 × ₱5,000.
-    expect(find.textContaining('10,500.00'), findsOneWidget);
+    // 3 days × ₱100 + 1 day × ₱100 on top of 2 × ₱5,000.
+    expect(find.textContaining('10,400.00'), findsOneWidget);
+  });
+
+  testWidgets('moving the date to on-time clears a ticked waive',
+      (tester) async {
+    await tester.pumpApp(
+      host(schedules: [row(DateTime(2026, 8, 31))], loan: loan()),
+    );
+
+    await tester.tap(find.text('Waive penalties'));
+    await tester.pumpAndSettle();
+
+    key.currentState!.fields['collected_at']!.didChange(
+      DateTime(2026, 8, 31),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Waive penalties'), findsNothing);
+
+    key.currentState!.fields['collected_at']!.didChange(
+      DateTime(2026, 9, 3),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Waive penalties'), findsOneWidget);
+    expect(
+      tester
+          .widget<FormBuilderCheckbox>(find.byType(FormBuilderCheckbox))
+          .initialValue,
+      false,
+    );
+
+    key.currentState!.save();
+    expect(key.currentState!.value['waive_penalty'], false);
+    // 3 days × ₱100 on top of ₱5,000, not waived.
+    expect(find.textContaining('5,300.00'), findsOneWidget);
   });
 }

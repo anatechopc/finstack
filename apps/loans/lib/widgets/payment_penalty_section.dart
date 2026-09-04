@@ -64,6 +64,18 @@ class _PaymentPenaltySectionState extends State<PaymentPenaltySection> {
       0,
       (m, r) => r.lateness.daysLate > m ? r.lateness.daysLate : m,
     );
+    // The waive checkbox is unmounted below when there's nothing to waive
+    // (its FormBuilder field goes with it), so the flag driving `total` must
+    // not outlive it — otherwise a date change that clears the penalty and
+    // then re-adds one shows a waived total against an unchecked box.
+    // `FormBuilder` doesn't clear a field's cached value on unregister by
+    // default, so a stale `true` would otherwise survive and reappear on the
+    // freshly-mounted checkbox the next time it's shown; clear it directly.
+    if (penaltyTotal == 0 && _waive) {
+      _waive = false;
+      FormBuilder.of(context)?.removeInternalFieldValue('waive_penalty');
+      FormBuilder.of(context)?.removeInternalFieldValue('waive_reason');
+    }
     final total = _waive ? amountDue : amountDue + penaltyTotal;
 
     return Column(
