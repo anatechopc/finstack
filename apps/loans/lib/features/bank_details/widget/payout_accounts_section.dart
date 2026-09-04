@@ -67,35 +67,38 @@ class _PayoutAccountsBody extends StatelessWidget {
               );
             }
 
-            return ListView.separated(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: state.accounts.length,
-              separatorBuilder: (_, __) => const Gap(4),
-              itemBuilder: (context, index) {
-                final account = state.accounts[index];
-                return Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '${account.bankName} · ${account.accountName} · '
-                        '${account.accountNumber}',
-                        style: const TextStyle(color: Colors.black),
+            // A Column, not a shrink-wrapped ListView: this section lives inside
+            // the Settings AlertDialog, which measures its content's intrinsic
+            // width, and a viewport cannot report one (it blanked the dialog).
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var i = 0; i < state.accounts.length; i++) ...[
+                  if (i > 0) const Gap(4),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${state.accounts[i].bankName} · '
+                          '${state.accounts[i].accountName} · '
+                          '${state.accounts[i].accountNumber}',
+                          style: const TextStyle(color: Colors.black),
+                        ),
                       ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.edit),
-                      tooltip: 'Edit',
-                      onPressed: () => _onEdit(context, account),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete),
-                      tooltip: 'Delete',
-                      onPressed: () => _onDelete(context, account),
-                    ),
-                  ],
-                );
-              },
+                      IconButton(
+                        icon: const Icon(Icons.edit),
+                        tooltip: 'Edit',
+                        onPressed: () => _onEdit(context, state.accounts[i]),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete),
+                        tooltip: 'Delete',
+                        onPressed: () => _onDelete(context, state.accounts[i]),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
             );
           },
         ),
