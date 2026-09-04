@@ -79,6 +79,7 @@ PenaltyResult computePenalties({
 
 const _unpaidStatuses = {
   LoanStatus.not_paid,
+  LoanStatus.not_paid_overdue,
   LoanStatus.payment_submitted,
 };
 

@@ -241,6 +241,16 @@ void main() {
       expect(result.total, 100);
     });
 
+    test('a rejected-submission row (not_paid_overdue) still previews', () {
+      final result = previewPenalty(
+        schedule: schedule(status: LoanStatus.not_paid_overdue),
+        loan: loan(),
+        asOf: asOf,
+      );
+
+      expect(result.total, 100);
+    });
+
     test('a paid row has no preview', () {
       final result = previewPenalty(
         schedule: schedule(status: LoanStatus.paid_on_time),
