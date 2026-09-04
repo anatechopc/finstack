@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/services/payment_confirmation_service.dart';
+import 'package:loooans_helpers/data_helpers.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:payment_repository/payment_repository.dart';
 
@@ -21,7 +22,10 @@ void main() {
     ..id = 'sched-1'
     ..loanId = 'loan-1'
     ..status = LoanStatus.payment_submitted
-    ..dueAt = DateTime.now().add(const Duration(days: 5));
+    ..dueAt = DateTime.now().add(const Duration(days: 5))
+    ..amortization = 5000
+    ..outstandingBalance = 5000
+    ..isOpenTerm = false;
   Payment pay() => Payment.create(
         userId: 'u',
         loanScheduleId: 'sched-1',
@@ -84,6 +88,58 @@ void main() {
         .single as LoanSchedule;
     expect(s.status, LoanStatus.paid_on_time);
     expect(s.paymentId, 'pay-1');
+  });
+
+  test('confirm on a late submission writes days late and the penalty',
+      () async {
+    when(() => schedules.get(id: any(named: 'id'))).thenAnswer(
+      (_) async =>
+          sched()..dueAt = DateTime.now().subtract(const Duration(days: 3)),
+    );
+    when(() => loans.get(id: any(named: 'id'))).thenAnswer(
+      (_) async => Loan()
+        ..id = 'loan-1'
+        ..period = 1
+        ..term = '1m'
+        ..penalties = [
+          const Penalty(
+            id: 'p1',
+            name: 'Late fee',
+            amount: 100,
+            frequency: PenaltyFrequency.daily,
+          ),
+        ],
+    );
+
+    // Default collection date is when the borrower submitted (now).
+    await svc.confirm(payment: pay(), confirmedById: 'lender-1');
+
+    final s = verify(() => schedules.update(data: captureAny(named: 'data')))
+        .captured
+        .single as LoanSchedule;
+    expect(s.status, LoanStatus.paid_late);
+    expect(s.daysLate, 3);
+    expect(s.penalty, 300);
+    expect(s.collectedAt, isNotNull);
+  });
+
+  test('confirm with an explicit collection date on the due date is on time',
+      () async {
+    final due = DateTime.now().subtract(const Duration(days: 3));
+    when(() => schedules.get(id: any(named: 'id')))
+        .thenAnswer((_) async => sched()..dueAt = due);
+
+    await svc.confirm(
+      payment: pay(),
+      confirmedById: 'lender-1',
+      collectedAt: due,
+    );
+
+    final s = verify(() => schedules.update(data: captureAny(named: 'data')))
+        .captured
+        .single as LoanSchedule;
+    expect(s.status, LoanStatus.paid_on_time);
+    expect(s.penalty, 0);
   });
 
   test('reject sets payment rejected + schedule reverted to not_paid',

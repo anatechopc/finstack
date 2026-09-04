@@ -25,6 +25,50 @@ void main() {
     frequency: PenaltyFrequency.perInstallment,
   );
 
+  LoanSchedule schedule({
+    LoanStatus status = LoanStatus.not_paid,
+    bool isOpenTerm = false,
+  }) {
+    return LoanSchedule.create(
+      dueAt: DateTime(2026, 8, 15),
+      loanId: 'l1',
+      outstandingBalance: 20000,
+      principalPayment: 4500,
+      interestCharge: 500,
+      amortization: 5000,
+      interestDayMultiplier: 1,
+      companyId: 'c1',
+      status: status,
+      isOpenTerm: isOpenTerm,
+    );
+  }
+
+  Loan loan({
+    bool allowLatePayments = false,
+    List<Penalty> penalties = const [monthly2pct],
+    String term = '1m',
+  }) {
+    return Loan.create(
+      userId: 'u1',
+      companyId: 'c1',
+      productId: 'pr1',
+      amount: 20000,
+      additionalCharges: 0,
+      deductions: 0,
+      period: 4,
+      requirements: const [],
+      isForceCollect: false,
+      status: LoanStatus.approved,
+      dueAt: null,
+      reason: 'test',
+      interestRate: 3,
+      term: term,
+      amortization: 5000,
+      penalties: penalties,
+      allowLatePayments: allowLatePayments,
+    );
+  }
+
   group('calculateDaysLate', () {
     test('collected on the due date is not late', () {
       expect(
@@ -155,50 +199,6 @@ void main() {
   });
 
   group('previewPenalty', () {
-    LoanSchedule schedule({
-      LoanStatus status = LoanStatus.not_paid,
-      bool isOpenTerm = false,
-    }) {
-      return LoanSchedule.create(
-        dueAt: DateTime(2026, 8, 15),
-        loanId: 'l1',
-        outstandingBalance: 20000,
-        principalPayment: 4500,
-        interestCharge: 500,
-        amortization: 5000,
-        interestDayMultiplier: 1,
-        companyId: 'c1',
-        status: status,
-        isOpenTerm: isOpenTerm,
-      );
-    }
-
-    Loan loan({
-      bool allowLatePayments = false,
-      List<Penalty> penalties = const [monthly2pct],
-      String term = '1m',
-    }) {
-      return Loan.create(
-        userId: 'u1',
-        companyId: 'c1',
-        productId: 'pr1',
-        amount: 20000,
-        additionalCharges: 0,
-        deductions: 0,
-        period: 4,
-        requirements: const [],
-        isForceCollect: false,
-        status: LoanStatus.approved,
-        dueAt: null,
-        reason: 'test',
-        interestRate: 3,
-        term: term,
-        amortization: 5000,
-        penalties: penalties,
-        allowLatePayments: allowLatePayments,
-      );
-    }
-
     final asOf = DateTime(2026, 9, 3);
 
     test('overdue row on a term loan uses amortization as the base', () {
@@ -275,6 +275,76 @@ void main() {
 
       expect(monthly.total, 100);
       expect(twiceAMonth.total, 200);
+    });
+  });
+
+  group('resolveLateness', () {
+    test('on time: not late, zero days, no penalties', () {
+      final result = resolveLateness(
+        schedule: schedule(),
+        loan: loan(),
+        collectedAt: DateTime(2026, 8, 15),
+      );
+
+      expect(result.isLate, false);
+      expect(result.daysLate, 0);
+      expect(result.penalties.total, 0);
+    });
+
+    test('late: days counted, penalties on amortization', () {
+      final result = resolveLateness(
+        schedule: schedule(),
+        loan: loan(penalties: const [daily100, monthly2pct]),
+        collectedAt: DateTime(2026, 9, 3),
+      );
+
+      expect(result.isLate, true);
+      expect(result.daysLate, 19);
+      expect(result.penalties.total, 2000);
+    });
+
+    test('open-term row uses the outstanding balance as the base', () {
+      final result = resolveLateness(
+        schedule: schedule(isOpenTerm: true),
+        loan: loan(penalties: const [monthly2pct]),
+        collectedAt: DateTime(2026, 8, 20),
+      );
+
+      expect(result.penalties.total, 400);
+    });
+
+    test('allow late payments: days recorded, not late, no penalty', () {
+      final result = resolveLateness(
+        schedule: schedule(),
+        loan: loan(allowLatePayments: true),
+        collectedAt: DateTime(2026, 9, 3),
+      );
+
+      expect(result.isLate, false);
+      expect(result.daysLate, 19);
+      expect(result.penalties.total, 0);
+    });
+
+    test('late with no penalties on the loan: late, nothing to charge', () {
+      final result = resolveLateness(
+        schedule: schedule(),
+        loan: loan(penalties: const []),
+        collectedAt: DateTime(2026, 9, 3),
+      );
+
+      expect(result.isLate, true);
+      expect(result.penalties.total, 0);
+    });
+
+    test('ignores the row status, unlike previewPenalty', () {
+      final result = resolveLateness(
+        schedule: schedule(status: LoanStatus.paid_on_time),
+        loan: loan(),
+        collectedAt: DateTime(2026, 8, 16),
+      );
+
+      expect(result.isLate, true);
+      expect(result.penalties.total, 100);
     });
   });
 }
