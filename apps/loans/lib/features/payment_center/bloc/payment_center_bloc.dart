@@ -630,6 +630,9 @@ class PaymentCenterBloc
     Uint8List? signatureBytes,
     bool force = false,
     bool otpVerified = false,
+    DateTime? collectedAt,
+    bool waivePenalty = false,
+    String? waiveReason,
   }) {
     add(
       MakePaymentEvent(
@@ -642,6 +645,9 @@ class PaymentCenterBloc
         signatureBytes: signatureBytes,
         force: force,
         otpVerified: otpVerified,
+        collectedAt: collectedAt,
+        waivePenalty: waivePenalty,
+        waiveReason: waiveReason,
       ),
     );
   }
@@ -667,14 +673,14 @@ class PaymentCenterBloc
         ..paidAt = DateTime.timestamp()
         ..loanId = loan.id;
 
-      final now = DateTime.now();
-      var status = LoanStatus.payment_submitted;
-
-      if (schedule.dueAt.toLocal().isBefore(now)) {
-        status = LoanStatus.paid_late;
-      } else {
-        status = LoanStatus.paid_on_time;
-      }
+      final status = PaymentConfirmationService.applyLateness(
+        schedule: schedule,
+        loan: loan,
+        collectedAt: event.collectedAt ?? DateTime.now(),
+        actorId: authService.user.id,
+        waivePenalty: event.waivePenalty,
+        waiveReason: event.waiveReason,
+      );
 
       ImageUrl? transactionPhotoUrl;
       ImageUrl? signatureUrl;
@@ -795,6 +801,9 @@ class PaymentCenterBloc
     Uint8List? signatureBytes,
     bool force = false,
     bool otpVerified = false,
+    DateTime? collectedAt,
+    bool waivePenalty = false,
+    String? waiveReason,
   }) {
     add(
       MakeOverduePaymentEvent(
@@ -807,6 +816,9 @@ class PaymentCenterBloc
         signatureBytes: signatureBytes,
         force: force,
         otpVerified: otpVerified,
+        collectedAt: collectedAt,
+        waivePenalty: waivePenalty,
+        waiveReason: waiveReason,
       ),
     );
   }
@@ -827,6 +839,11 @@ class PaymentCenterBloc
           CompanyManagementType.selfManaged) {
         throw Exception('This action is not supported');
       }
+
+      if (event.waivePenalty && (event.waiveReason?.trim().isEmpty ?? true)) {
+        throw Exception('A reason is required to waive penalties');
+      }
+      final collectedAt = event.collectedAt ?? DateTime.now();
 
       ImageUrl? transactionPhotoUrl;
       ImageUrl? signatureUrl;
@@ -871,10 +888,14 @@ class PaymentCenterBloc
           ..paidAt = DateTime.timestamp()
           ..loanId = loan.id;
 
-        final now = DateTime.now();
-        final status = schedule.dueAt.toLocal().isBefore(now)
-            ? LoanStatus.paid_late
-            : LoanStatus.paid_on_time;
+        final status = PaymentConfirmationService.applyLateness(
+          schedule: schedule,
+          loan: loan,
+          collectedAt: collectedAt,
+          actorId: authService.user.id,
+          waivePenalty: event.waivePenalty,
+          waiveReason: event.waiveReason,
+        );
 
         // Distribute payment proportionally per schedule
         final interestPayment = schedule.isOpenTerm
@@ -1203,8 +1224,20 @@ class PaymentCenterBloc
   }
 
   /// Confirm a borrower payment submission (all schedules under it).
-  void confirmSubmission(List<Payment> payments) =>
-      add(ConfirmSubmissionEvent(payments: payments));
+  void confirmSubmission(
+    List<Payment> payments, {
+    DateTime? collectedAt,
+    bool waivePenalty = false,
+    String? waiveReason,
+  }) =>
+      add(
+        ConfirmSubmissionEvent(
+          payments: payments,
+          collectedAt: collectedAt,
+          waivePenalty: waivePenalty,
+          waiveReason: waiveReason,
+        ),
+      );
 
   /// Reject a borrower payment submission (all schedules under it).
   void rejectSubmission(List<Payment> payments, String reason) =>
@@ -1226,6 +1259,10 @@ class PaymentCenterBloc
         throw Exception('This action is not supported');
       }
 
+      if (event.waivePenalty && (event.waiveReason?.trim().isEmpty ?? true)) {
+        throw Exception('A reason is required to waive penalties');
+      }
+
       emit(state.copyWith(
         status: PaymentCenterStatus.paymentLoading,
         isLoading: true,
@@ -1237,6 +1274,9 @@ class PaymentCenterBloc
         await service.confirm(
           payment: payment,
           confirmedById: authService.user.id,
+          collectedAt: event.collectedAt,
+          waivePenalty: event.waivePenalty,
+          waiveReason: event.waiveReason,
         );
       }
 
