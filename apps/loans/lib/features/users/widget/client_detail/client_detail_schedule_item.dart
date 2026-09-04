@@ -341,7 +341,7 @@ class ClientDetailScheduleItem extends StatelessWidget {
     final isSelfManaged =
         company.managementType == CompanyManagementType.selfManaged;
     final showMakePaymentButton = isSelfManaged &&
-        user.isTeller() &&
+        (user.isAdmin() || user.isTeller()) &&
         schedule.status == LoanStatus.not_paid;
     final showAdditionalLoanAmountDetailsButton = isSelfManaged &&
         (user.isLoanOfficer() || user.isAdmin()) &&
