@@ -58,7 +58,7 @@ void main() {
 
       expect(fixed.amountLabel, '${100.0.toCurrency()} / day');
       expect(fixed.chipLabel, 'Late fee · ${100.0.toCurrency()} / day');
-      expect(pct.amountLabel, '2.0% / month');
+      expect(pct.amountLabel, '2% / month');
     });
   });
 }

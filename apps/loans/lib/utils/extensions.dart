@@ -337,7 +337,9 @@ extension DurationExtension on Duration {
 extension PenaltyLabels on Penalty {
   /// e.g. "₱100.00 / day" or "2.0% / month".
   String get amountLabel {
-    final amountStr = isPercentage ? '$amount%' : amount.toCurrency();
+    final amountStr = isPercentage
+        ? '${amount % 1 == 0 ? amount.toInt() : amount}%'
+        : amount.toCurrency();
     return '$amountStr ${frequency.suffix}';
   }
 

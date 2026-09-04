@@ -177,22 +177,26 @@ class QuotationWidget extends StatelessWidget {
           },
           builder: (context, state) {
             final list = penalties ?? context.read<ProductBloc>().penalties;
+            final allowsLate = allowLatePayments ??
+                context.read<ProductBloc>().selectedProduct?.allowLatePayments ??
+                false;
             return Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ...list.map(
-                  (penalty) {
-                    return _quotationItem(
-                      title: 'Penalty if paid late: ${penalty.name}',
-                      detail: penalty.amountLabel,
-                    );
-                  },
-                ),
-                if (allowLatePayments ?? false)
+                if (allowsLate)
                   _quotationItem(
                     title: 'Late payments',
                     detail: 'Allowed, no penalties',
+                  )
+                else
+                  ...list.map(
+                    (penalty) {
+                      return _quotationItem(
+                        title: 'Penalty if paid late: ${penalty.name}',
+                        detail: penalty.amountLabel,
+                      );
+                    },
                   ),
               ],
             );

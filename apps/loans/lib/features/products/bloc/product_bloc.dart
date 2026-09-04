@@ -106,6 +106,7 @@ class ProductBloc extends Bloc<ProductEvent, ProductState> {
     _tempProductView = null;
     _selectedProduct = null;
     _selectedProductReviews.clear();
+    _penalties.clear();
     emit(const ProductState.unselected());
   }
 

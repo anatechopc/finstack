@@ -83,21 +83,26 @@ class _DefaultPenaltiesSectionState extends State<DefaultPenaltiesSection> {
             ],
           ),
           Text(
-            'Every new product starts with these. Editing here does not '
-            'change products already created.',
+            'New products start with these; existing products are not '
+            'changed.',
             style: TextStyle(color: widget.foregroundColor, fontSize: 12),
           ),
           const Gap(8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _penalties.map((penalty) {
-              return Chip(
-                label: Text(penalty.chipLabel),
-                backgroundColor: AppColors.white,
-                onDeleted: () => _removePenalty(penalty),
-              );
-            }).toList(),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 96),
+            child: SingleChildScrollView(
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _penalties.map((penalty) {
+                  return Chip(
+                    label: Text(penalty.chipLabel),
+                    backgroundColor: AppColors.white,
+                    onDeleted: () => _removePenalty(penalty),
+                  );
+                }).toList(),
+              ),
+            ),
           ),
         ],
       ),
