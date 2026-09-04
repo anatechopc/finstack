@@ -673,18 +673,13 @@ class PaymentCenterBloc
         throw Exception('This action is not supported');
       }
 
+      if (event.waivePenalty && (event.waiveReason?.trim().isEmpty ?? true)) {
+        throw Exception('A reason is required to waive penalties');
+      }
+
       final schedule = event.schedule
         ..paidAt = DateTime.timestamp()
         ..loanId = loan.id;
-
-      final status = PaymentConfirmationService.applyLateness(
-        schedule: schedule,
-        loan: loan,
-        collectedAt: event.collectedAt ?? DateTime.now(),
-        actorId: authService.user.id,
-        waivePenalty: event.waivePenalty,
-        waiveReason: event.waiveReason,
-      );
 
       ImageUrl? transactionPhotoUrl;
       ImageUrl? signatureUrl;
@@ -700,6 +695,15 @@ class PaymentCenterBloc
         signatureUrl = result.$2;
         comment = result.$3;
       }
+
+      final status = PaymentConfirmationService.applyLateness(
+        schedule: schedule,
+        loan: loan,
+        collectedAt: event.collectedAt ?? DateTime.now(),
+        actorId: authService.user.id,
+        waivePenalty: event.waivePenalty,
+        waiveReason: event.waiveReason,
+      );
 
       final tempPayment = Payment.create(
         userId: loan.userId,

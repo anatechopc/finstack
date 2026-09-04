@@ -126,18 +126,14 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
       /// for now, payment is only supported for self managed company types.
       if (authService.company.managementType ==
           CompanyManagementType.selfManaged) {
+        if (event.waivePenalty &&
+            (event.waiveReason?.trim().isEmpty ?? true)) {
+          throw Exception('A reason is required to waive penalties');
+        }
+
         final schedule = event.schedule
           ..paidAt = DateTime.timestamp()
           ..loanId = loan.id;
-
-        final status = PaymentConfirmationService.applyLateness(
-          schedule: schedule,
-          loan: loan,
-          collectedAt: event.collectedAt ?? DateTime.now(),
-          actorId: authService.user.id,
-          waivePenalty: event.waivePenalty,
-          waiveReason: event.waiveReason,
-        );
 
         ImageUrl? transactionPhotoUrl;
         ImageUrl? signatureUrl;
@@ -193,6 +189,15 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
           user:email: ${authService.user.emailAddress}
           confirmed_at: ${DateTime.timestamp().toDefaultDateFormatExtended()}''';
         }
+
+        final status = PaymentConfirmationService.applyLateness(
+          schedule: schedule,
+          loan: loan,
+          collectedAt: event.collectedAt ?? DateTime.now(),
+          actorId: authService.user.id,
+          waivePenalty: event.waivePenalty,
+          waiveReason: event.waiveReason,
+        );
 
         final tempPayment = Payment.create(
           userId: loan.userId,
