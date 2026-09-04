@@ -47,6 +47,21 @@ final class RemoveDeductionEvent extends ProductEvent {
   final String id;
 }
 
+final class AddPenaltyEvent extends ProductEvent {
+
+  AddPenaltyEvent({required this.penalty});
+  final Penalty penalty;
+}
+
+final class RemovePenaltyEvent extends ProductEvent {
+
+  RemovePenaltyEvent({required this.id});
+  final String id;
+}
+
+/// Replaces the product's penalties with the company defaults.
+final class ResetPenaltiesEvent extends ProductEvent {}
+
 final class AddRequirementEvent extends ProductEvent {
 
   AddRequirementEvent({

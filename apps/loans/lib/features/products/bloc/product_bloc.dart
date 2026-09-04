@@ -31,6 +31,9 @@ class ProductBloc extends Bloc<ProductEvent, ProductState> {
     on(_handleRemoveChargeEvent);
     on(_handleAddDeductionEvent);
     on(_handleRemoveDeductionEvent);
+    on(_handleAddPenaltyEvent);
+    on(_handleRemovePenaltyEvent);
+    on(_handleResetPenaltiesEvent);
     on(_handleAddRequirementEvent);
     on(_handleRemoveRequirementEvent);
     on(_handleUpdateRequirementEvent);
@@ -55,6 +58,10 @@ class ProductBloc extends Bloc<ProductEvent, ProductState> {
   final List<Charge> _deductions = [];
 
   List<Charge> get deductions => _deductions;
+
+  final List<Penalty> _penalties = [];
+
+  List<Penalty> get penalties => _penalties;
 
   final List<Requirement> _requirements = [];
 
@@ -108,11 +115,16 @@ class ProductBloc extends Bloc<ProductEvent, ProductState> {
     }
 
     _tempProductView = _createTempProductView();
+    // A new product starts from the company defaults (copy-on-create).
+    _penalties
+      ..clear()
+      ..addAll(authService.company.defaultPenalties);
   }
 
   void disposeAddProduct() {
     _charges.clear();
     _deductions.clear();
+    _penalties.clear();
     _requirements.clear();
     _tempProductView = null;
     _selectedProduct = null;
@@ -182,6 +194,18 @@ class ProductBloc extends Bloc<ProductEvent, ProductState> {
 
   void removeDeduction({required String id}) {
     add(RemoveDeductionEvent(id: id));
+  }
+
+  void addPenalty(Penalty penalty) {
+    add(AddPenaltyEvent(penalty: penalty));
+  }
+
+  void removePenalty({required String id}) {
+    add(RemovePenaltyEvent(id: id));
+  }
+
+  void resetPenalties() {
+    add(ResetPenaltiesEvent());
   }
 
   void addRequirement({required String name}) {
@@ -389,6 +413,47 @@ class ProductBloc extends Bloc<ProductEvent, ProductState> {
     }
   }
 
+  Future<void> _handleAddPenaltyEvent(
+    AddPenaltyEvent event,
+    Emitter<ProductState> emit,
+  ) async {
+    try {
+      _penalties.add(event.penalty);
+      emit(ProductState.refresh());
+    } catch (err) {
+      log.severe(err);
+      emit(ProductState.error(err.toString()));
+    }
+  }
+
+  Future<void> _handleRemovePenaltyEvent(
+    RemovePenaltyEvent event,
+    Emitter<ProductState> emit,
+  ) async {
+    try {
+      _penalties.removeWhere((penalty) => penalty.id == event.id);
+      emit(ProductState.refresh());
+    } catch (err) {
+      log.severe(err);
+      emit(ProductState.error(err.toString()));
+    }
+  }
+
+  Future<void> _handleResetPenaltiesEvent(
+    ResetPenaltiesEvent event,
+    Emitter<ProductState> emit,
+  ) async {
+    try {
+      _penalties
+        ..clear()
+        ..addAll(authService.company.defaultPenalties);
+      emit(ProductState.refresh());
+    } catch (err) {
+      log.severe(err);
+      emit(ProductState.error(err.toString()));
+    }
+  }
+
   Future<void> _handleAddRequirementEvent(
     AddRequirementEvent event,
     Emitter<ProductState> emit,
@@ -524,6 +589,8 @@ class ProductBloc extends Bloc<ProductEvent, ProductState> {
         deductions: _deductions,
         requirements: _requirements,
         requiredCoMakerCount: fields['required_co_maker_count'] as int? ?? 0,
+        penalties: List<Penalty>.of(_penalties),
+        allowLatePayments: fields['allow_late_payments'] as bool? ?? false,
       );
 
       final _ =
@@ -578,6 +645,7 @@ class ProductBloc extends Bloc<ProductEvent, ProductState> {
       // once success, uncomment
       _charges.clear();
       _deductions.clear();
+      _penalties.clear();
       _requirements.clear();
       emit(const ProductState.loading());
       emit(const ProductState.success());
@@ -624,7 +692,9 @@ class ProductBloc extends Bloc<ProductEvent, ProductState> {
         ..additionalCharges = _charges
         ..deductions = _deductions
         ..requirements = _requirements
-        ..requiredCoMakerCount = fields['required_co_maker_count'] as int? ?? 0;
+        ..requiredCoMakerCount = fields['required_co_maker_count'] as int? ?? 0
+        ..penalties = List<Penalty>.of(_penalties)
+        ..allowLatePayments = fields['allow_late_payments'] as bool? ?? false;
 
       final _ = await productRepository
           .update(data: tempProduct)
@@ -689,6 +759,7 @@ class ProductBloc extends Bloc<ProductEvent, ProductState> {
       // once success, uncomment
       _charges.clear();
       _deductions.clear();
+      _penalties.clear();
       _requirements.clear();
       emit(const ProductState.loading());
       emit(const ProductState.success(message: 'Product update successfully'));
@@ -742,6 +813,9 @@ class ProductBloc extends Bloc<ProductEvent, ProductState> {
       _deductions
         ..clear()
         ..addAll(product.deductions);
+      _penalties
+        ..clear()
+        ..addAll(product.penalties);
       _requirements
         ..clear()
         ..addAll(product.requirements);
