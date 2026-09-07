@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_form_builder/flutter_form_builder.dart';
 import 'package:gap/gap.dart';
+import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/features/payment_center/bloc/payment_center_bloc.dart';
 import 'package:loooans/features/payment_center/model/pending_submission.dart';
 import 'package:loooans/utils/extensions.dart';
@@ -51,10 +52,22 @@ class PendingSubmissionSection extends StatelessWidget {
   }
 }
 
-class _PendingSubmissionCard extends StatelessWidget {
+class _PendingSubmissionCard extends StatefulWidget {
   const _PendingSubmissionCard({required this.submission});
 
   final PendingSubmission submission;
+
+  @override
+  State<_PendingSubmissionCard> createState() =>
+      _PendingSubmissionCardState();
+}
+
+class _PendingSubmissionCardState extends State<_PendingSubmissionCard> {
+  final _formKey = GlobalKey<FormBuilderState>(
+    debugLabel: 'pending_submission',
+  );
+
+  PendingSubmission get submission => widget.submission;
 
   @override
   Widget build(BuildContext context) {
@@ -64,6 +77,11 @@ class _PendingSubmissionCard extends StatelessWidget {
     final originalUrl = firstPhoto?.original;
     final displayUrl = firstPhoto?.thumbnail ?? originalUrl;
     final bankDetailsId = submission.payments.first.paidToBankDetailsId;
+    final penalty = submission.schedules.fold<double>(
+      0,
+      (sum, s) =>
+          sum + previewPenalty(schedule: s, loan: submission.loan).total,
+    );
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -73,101 +91,120 @@ class _PendingSubmissionCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.ubOrange.withValues(alpha: 0.4)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.receipt_long,
-                size: 18,
-                color: AppColors.ubOrange,
-              ),
-              const Gap(6),
-              Expanded(
-                child: Text(
-                  submission.payments.length > 1
-                      ? '${submission.payments.length} schedules'
-                      : '1 schedule',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                  ),
+      child: FormBuilder(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.receipt_long,
+                  size: 18,
+                  color: AppColors.ubOrange,
                 ),
-              ),
-              if (submission.totalAmount != null)
-                Text(
-                  submission.totalAmount!.toCurrency(),
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                  ),
-                ),
-            ],
-          ),
-          if (bankDetailsId != null && bankDetailsId.isNotEmpty)
-            _PaidToLine(bankDetailsId: bankDetailsId),
-          const Gap(8),
-          if (originalUrl != null && displayUrl != null)
-            GestureDetector(
-              onTap: () => _showFullImage(context, originalUrl),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: CachedNetworkImage(
-                  imageUrl: displayUrl,
-                  height: 140,
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                  errorWidget: (context, url, error) => Container(
-                    height: 140,
-                    color: Colors.grey.withValues(alpha: 0.15),
-                    child: const Center(
-                      child: Icon(Icons.broken_image, color: Colors.grey),
+                const Gap(6),
+                Expanded(
+                  child: Text(
+                    submission.payments.length > 1
+                        ? '${submission.payments.length} schedules'
+                        : '1 schedule',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
                     ),
                   ),
                 ),
-              ),
-            )
-          else
-            Container(
-              height: 60,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: Colors.grey.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Text(
-                'No screenshot provided',
-                style: TextStyle(color: Colors.black, fontSize: 12),
-              ),
+                if (submission.totalAmount != null)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        (submission.totalAmount! + penalty).toCurrency(),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                      if (penalty > 0)
+                        Text(
+                          'incl. ${penalty.toCurrency()} late penalty',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: AppColors.red2,
+                          ),
+                        ),
+                    ],
+                  ),
+              ],
             ),
-          const Gap(12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              AppWidgets.defaultOutlinedButton(
-                padding: const EdgeInsets.symmetric(
-                  vertical: 12,
-                  horizontal: 16,
+            if (bankDetailsId != null && bankDetailsId.isNotEmpty)
+              _PaidToLine(bankDetailsId: bankDetailsId),
+            const Gap(8),
+            if (originalUrl != null && displayUrl != null)
+              GestureDetector(
+                onTap: () => _showFullImage(context, originalUrl),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: CachedNetworkImage(
+                    imageUrl: displayUrl,
+                    height: 140,
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                    errorWidget: (context, url, error) => Container(
+                      height: 140,
+                      color: Colors.grey.withValues(alpha: 0.15),
+                      child: const Center(
+                        child: Icon(Icons.broken_image, color: Colors.grey),
+                      ),
+                    ),
+                  ),
                 ),
-                onPressed: () => _onReject(context),
-                child: const Text('Reject'),
+              )
+            else
+              Container(
+                height: 60,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.grey.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  'No screenshot provided',
+                  style: TextStyle(color: Colors.black, fontSize: 12),
+                ),
               ),
-              const Gap(8),
-              AppWidgets.defaultFilledButton(
-                padding: const EdgeInsets.symmetric(
-                  vertical: 12,
-                  horizontal: 16,
+            PaymentPenaltySection(
+              schedules: submission.schedules,
+              loan: submission.loan,
+              initialCollectedAt: submission.payments.first.createdAt,
+            ),
+            const Gap(12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                AppWidgets.defaultOutlinedButton(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 12,
+                    horizontal: 16,
+                  ),
+                  onPressed: () => _onReject(context),
+                  child: const Text('Reject'),
                 ),
-                onPressed: () => showConfirmSubmissionDialog(
-                  context,
-                  submission: submission,
+                const Gap(8),
+                AppWidgets.defaultFilledButton(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 12,
+                    horizontal: 16,
+                  ),
+                  onPressed: () => _onConfirm(context),
+                  child: const Text('Confirm'),
                 ),
-                child: const Text('Confirm'),
-              ),
-            ],
-          ),
-        ],
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -177,6 +214,17 @@ class _PendingSubmissionCard extends StatelessWidget {
     final reason = await _showRejectReasonDialog(context);
     if (reason == null || reason.trim().isEmpty) return;
     bloc.rejectSubmission(submission.payments, reason.trim());
+  }
+
+  void _onConfirm(BuildContext context) {
+    if (!(_formKey.currentState?.saveAndValidate() ?? false)) return;
+    final values = _formKey.currentState!.value;
+    context.read<PaymentCenterBloc>().confirmSubmission(
+      submission.payments,
+      collectedAt: values['collected_at'] as DateTime?,
+      waivePenalty: values['waive_penalty'] as bool? ?? false,
+      waiveReason: values['waive_reason'] as String?,
+    );
   }
 
   void _showFullImage(BuildContext context, String url) {
@@ -293,58 +341,4 @@ class _PaidToLineState extends State<_PaidToLine> {
       },
     );
   }
-}
-
-/// Confirms a borrower submission after the teller reviews the collection
-/// date (defaults to when the borrower submitted) and any penalty.
-Future<void> showConfirmSubmissionDialog(
-  BuildContext context, {
-  required PendingSubmission submission,
-}) {
-  final bloc = context.read<PaymentCenterBloc>();
-  final key = GlobalKey<FormBuilderState>(debugLabel: 'confirm_submission');
-
-  return showDialog<void>(
-    context: context,
-    builder: (dialogContext) {
-      return AlertDialog(
-        title: const Text('Confirm submission'),
-        backgroundColor: AppColors.green1,
-        content: SizedBox(
-          width: 420,
-          child: FormBuilder(
-            key: key,
-            child: SingleChildScrollView(
-              child: PaymentPenaltySection(
-                schedules: submission.schedules,
-                loan: submission.loan,
-                initialCollectedAt: submission.payments.first.createdAt,
-              ),
-            ),
-          ),
-        ),
-        actions: [
-          AppWidgets.defaultFilledButton(
-            onPressed: () {
-              if (!(key.currentState?.saveAndValidate() ?? false)) return;
-              final values = key.currentState!.value;
-              Navigator.of(dialogContext, rootNavigator: true).pop();
-              bloc.confirmSubmission(
-                submission.payments,
-                collectedAt: values['collected_at'] as DateTime?,
-                waivePenalty: values['waive_penalty'] as bool? ?? false,
-                waiveReason: values['waive_reason'] as String?,
-              );
-            },
-            child: const Text('Confirm'),
-          ),
-          AppWidgets.defaultOutlinedButton(
-            onPressed: () =>
-                Navigator.of(dialogContext, rootNavigator: true).pop(),
-            child: const Text('Cancel'),
-          ),
-        ],
-      );
-    },
-  );
 }
