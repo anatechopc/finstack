@@ -113,7 +113,7 @@ finstack has four confirmation paths, all self-managed: the client-detail teller
 
 Collection date: chosen by the teller in the dialog; defaults to now for teller payments and to the borrower's submission time (`Payment.created_at`) for submissions. Bulk overdue applies one date to every row; each row gets its own days late and penalty. A waive needs a reason; bulk and submission loops validate it before the first write.
 
-Borrower submissions: the transferred amount does not include the penalty. The penalty is still recorded on the row and appears on the row and the statement of account as owed; collecting it is manual in this pass.
+Borrower submissions: the borrower's Next payment card, Pay in full total, and Submit payment dialog include the running penalty as of now (`previewPenalty`), so the transferred amount matches what the teller's confirmation computes when the collection date defaults to the submission time. The penalty is recorded on the row at confirmation and appears on the row and the statement of account.
 
 Reporting: the Go trigger `loan_schedule_changes.go` reads only company_id, status, loan_id, interest_payment, principal_payment on document creation and ignores the new fields, so this is not Class B. Penalties are not added to `total_collections`; doing so would be a Class B change with its own Go PR. No reporting side effect: the trigger's status gate accepts paid_on_time and paid_late alike, so allow-late loans switching to paid_on_time change nothing there.
 
