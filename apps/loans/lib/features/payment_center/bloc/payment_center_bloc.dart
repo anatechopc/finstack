@@ -22,6 +22,7 @@ import 'package:loooans_helpers/logging_helpers.dart';
 import 'package:payment_repository/payment_repository.dart';
 import 'package:product_repository/product_repository.dart';
 import 'package:storage_repository/storage_repository.dart';
+import 'package:user_loan_view_repository/user_loan_view_repository.dart';
 import 'package:user_repository/user_repository.dart';
 
 part 'payment_center_event.dart';
@@ -45,6 +46,7 @@ class PaymentCenterBloc
     this.settingsService = settingsService ?? SettingsService.instance;
     cashPoolRepository = context.read<CashPoolRepository>();
     productRepository = context.read<ProductRepository>();
+    userLoanViewRepository = context.read<UserLoanViewRepository>();
     on<SearchBorrowersEvent>(_handleSearchBorrowersEvent);
     on<SelectBorrowerEvent>(_handleSelectBorrowerEvent);
     on<ClearBorrowerEvent>(_handleClearBorrowerEvent);
@@ -74,6 +76,7 @@ class PaymentCenterBloc
     required this.storageRepository,
     CashPoolRepository? cashPoolRepository,
     ProductRepository? productRepository,
+    BaseRepository<UserLoanView>? userLoanViewRepository,
     AuthenticationService? authService,
     SettingsService? settingsService,
   })  : authService = authService ?? AuthenticationService.instance,
@@ -87,6 +90,10 @@ class PaymentCenterBloc
     if (productRepository != null) {
       this.productRepository = productRepository;
     }
+    if (userLoanViewRepository != null) {
+      this.userLoanViewRepository = userLoanViewRepository;
+    }
+    on<SearchBorrowersEvent>(_handleSearchBorrowersEvent);
     on<RequestOtpEvent>(_handleRequestOtpEvent);
     on<VerifyOtpEvent>(_handleVerifyOtpEvent);
   }
@@ -110,6 +117,10 @@ class PaymentCenterBloc
   /// `late` so the test seam can omit it — see
   /// [PaymentCenterBloc.withDependencies].
   late final ProductRepository productRepository;
+
+  /// `late` so the test seam can omit it — see
+  /// [PaymentCenterBloc.withDependencies].
+  late final BaseRepository<UserLoanView> userLoanViewRepository;
 
   Future<void> _handleSearchBorrowersEvent(
     SearchBorrowersEvent event,
@@ -141,11 +152,39 @@ class PaymentCenterBloc
         ],
       );
 
-      final filtered = users
+      // Marketplace borrowers apply on their own and carry no company_id, so
+      // find them through the company's loan views, as the clients list does.
+      final query = event.query.toLowerCase();
+      final views = await userLoanViewRepository.load(
+        limit: null,
+        reset: true,
+        statements: [
+          QueryStatement(
+            field: 'company_id',
+            isEqualTo: authService.company.id,
+          ),
+        ],
+      );
+      final known = users.map((user) => user.id).toSet();
+      final extraIds = views
+          .where((view) => view.userFullName.toLowerCase().contains(query))
+          .map((view) => view.userId)
+          .where((id) => !known.contains(id))
+          .toSet();
+      final extras = <User>[];
+      for (final id in extraIds) {
+        try {
+          extras.add(await userRepository.get(id: id));
+        } catch (err) {
+          _log.warning('Borrower $id from a loan view could not be loaded: $err');
+        }
+      }
+
+      final filtered = [...users, ...extras]
           .where(
             (user) => user.completeNameWesternOrder
                 .toLowerCase()
-                .contains(event.query.toLowerCase()),
+                .contains(query),
           )
           .toList();
 
