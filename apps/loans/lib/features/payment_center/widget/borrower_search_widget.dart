@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:form_builder_extra_fields/form_builder_extra_fields.dart';
 import 'package:loooans/features/payment_center/bloc/payment_center_bloc.dart';
-import 'package:loooans/features/users/bloc/user_bloc.dart';
-import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:user_repository/user_repository.dart';
 
@@ -12,8 +10,6 @@ class BorrowerSearchWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final companyId = AuthenticationService.instance.company.id;
-
     return Theme(
       data: Theme.of(context).copyWith(
         textSelectionTheme: const TextSelectionThemeData(
@@ -25,9 +21,7 @@ class BorrowerSearchWidget extends StatelessWidget {
       child: FormBuilderTypeAhead<User>(
         name: 'borrower_search',
         suggestionsCallback: (query) {
-          return context
-              .read<UserBloc>()
-              .getCustomersByCompany(companyId, query: query);
+          return context.read<PaymentCenterBloc>().findBorrowers(query);
         },
         onSelected: (user) {
           context

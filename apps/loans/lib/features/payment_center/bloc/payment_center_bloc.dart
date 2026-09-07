@@ -137,56 +137,7 @@ class PaymentCenterBloc
 
       emit(state.copyWith(isLoading: true));
 
-      final users = await userRepository.load(
-        limit: null,
-        reset: true,
-        statements: [
-          QueryStatement(
-            field: 'company_id',
-            isEqualTo: authService.company.id,
-          ),
-          QueryStatement(
-            field: 'user_role',
-            isEqualTo: UserRole.customer.name,
-          ),
-        ],
-      );
-
-      // Marketplace borrowers apply on their own and carry no company_id, so
-      // find them through the company's loan views, as the clients list does.
-      final query = event.query.toLowerCase();
-      final views = await userLoanViewRepository.load(
-        limit: null,
-        reset: true,
-        statements: [
-          QueryStatement(
-            field: 'company_id',
-            isEqualTo: authService.company.id,
-          ),
-        ],
-      );
-      final known = users.map((user) => user.id).toSet();
-      final extraIds = views
-          .where((view) => view.userFullName.toLowerCase().contains(query))
-          .map((view) => view.userId)
-          .where((id) => !known.contains(id))
-          .toSet();
-      final extras = <User>[];
-      for (final id in extraIds) {
-        try {
-          extras.add(await userRepository.get(id: id));
-        } catch (err) {
-          _log.warning('Borrower $id from a loan view could not be loaded: $err');
-        }
-      }
-
-      final filtered = [...users, ...extras]
-          .where(
-            (user) => user.completeNameWesternOrder
-                .toLowerCase()
-                .contains(query),
-          )
-          .toList();
+      final filtered = await findBorrowers(event.query);
 
       emit(state.copyWith(
         status: PaymentCenterStatus.searchResults,
@@ -201,6 +152,64 @@ class PaymentCenterBloc
         isLoading: false,
       ));
     }
+  }
+
+  /// Borrowers matching [query] for the current company: company-owned
+  /// customers plus marketplace borrowers resolved from the company's loan
+  /// views (their user documents carry no company_id). Used by the search
+  /// box's type-ahead and by [SearchBorrowersEvent].
+  Future<List<User>> findBorrowers(String query) async {
+    if (query.trim().isEmpty) return const [];
+
+    final users = await userRepository.load(
+      limit: null,
+      reset: true,
+      statements: [
+        QueryStatement(
+          field: 'company_id',
+          isEqualTo: authService.company.id,
+        ),
+        QueryStatement(
+          field: 'user_role',
+          isEqualTo: UserRole.customer.name,
+        ),
+      ],
+    );
+
+    // Marketplace borrowers apply on their own and carry no company_id, so
+    // find them through the company's loan views, as the clients list does.
+    final lowerQuery = query.toLowerCase();
+    final views = await userLoanViewRepository.load(
+      limit: null,
+      reset: true,
+      statements: [
+        QueryStatement(
+          field: 'company_id',
+          isEqualTo: authService.company.id,
+        ),
+      ],
+    );
+    final known = users.map((user) => user.id).toSet();
+    final extraIds = views
+        .where((view) => view.userFullName.toLowerCase().contains(lowerQuery))
+        .map((view) => view.userId)
+        .where((id) => !known.contains(id))
+        .toSet();
+    final extras = <User>[];
+    for (final id in extraIds) {
+      try {
+        extras.add(await userRepository.get(id: id));
+      } catch (err) {
+        _log.warning('Borrower $id from a loan view could not be loaded: $err');
+      }
+    }
+
+    return [...users, ...extras]
+        .where(
+          (user) =>
+              user.completeNameWesternOrder.toLowerCase().contains(lowerQuery),
+        )
+        .toList();
   }
 
   Future<void> _handleSelectBorrowerEvent(

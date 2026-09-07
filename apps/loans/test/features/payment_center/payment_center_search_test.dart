@@ -102,5 +102,25 @@ void main() {
         expect(bloc.state.searchResults, isEmpty);
       },
     );
+
+    test('findBorrowers finds a marketplace borrower directly', () async {
+      final bloc = buildBloc();
+      final result = await bloc.findBorrowers('dugd');
+      expect(result.single.id, 'u-market');
+    });
+
+    test('findBorrowers returns nothing for a blank query', () async {
+      final bloc = buildBloc();
+      final result = await bloc.findBorrowers('   ');
+      expect(result, isEmpty);
+      verifyNever(
+        () => users.load(
+          statements: any(named: 'statements'),
+          limit: any(named: 'limit'),
+          page: any(named: 'page'),
+          reset: any(named: 'reset'),
+        ),
+      );
+    });
   });
 }
