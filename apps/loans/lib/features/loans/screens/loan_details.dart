@@ -398,7 +398,8 @@ class _LoanDetailsState extends State<LoanDetails> {
                 schedules: schedules,
                 completeTerm: loan.completeTerm,
                 buildTable: true,
-                tableHeight: (schedules.length + 1) * 48.0,
+                tableHeight:
+                    (schedules.length + 1) * LoanScheduleWidget.rowHeight,
                 loan: loan,
               ),
             ],

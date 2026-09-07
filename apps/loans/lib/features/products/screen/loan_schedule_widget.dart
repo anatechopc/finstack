@@ -22,6 +22,9 @@ class LoanScheduleWidget extends StatelessWidget {
     this.loan,
   });
 
+  /// Row extent of the schedule table; callers size the table with it.
+  static const double rowHeight = 56;
+
   final double? forDialogHeight;
   final bool buildTable;
 
@@ -199,7 +202,7 @@ class LoanScheduleWidget extends StatelessWidget {
     }
 
     // Column 1 (amortization) can carry a second, 11px penalty line inside
-    // the 48px fixed row — tighter vertical padding gives it the extra room.
+    // the fixed row — tighter vertical padding gives it the extra room.
     final verticalPadding = vicinity.column == 1 && vicinity.row > 0 ? 4.0 : 8.0;
 
     return TableViewCell(
@@ -289,13 +292,13 @@ class LoanScheduleWidget extends StatelessWidget {
     if (index == 0) {
       return const TableSpan(
         backgroundDecoration: decoration,
-        extent: FixedTableSpanExtent(48),
+        extent: FixedTableSpanExtent(rowHeight),
       );
     }
 
     return TableSpan(
       backgroundDecoration: decoration,
-      extent: const FixedTableSpanExtent(48),
+      extent: const FixedTableSpanExtent(rowHeight),
       cursor: SystemMouseCursors.click,
       recognizerFactories: <Type, GestureRecognizerFactory>{
         TapGestureRecognizer:

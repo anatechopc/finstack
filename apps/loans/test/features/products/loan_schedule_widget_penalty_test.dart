@@ -41,7 +41,7 @@ void main() {
             schedules: [overdueRow],
             completeTerm: '1 month',
             buildTable: true,
-            tableHeight: 96,
+            tableHeight: 2 * LoanScheduleWidget.rowHeight,
             loan: loanWithDaily100,
           ),
         );
@@ -74,7 +74,7 @@ void main() {
             schedules: [waivedRow],
             completeTerm: '1 month',
             buildTable: true,
-            tableHeight: 96,
+            tableHeight: 2 * LoanScheduleWidget.rowHeight,
             loan: loanWithDaily100,
           ),
         );
