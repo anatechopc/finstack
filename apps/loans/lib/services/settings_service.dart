@@ -97,6 +97,18 @@ class SettingsService {
     return _currentSettings!;
   }
 
+  /// Tests only: forget the singleton so the next `initialize` starts from
+  /// the defaults. `initialize` itself is idempotent on purpose (the router
+  /// calls it lazily), which is why tests need an explicit reset.
+  @visibleForTesting
+  static void resetForTest() {
+    _instance?._repoSubscription?.cancel();
+    _instance?._settingsController.close();
+    _instance = null;
+    _settingsRepository = null;
+    _userId = null;
+  }
+
   /// Tests only: stand in for the repository stream without Firestore.
   @visibleForTesting
   void feedSettingsForTest(Stream<List<Settings>> stream) {
