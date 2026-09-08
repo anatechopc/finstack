@@ -92,33 +92,46 @@ class _ImageViewerState extends State<_ImageViewer> {
           Positioned(
             top: 8,
             right: 8,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _ViewerButton(
-                  icon: Icons.zoom_out,
-                  tooltip: 'Zoom out',
-                  onPressed: () => _zoom(1 / 1.25),
+            child: _ViewerButton(
+              icon: Icons.close,
+              tooltip: 'Close',
+              onPressed: _close,
+            ),
+          ),
+          Positioned(
+            bottom: 12,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.white.withValues(alpha: 0.85),
+                  borderRadius: BorderRadius.circular(24),
                 ),
-                const SizedBox(width: 4),
-                _ViewerButton(
-                  icon: Icons.zoom_in,
-                  tooltip: 'Zoom in',
-                  onPressed: () => _zoom(1.25),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _ViewerButton(
+                      icon: Icons.zoom_out,
+                      tooltip: 'Zoom out',
+                      onPressed: () => _zoom(1 / 1.25),
+                    ),
+                    const SizedBox(width: 4),
+                    _ViewerButton(
+                      icon: Icons.zoom_in,
+                      tooltip: 'Zoom in',
+                      onPressed: () => _zoom(1.25),
+                    ),
+                    const SizedBox(width: 4),
+                    _ViewerButton(
+                      icon: Icons.restart_alt,
+                      tooltip: 'Reset zoom',
+                      onPressed: _reset,
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 4),
-                _ViewerButton(
-                  icon: Icons.restart_alt,
-                  tooltip: 'Reset zoom',
-                  onPressed: _reset,
-                ),
-                const SizedBox(width: 4),
-                _ViewerButton(
-                  icon: Icons.close,
-                  tooltip: 'Close',
-                  onPressed: _close,
-                ),
-              ],
+              ),
             ),
           ),
         ],
