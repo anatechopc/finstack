@@ -105,7 +105,7 @@ open-term scenario). G7 pins the CURRENT settlement formula (8800) —
 finstack#116 owns the redesign and the flip; G9 pins the current top-up
 interest — finstack#117 flips it. G11 parked (see references/golden-scenarios.md);
 the two clock-dependent branches are covered through the S2 `now` seam
-(G4c/G5d, follow-up PR to #115). The suite assumes a zone without DST
+(G4c/G5d, folded into #115). The suite assumes a zone without DST
 (D11); CI pins `TZ=UTC`.
 
 Full scenario table, fixture recipes, and the worked-derivation template are

@@ -249,15 +249,15 @@ class LoanCalculationService {
 
         if (nowDay < firstSalaryDay) {
           nextDate = Jiffy.parseFromDateTime(
-            DateTime(clock.year, clock.month,firstSalaryDay),
+            DateTime(clock.year, clock.month, firstSalaryDay),
           ).startOf(Unit.day);
         } else if (nowDay < secondSalaryDay) {
           nextDate = Jiffy.parseFromDateTime(
-            DateTime(clock.year, clock.month,secondSalaryDay),
+            DateTime(clock.year, clock.month, secondSalaryDay),
           ).startOf(Unit.day);
         } else {
           nextDate = Jiffy.parseFromDateTime(
-            DateTime(clock.year, clock.month,firstSalaryDay),
+            DateTime(clock.year, clock.month, firstSalaryDay),
           ).startOf(Unit.day).add(months: 1);
         }
       }

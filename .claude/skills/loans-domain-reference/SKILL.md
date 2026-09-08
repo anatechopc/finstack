@@ -183,7 +183,7 @@ created after the payment (`:191-208`); the backend denormalizes `payments.loan_
 **Early Settlement** = the only way an open-term loan ends
 (`loan_settlement_bloc.dart`, formula in `LoanCalculationService.calculateSettlementBalance`):
 computes remaining balance across the parent loan and its `parent_id` children, then
-marks them all `LoanStatus.completed` (`:118-161`; the bloc lost 12 lines on 2026-09-08).
+marks them all `LoanStatus.completed` (confirm handler `:119-178`, completion `:155-162`; the bloc lost 12 lines on 2026-09-08).
 Borrower-side payment submission (pending→confirmed with lender confirmation) lives in
 `apps/loans/lib/features/payments/` + `payment_center/`.
 

@@ -40,8 +40,8 @@ appear here.
 
 ## Clock coupling (read before writing any open-term scenario)
 
-`calculateOpenTermSchedules` reads the real clock (`Jiffy.now()`) in two
-places (verified in source):
+`calculateOpenTermSchedules` reads the clock (`now ?? DateTime.now()` since
+the S2 seam; `Jiffy.now()` before it) in two places (verified in source):
 
 1. The clamp `if (nextDate.isSameOrBefore(now)) nextDate = now.startOf(day)`
    — fires when the computed next due date is in the past.
@@ -56,7 +56,8 @@ run carry `createdAt = DateTime.timestamp()` (i.e. NOW — set by
 fixtures in the PAST relative to the test run, otherwise they sort after the
 freshly computed schedules and the insertion point shifts.
 
-There is no injectable clock. Two coping strategies, in preference order:
+The clock is injectable since 2026-09-08 (S2 below). Two coping strategies,
+in preference order — S1 still applies to every scenario that can use it:
 
 - **S1 (no code change): anchor scenarios so `now` is irrelevant.** Use loan
   dates relative to `DateTime.now()` (e.g. `final start =
@@ -76,7 +77,7 @@ There is no injectable clock. Two coping strategies, in preference order:
   additional loan — a widget flow, not math). The past-due clamp and the
   `'D1,D2'` neither-day branch are covered by G4c/G5d through the S2 seam
   (optional `now` on `calculateOpenTermSchedules` / `calculateOpenTerm`,
-  landed 2026-09-08 in the follow-up PR to #115).
+  landed 2026-09-08 in #115).
 - **S2 (DONE 2026-09-08): optional `DateTime? now` parameter** on
   `calculateOpenTermSchedules` and `calculateOpenTerm`, defaulting to the
   real clock. A seam, not a math change: every earlier scenario omits it and

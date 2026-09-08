@@ -148,12 +148,9 @@ the last row counts, unconfirmed submissions are credited, open-term rows
 credit the charge not the cash, and top-ups are ignored. Golden test G7
 pins the current 8800 for the reference family until that lands.
 
-Confirmation marks parent + all children `LoanStatus.completed` (`:166-173`).
-
-CAUTION (open, as of 2026-07-07): the `totalLoanPayment` loop uses `=` not `+=`
-(`:104-110`), so only the LAST schedule's payment is counted. Whether this is a live
-defect or masked by call patterns is a campaign question — do not fix ad hoc; route
-via `finstack-loan-engine-and-reporting-campaign`.
+Confirmation marks parent + all children `LoanStatus.completed`
+(`loan_settlement_bloc.dart:155-162`). Do not fix the formula ad hoc; route via
+`finstack-loan-engine-and-reporting-campaign` (finstack#116).
 
 ## 5. Charge application order (`apps/loans/lib/services/charge_calculator.dart`)
 

@@ -78,8 +78,8 @@ DateTime daysFromToday(int days) => DateUtils.addDaysToDate(today, days);
     );
 
 /// Every late field is set because the engine's indexOf() compares rows
-/// through Equatable ==; only dueAt, outstandingBalance, createdAt and
-/// paidAt influence the numbers.
+/// through Equatable ==; only dueAt, outstandingBalance and createdAt
+/// influence the numbers (paidAt only gates a warning).
 LoanSchedule paidSchedule({
   required String id,
   required DateTime createdAt,
