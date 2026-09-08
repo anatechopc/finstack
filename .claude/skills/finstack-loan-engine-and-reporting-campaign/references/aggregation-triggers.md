@@ -171,6 +171,14 @@ three writers.
   recomputes its amortization. G9 pins it: next row shows 83.33 on 12100
   where 12100 × 5% × 25/30 = 504.17 is due (owner decision).
 
+### D12 (Flutter, CONFIRMED 2026-09-08 → finstack#120) — overdue open-term row bills one month while the charge grows
+- `calculateOpenTermSchedules` sets
+  `amortization = min(min(monthlyAmortization, OB + interestCharge), interestCharge)`
+  with `monthlyAmortization = OB × rate`, so once the past-due clamp makes
+  the prorated charge exceed one month the amount due stays at the month
+  (G4c: interestCharge 633.33, amortization 500). Owner decides whether an
+  overdue row bills full accrual; flip G4c with the fix.
+
 ### D11 (Flutter, CANDIDATE) — open-term day math is not DST-safe
 - jiffy 6.4.4 `add(days:)` is a `Duration` add and `diff(unit: Unit.day)`
   floors microseconds; across a fall-back a due date lands at 23:00 the

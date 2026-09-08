@@ -160,8 +160,8 @@ Notes:
   past-due-date clamp are wall-clock-dependent (see Clock coupling); covered
   by G5d and G4c through the S2 seam since 2026-09-08. G4c also pins that an
   overdue row's amortization stays capped at one month's interest while
-  interestCharge keeps growing — current behaviour, questionable (candidate
-  for the catalog once the owner decides what an overdue row should bill).
+  interestCharge keeps growing — current behaviour, pinned; campaign D12,
+  finstack#120 (owner decides what an overdue row should bill).
 
 ## Gate check
 

@@ -140,7 +140,7 @@ only separable because each got its own oracle.
 
 ## PHASE 2 — Reporting defect catalog + proofs
 
-The verified defect catalog (D1-D11, with file/line evidence and fix
+The verified defect catalog (D1-D12, with file/line evidence and fix
 directions) is **`references/aggregation-triggers.md`**. Headlines:
 
 | ID | Defect | Where |
@@ -156,6 +156,7 @@ directions) is **`references/aggregation-triggers.md`**. Headlines:
 | D9 | CONFIRMED → finstack#116: early-settlement formula wrong four ways (assigns not accumulates; credits unconfirmed rows; open-term credits the charge not the cash; top-ups ignored) — needs a formula decision | `loan_calculation_service.dart` `calculateSettlementBalance` |
 | D10 | CONFIRMED → finstack#117: after a top-up the next open-term row inherits the placeholder's prorated interest instead of charging the new balance | `loan_calculation_service.dart` (`calculateOpenTerm`, adjacent-row mutation) |
 | D11 | CANDIDATE (no current users affected): open-term day math is not DST-safe — Duration day adds and floored day diffs | `loan_calculation_service.dart` (jiffy `add(days:)` / `diff(Unit.day)`) |
+| D12 | CONFIRMED → finstack#120: an overdue open-term row's amount due is capped at one month of interest while `interestCharge` keeps accruing (G4c: 500 vs 633.33) | `loan_calculation_service.dart` (`calculateOpenTermSchedules`, the `amortization` min chain) |
 
 Required proofs in this phase (before choosing a solution):
 

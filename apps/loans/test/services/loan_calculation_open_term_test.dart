@@ -324,7 +324,7 @@ void main() {
         overdue.amortization,
         closeTo(500, 0.01),
         reason: 'current behaviour: capped at one month of interest although '
-            '633.33 is charged — change deliberately',
+            '633.33 is charged — flips with finstack#120',
       );
 
       final onTime = afterPaidRow(now: DateTime(2026, 8, 15));
