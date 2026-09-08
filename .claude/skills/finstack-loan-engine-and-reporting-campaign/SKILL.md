@@ -99,12 +99,13 @@ description), no unexplained failures.
 ## PHASE 1 — Golden scenario suite for the math core
 
 **Status: DONE 2026-09-08** (finstack#112, branch `feat/golden-suite-112`):
-21 tests across four files in `apps/loans/test/services/`, every number
-derived first (derivations live as comments in each file). Mutation check
-verified: `/ 30` → `/ 31` fails all 8 open-term scenarios. G7 pins the
-CURRENT D9 semantics (8800, not 8300) — flip it in the D9 fix. G11 parked
-(widget flow, note in the open-term file). Two clock-dependent branches
-remain `UNCOVERED` pending the S2 seam.
+Suite in `apps/loans/test/services/` (derivations as file-top comments);
+mutation check verified (`/ 30` → `/ 31` at BOTH sites fails every
+open-term scenario). G7 pins the CURRENT settlement formula (8800) —
+finstack#116 owns the redesign and the flip; G9 pins the current top-up
+interest — finstack#117 flips it. G11 parked and the two clock-dependent
+branches uncovered: see references/golden-scenarios.md. The suite assumes
+a zone without DST (D11); CI pins `TZ=UTC`.
 
 Full scenario table, fixture recipes, and the worked-derivation template are
 in **`references/golden-scenarios.md`**. Summary:
@@ -115,8 +116,9 @@ in **`references/golden-scenarios.md`**. Summary:
   + the `double.infinity` sentinel.
 - G5/G5b: `'D1,D2'` salary-day term parsing (comma grammar, day ordering).
 - G6: proration across a month boundary (1 month = 30 days convention).
-- G7: early settlement remaining balance (requires extracting the formula
-  from `LoanSettlementBloc` to a pure helper first — behavior-preserving).
+- G7: early settlement remaining balance (formula extracted to
+  `LoanCalculationService.calculateSettlementBalance` on 2026-09-08; pins
+  the current, wrong formula — finstack#116).
 - G8: charges trio (`additionalCharges` / `deductions` / upfront) through
   `ChargeCalculator`.
 - G9/G10 (+G11): the three root causes of **finstack#33** (consecutive
@@ -137,7 +139,7 @@ only separable because each got its own oracle.
 
 ## PHASE 2 — Reporting defect catalog + proofs
 
-The verified defect catalog (D1-D9, with file/line evidence and fix
+The verified defect catalog (D1-D11, with file/line evidence and fix
 directions) is **`references/aggregation-triggers.md`**. Headlines:
 
 | ID | Defect | Where |
@@ -150,7 +152,9 @@ directions) is **`references/aggregation-triggers.md`**. Headlines:
 | D6 | `TODO(deibeeed) complete this for report` — completed branch unfinished/unvalidated | `loan_changes.go:171` |
 | D7 | `%$w` format typos (unwrapped errors) | `loan_changes.go` ~144/~183 |
 | D8 | 2 `go vet` lock-copy warnings (protobuf by value) | `loan_changes.go` ~317/~334 |
-| D9 | CANDIDATE: settlement balance sums only last schedule (`=` vs `+=`) | `loan_settlement_bloc.dart` ~104 |
+| D9 | CONFIRMED → finstack#116: early-settlement formula wrong four ways (assigns not accumulates; credits unconfirmed rows; open-term credits the charge not the cash; top-ups ignored) — needs a formula decision | `loan_calculation_service.dart` `calculateSettlementBalance` |
+| D10 | CONFIRMED → finstack#117: after a top-up the next open-term row inherits the placeholder's prorated interest instead of charging the new balance | `loan_calculation_service.dart` (`calculateOpenTerm`, adjacent-row mutation) |
+| D11 | CANDIDATE (no current users affected): open-term day math is not DST-safe — Duration day adds and floored day diffs | `loan_calculation_service.dart` (jiffy `add(days:)` / `diff(Unit.day)`) |
 
 Required proofs in this phase (before choosing a solution):
 

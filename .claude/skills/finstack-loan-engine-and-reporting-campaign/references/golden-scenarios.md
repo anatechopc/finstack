@@ -16,7 +16,7 @@ Tests go in `apps/loans/test/services/loan_calculation_service_test.dart`
 
 ```bash
 cd apps/loans
-fvm flutter test test/services/ --test-randomize-ordering-seed random
+TZ=UTC fvm flutter test test/services/ --test-randomize-ordering-seed random
 ```
 
 Test mechanics (fixture idioms, `closeTo`, bloc seams) are
@@ -65,10 +65,17 @@ There is no injectable clock. Two coping strategies, in preference order:
   ON a salary day (path 1 or 2 of the branch, both now-free). Expected
   numbers stay deterministic because interest depends on day DIFFS, not
   absolute dates.
-- **DST caveat:** the suite assumes a zone without daylight saving (dev =
-  Asia/Manila, CI = UTC). jiffy floors day diffs and adds days as a
-  Duration, so DST-zone users would see a one-day-short diff across a
-  transition — a candidate engine defect, not covered by G1–G10.
+- **DST caveat (campaign D11):** the suite assumes a zone without daylight
+  saving; the CI test step pins `TZ=UTC` and the gate command below does
+  too. jiffy floors day diffs and adds days as a Duration, so under DST a
+  proration across a spring-forward is one day short and a due date across
+  a fall-back lands at 23:00 the previous day (G5/G5b fail under US rules,
+  G5c under EU rules, G2's fixed dates under Australia/Sydney — verified).
+  Do not "fix" the fixtures with UTC anchors; that would hide the defect.
+- **Parked / uncovered (tracked here, not in the test files):** G11 (UI
+  refresh after an additional loan — a widget flow, not math), the past-due
+  clamp (`nextDate.isSameOrBefore(now)`) and the `'D1,D2'` branch when the
+  start day is neither salary day. The last two wait for the S2 clock seam.
 - **S2 (behavior-preserving seam, allowed pre-gate): add an optional
   `DateTime? now` parameter** defaulting to the real clock. This is a seam,
   not a math change — land it with the suite proving output is bit-identical
@@ -127,7 +134,7 @@ double-derivation IS the proof.
 | G5 | `calculateOpenTermSchedules` | 10000, 5%, term `'1,15'`, start ON day 1 (next month, future) | dueAt = day 15 same month; diff 14 days; multiplier 14/30 = 0.4667; interestCharge closeTo 233.33 | `'D1,D2'` comma parsing + salary-day hop |
 | G5b | `calculateOpenTermSchedules` | term `'15,1'` (reversed order), start ON day 1 | identical to G5 (code min/maxes the two days) | salary-day ordering |
 | G6 | `calculateOpenTermSchedules` | 10000, 5%, `'1m'`, start = Feb 1 of the next NON-LEAP year (test helper picks it, keeping it in the future) | dueAt = Mar 3 that year (Feb 1 + 30 CALENDAR days); multiplier exactly 1.0; interest 500.00 | month-boundary proration: 1 month = 30 days, NOT calendar month |
-| G7 | early-settlement formula | family of 1 loan (10000 + 500 charges - 200 deductions - 100 upfront) + 2 paid open-term schedules (interestCharge 500 + principal 0; interestCharge 400 + extra 1000) | totalLoanAmount 10200; total payments 1900; remaining 8300 | D9 candidate bug (`=` vs `+=`): buggy code reports 10200-1400 = 8800 |
+| G7 | early-settlement formula | family of 1 loan (10000 + 500 charges - 200 deductions - 100 upfront) + an open-term row (interest 500) and a fixed-term row (interest 400 + principal 1000) | released 10200; CURRENT formula = released − last row only = 8800 (pinned); accumulation would give 8300 but is NOT the target (subtracts interest from principal) — finstack#116 decides the formula | D9 and its siblings (see aggregation-triggers.md D9) |
 | G8 | `ChargeCalculator.applyChargesAndDeductionsDetailed` | base 10000; charges [5%, flat 150, upfront 2%]; deductions [1%, flat 50] | additionalCharges 650, upfront 200, deductions 150, totalAmount 10500 | percent-vs-flat parsing; upfront excluded from principal |
 | G9 | `calculateOpenTerm` (finstack#33 RC2) | open-term loan, 1 paid schedule (OB 10000), 1 additional loan (2000 + 100 charges) dated after the paid schedule but in the past | additional-loan placeholder schedule has OB = 12100 EXACTLY ONCE; the adjacent computed schedule is updated in place to OB 12100 (the documented mutation at the end of `calculateOpenTerm`); the 12100 appears from the insertion point onward and nowhere earlier | double-counted OB (root cause 2 of finstack#33) |
 | G10 | `calculateOpenTerm` (finstack#33 RC3) | 2 additional loans supplied NEWEST-FIRST in `loan.additionalLoanAmounts` | processing order is by `createdAt` ascending: first placeholder OB = base+A1, second = base+A1+A2 | reverse-order iteration (root cause 3 of finstack#33; the `sortedBy` at ~line 357) |
@@ -138,15 +145,12 @@ Notes:
 - **G4a sentinel:** `totalLoanPayment = double.infinity` for open-term is
   intentional ("no fixed total"); pin it so a refactor that "fixes" it to 0
   or NaN is caught and forced to be a deliberate, documented change.
-- **G7 requires an extraction first (DONE 2026-09-08 as
-  `LoanCalculationService.calculateSettlementBalance`):** the formula lived inline in
-  `LoanSettlementBloc._handleSettleLoanAccountEvent` (no seam). Extract it
-  to a pure static (suggested: `LoanCalculationService.
-  calculateSettlementBalance(loans, schedules)`) with the bloc delegating —
-  behavior-preserving, allowed pre-gate. Write G7 against the extraction
-  with the CURRENT (buggy, `=`) semantics first if you must ship the seam
-  separately; flip the expectation in the same PR that fixes D9, never
-  silently.
+- **G7 (extraction DONE 2026-09-08 as
+  `LoanCalculationService.calculateSettlementBalance`, the bloc delegates):**
+  written against the CURRENT formula on purpose. The review of PR #115
+  showed the formula is wrong four ways (aggregation-triggers.md D9), so
+  the expectation flips with finstack#116's decided formula, never
+  silently, and never to a plain `+=` (8300 is not the answer either).
 - **G9/G10 encode finstack#33** (PR finstack#33, closed issue finstack#4;
   full narrative in finstack-failure-archaeology). Root causes, restated as
   test oracles: (1) UI didn't refresh → G11; (2) OB mutated twice (bloc +
@@ -161,7 +165,7 @@ Notes:
 Phase 1 is done when:
 
 ```bash
-cd apps/loans && fvm flutter test test/services/ --test-randomize-ordering-seed random
+cd apps/loans && TZ=UTC fvm flutter test test/services/ --test-randomize-ordering-seed random
 ```
 
 is green with G1-G10 present (G11 optional but tracked), every expected

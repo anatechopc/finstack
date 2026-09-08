@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart' show DateUtils;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
@@ -9,6 +10,11 @@ import 'package:loooans_helpers/data_helpers.dart';
 // derived on paper from the formulas BEFORE the test was written (template in
 // .claude/skills/finstack-loan-engine-and-reporting-campaign/references/
 // golden-scenarios.md).
+//
+// Assumes a timezone WITHOUT daylight saving (dev boxes are Asia/Manila; CI
+// pins TZ=UTC): jiffy adds days as a Duration, so a 15-day hop across a
+// fall-back lands at 23:00 the previous day and G2's due dates read a day
+// early. See the DST caveat in the reference.
 //
 // G1 — amount 10000, 3 months, 5%/month, term '1m':
 //   P = Pv*R / (1 - (1+R)^-n) = 10000*0.05 / (1 - 1.05^-3)
@@ -38,8 +44,6 @@ import 'package:loooans_helpers/data_helpers.dart';
 //   row 2: interest 0.0006, amort min(40.92, 0.0063) = 0.0063, OB 0
 //   count = 3 - 1 = 2; the amortization comes from paidSchedules.first.
 
-DateTime ymd(DateTime d) => DateTime(d.year, d.month, d.day);
-
 LoanCalculationResult fixedTerm(String term) =>
     LoanCalculationService.calculateFixedTerm(
       amount: 10000,
@@ -68,17 +72,21 @@ LoanCalculationResult resumed() => LoanCalculationService.calculateFixedTerm(
       paidSchedules: [persisted()],
     );
 
+List<DateTime> dueDates(LoanCalculationResult result) =>
+    result.schedules.map((s) => DateUtils.dateOnly(s.dueAt)).toList();
+
 void main() {
   group('G1 fixed-term 1m amortization', () {
-    final result = fixedTerm('1m');
-
     test('monthly amortization and total match the hand-computed P', () {
+      final result = fixedTerm('1m');
+
       expect(result.schedules, hasLength(3));
       expect(result.monthlyAmortization, closeTo(3672.09, 0.01));
       expect(result.totalLoanPayment, closeTo(11016.26, 0.05));
     });
 
     test('each row matches the amortization table', () {
+      final result = fixedTerm('1m');
       const interest = [500.00, 341.40, 174.86];
       const principal = [3172.09, 3330.69, 3497.22];
       const balance = [6827.91, 3497.22, 0.0];
@@ -101,22 +109,23 @@ void main() {
 
     test('due dates step by one calendar month', () {
       expect(
-        result.schedules.map((s) => ymd(s.dueAt)).toList(),
+        dueDates(fixedTerm('1m')),
         [DateTime(2026, 2, 10), DateTime(2026, 3, 10), DateTime(2026, 4, 10)],
       );
     });
   });
 
   group('G2 fixed-term 15d halves the rate and doubles the count', () {
-    final result = fixedTerm('15d');
-
     test('six payments at P = 1815.50', () {
+      final result = fixedTerm('15d');
+
       expect(result.schedules, hasLength(6));
       expect(result.monthlyAmortization, closeTo(1815.50, 0.01));
       expect(result.totalLoanPayment, closeTo(10893.00, 0.05));
     });
 
     test('rows follow the 2.5%-per-period table', () {
+      final result = fixedTerm('15d');
       const interest = [250.00, 210.86, 170.75, 129.63, 87.48, 44.28];
       const balance = [8434.50, 6829.86, 5185.11, 3499.24, 1771.22, 0.0];
 
@@ -130,7 +139,7 @@ void main() {
 
     test('due dates step by 15 days', () {
       expect(
-        result.schedules.map((s) => ymd(s.dueAt)).toList(),
+        dueDates(fixedTerm('15d')),
         [
           DateTime(2026, 1, 25),
           DateTime(2026, 2, 9),
@@ -167,9 +176,15 @@ void main() {
       expect(result.schedules, hasLength(2));
       expect(result.monthlyAmortization, closeTo(40.92, 0.001));
       expect(result.schedules.first.amortization, closeTo(40.92, 0.001));
-      expect(result.schedules.first.interestCharge, closeTo(4.0557, 0.001));
-      expect(result.schedules.first.outstandingBalance, closeTo(0.0057, 0.001));
-      expect(ymd(result.schedules.first.dueAt), DateTime(2025, 1, 19));
+      expect(result.schedules.first.interestCharge, closeTo(4.0557, 0.0001));
+      expect(
+        result.schedules.first.outstandingBalance,
+        closeTo(0.0057, 0.0001),
+      );
+      expect(
+        DateUtils.dateOnly(result.schedules.first.dueAt),
+        DateTime(2025, 1, 19),
+      );
     });
   });
 }

@@ -45,6 +45,7 @@ void main() {
   late GoRouter router;
 
   setUp(() {
+    SettingsService.resetForTest();
     SettingsService.initialize();
     SettingsService.instance.setClassicUIForTest(enabled: false);
 

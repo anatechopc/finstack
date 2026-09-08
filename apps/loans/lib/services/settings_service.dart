@@ -103,6 +103,7 @@ class SettingsService {
   @visibleForTesting
   static void resetForTest() {
     _instance?._repoSubscription?.cancel();
+    _instance?._settingsController.close();
     _instance = null;
     _settingsRepository = null;
     _userId = null;

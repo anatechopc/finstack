@@ -97,7 +97,7 @@ class LoanSettlementBloc
       final remainingBalance =
           LoanCalculationService.calculateSettlementBalance(
         loans: allLoans,
-        paidSchedules: loanSchedules,
+        schedules: loanSchedules,
       );
 
       _log.fine('remainingBalance: $remainingBalance');

@@ -148,9 +148,37 @@ three writers.
   balance owed).
 - Status 2026-09-08: CONFIRMED and pinned — G7
   (`test/services/loan_calculation_settlement_test.dart`) shows
-  10200 - 1400 = 8800 where accumulation gives 8300. The pure helper now
-  exists; the fix is `+=` in `calculateSettlementBalance` plus flipping G7
-  to 8300 in the same commit.
+  10200 - 1400 = 8800. The independent review of PR #115 found the formula
+  wrong in four ways, so finstack#116 is a design decision, not `+=`:
+  1. assigns instead of accumulating — and because the bloc's list comes
+     back newest-first (`loan_schedule_firestore_service.dart` orders
+     `updated_at` DESC) production credits the LEAST recently updated row;
+  2. `+=` would be wrong too: released − Σ payments subtracts interest from
+     principal (an interest-only open-term loan trends to zero);
+  3. the rows come from `payment_id != null`, which includes borrower
+     submissions not yet confirmed (`payment_submission_bloc.dart`);
+  4. open-term rows credit the computed `interestCharge`, not the recorded
+     `interestPayment`; approved top-ups (`loan.additionalLoanAmounts`) are
+     not part of the released amount.
+  Direction: settlement = last row's outstanding balance (top-ups included)
+  + accrued interest, over confirmed rows only. Flip G7 with the fix.
+
+### D10 (Flutter, CONFIRMED 2026-09-08 → finstack#117) — top-up interest copied onto the next row
+- `calculateOpenTerm` (`apps/loans/lib/services/loan_calculation_service.dart`,
+  the `lastLoanSchedule..outstandingBalance = ... ..interestCharge = ...`
+  mutation after inserting the placeholder) copies the placeholder's
+  prorated interest onto the adjacent computed schedule and never
+  recomputes its amortization. G9 pins it: next row shows 83.33 on 12100
+  where 12100 × 5% × 25/30 = 504.17 is due (owner decision).
+
+### D11 (Flutter, CANDIDATE) — open-term day math is not DST-safe
+- jiffy 6.4.4 `add(days:)` is a `Duration` add and `diff(unit: Unit.day)`
+  floors microseconds; across a fall-back a due date lands at 23:00 the
+  previous day (a calendar day early once read as a date) and across a
+  spring-forward a proration is one day short. Product is Asia/Manila
+  (no DST) today, so no user is affected; the golden suite states the
+  assumption and CI pins `TZ=UTC`. Confirmed by running the suite under
+  America/New_York, Europe/London and Australia/Sydney (review of PR #115).
 
 ## Untested-code reality
 

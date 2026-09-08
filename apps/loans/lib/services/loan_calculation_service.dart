@@ -38,16 +38,22 @@ class LoanCalculationService {
     return outstandingBalance * monthlyInterestRate;
   }
 
-  /// Early-settlement balance for a loan family (parent + special loans):
-  /// the net amount released minus what the paid schedules collected.
+  /// Early-settlement balance for a loan family (parent + special loans) as
+  /// the settlement dialog computes it today: the net amount released per
+  /// loan minus what [schedules] (every row with a payment id) collected.
   ///
-  /// Extracted verbatim from `LoanSettlementBloc` (campaign G7 seam). The
-  /// payment loop ASSIGNS instead of accumulating, so only the last schedule
-  /// counts (campaign defect D9). G7 pins that behaviour; flip the test in
-  /// the PR that changes this line, never silently.
+  /// BUG(finstack#116): extracted verbatim from `LoanSettlementBloc` and
+  /// pinned as-is by golden test G7. The formula needs a design decision,
+  /// not a patch: the loop ASSIGNS instead of accumulating (only the last
+  /// element counts, and the bloc's list is newest-first by updated_at, so
+  /// production credits the least recently updated row); [schedules] includes
+  /// borrower submissions not yet confirmed; open-term rows credit the
+  /// computed interestCharge rather than the recorded interestPayment; and
+  /// approved top-ups (loan.additionalLoanAmounts) are not part of the
+  /// released amount. Flip G7 in the change that fixes this, never silently.
   static double calculateSettlementBalance({
     required List<Loan> loans,
-    required List<LoanSchedule> paidSchedules,
+    required List<LoanSchedule> schedules,
   }) {
     var totalLoanAmount = 0.0;
     var totalLoanPayment = 0.0;
@@ -57,7 +63,7 @@ class LoanCalculationService {
           (loan.deductions + loan.additionalChargeUpfrontCollection);
     }
 
-    for (final schedule in paidSchedules) {
+    for (final schedule in schedules) {
       totalLoanPayment = (schedule.isOpenTerm
               ? schedule.interestCharge
               : schedule.interestPayment) +

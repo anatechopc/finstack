@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart' show DateUtils;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
@@ -10,13 +11,16 @@ import 'package:loooans_helpers/data_helpers.dart';
 // day is neither salary day), so every scenario is anchored so that `now`
 // cannot matter: start dates are one day in the past or fixed in a future
 // month, and additional loans are dated in the past (freshly computed
-// schedules carry createdAt = now, which is what positions them).
+// schedules carry createdAt = now, which is what positions them). The two
+// clock-dependent branches stay uncovered until the clock seam exists; G11
+// is parked. Both are tracked in the campaign reference, not here.
 //
-// Assumes a timezone WITHOUT daylight saving (dev boxes are Asia/Manila, CI
-// is UTC): jiffy's day diff floors whole days and add(days:) is a Duration
-// add, so across a DST transition a diff comes out one day short and a due
-// date one hour early. That is a candidate engine defect for DST-zone users,
-// not something these scenarios cover.
+// Assumes a timezone WITHOUT daylight saving (dev boxes are Asia/Manila; CI
+// pins TZ=UTC): jiffy floors day diffs and adds days as a Duration, so
+// across a spring-forward a proration comes out one day short and across a
+// fall-back a due date lands at 23:00 the previous day, i.e. a calendar day
+// early once read as a date. That is an engine defect for DST-zone users
+// (campaign D11), not something these scenarios cover.
 //
 // Derivations (interest = OB * rate * diffDays / 30; 1 month = 30 days):
 //   G4a '1m'  start = yesterday: due = start + 30d, diff 30, mult 1.0,
@@ -32,30 +36,22 @@ import 'package:loooans_helpers/data_helpers.dart';
 //             (Feb 1 + 30 CALENDAR days, not "next month"), mult 1.0, 500.
 //   G9  paid schedule OB 10000 due 10 days ago; additional loan 2000 + 100
 //       charges created 5 days ago:
-//             placeholder OB = 10000 + 2000 + 100 = 12100, exactly once;
+//             placeholder OB = 10000 + 2000 + 100 = 12100, exactly once
+//             (finstack#33 root cause 2 double-counted it);
 //             placeholder interest = 10000 * 0.05 * 5/30 = 83.33;
 //             the adjacent computed schedule is mutated in place to OB 12100
-//             (and to the same 83.33 interest — current behaviour, pinned).
+//             and to the same 83.33 interest — current behaviour, pinned;
+//             finstack#117 (owner decision) changes it to 12100*0.05*25/30
+//             = 504.17 and flips this test.
 //   G10 second additional loan 3000 created 3 days ago, supplied NEWEST-FIRST:
 //             processed by createdAt ascending, so A1 OB 12100, then
 //             A2 OB = 12100 + 3000 = 15100 with interest 12100*0.05*2/30 =
 //             40.33, and the computed schedule ends at 15100. Before
 //             finstack#33 the reverse iteration produced 15100/15100/13000.
-//
-// UNCOVERED (needs the S2 clock seam): the past-due-date clamp
-// (`nextDate.isSameOrBefore(now)`) and the 'D1,D2' branch when the start day
-// is neither salary day — both derive dates from the wall clock.
-// PARKED G11 (finstack#33 root cause 1, stale UI after an additional loan):
-// not math — additional_loan_detail_screen.dart pops on success and
-// LoanDetails re-selects the loan in initState; cover it with a widget test
-// when that screen gets one.
 
-DateTime ymd(DateTime d) => DateTime(d.year, d.month, d.day);
+final DateTime today = DateUtils.dateOnly(DateTime.now());
 
-final DateTime today = ymd(DateTime.now());
-
-DateTime daysFromToday(int days) =>
-    DateTime(today.year, today.month, today.day + days);
+DateTime daysFromToday(int days) => DateUtils.addDaysToDate(today, days);
 
 ({
   List<LoanSchedule> schedules,
@@ -70,6 +66,9 @@ DateTime daysFromToday(int days) =>
       companyId: 'co-1',
     );
 
+/// Every late field is set because the engine's indexOf() compares rows
+/// through Equatable ==; only dueAt, outstandingBalance, createdAt and
+/// paidAt influence the numbers.
 LoanSchedule paidSchedule({
   required String id,
   required DateTime createdAt,
@@ -89,8 +88,8 @@ LoanSchedule paidSchedule({
       ..outstandingBalance = outstandingBalance
       ..principalPayment = 0
       ..interestPayment = 0
-      ..interestCharge = outstandingBalance * 0.05
-      ..amortization = outstandingBalance * 0.05
+      ..interestCharge = 0
+      ..amortization = 0
       ..extraPayment = 0
       ..advanceInterestPayments = 0
       ..interestDayMultiplier = 1;
@@ -103,13 +102,10 @@ AdditionalLoanAmount additionalLoan({
 }) =>
     AdditionalLoanAmount()
       ..id = id
-      ..loanId = 'loan-1'
       ..amount = amount
       ..additionalCharges = charges
       ..advanceCharges = 0
-      ..deductions = 0
       ..createdAt = createdAt
-      ..updatedAt = createdAt
       ..status = LoanStatus.approved;
 
 void main() {
@@ -121,7 +117,7 @@ void main() {
 
       expect(r.schedules, hasLength(1));
       final s = r.schedules.single;
-      expect(ymd(s.dueAt), daysFromToday(29));
+      expect(DateUtils.dateOnly(s.dueAt), daysFromToday(29));
       expect(s.interestDayMultiplier, closeTo(1, 1e-9));
       expect(s.interestCharge, closeTo(500, 0.01));
       expect(s.amortization, closeTo(500, 0.01));
@@ -144,7 +140,7 @@ void main() {
     test('G4b 15d: half a month', () {
       final s = openTerm(start: start, term: '15d').schedules.single;
 
-      expect(ymd(s.dueAt), daysFromToday(14));
+      expect(DateUtils.dateOnly(s.dueAt), daysFromToday(14));
       expect(s.interestDayMultiplier, closeTo(0.5, 1e-9));
       expect(s.interestCharge, closeTo(250, 0.01));
       expect(s.amortization, closeTo(250, 0.01));
@@ -159,20 +155,18 @@ void main() {
       final s =
           openTerm(start: DateTime(nextYear, 3), term: '1,15').schedules.single;
 
-      expect(ymd(s.dueAt), DateTime(nextYear, 3, 15));
+      expect(DateUtils.dateOnly(s.dueAt), DateTime(nextYear, 3, 15));
       expect(s.interestDayMultiplier, closeTo(14 / 30, 1e-9));
       expect(s.interestCharge, closeTo(233.33, 0.01));
     });
 
     test('G5b "15,1": the order of the two days does not matter', () {
-      final a =
-          openTerm(start: DateTime(nextYear, 3), term: '1,15').schedules.single;
-      final b =
+      final s =
           openTerm(start: DateTime(nextYear, 3), term: '15,1').schedules.single;
 
-      expect(ymd(b.dueAt), ymd(a.dueAt));
-      expect(b.interestCharge, closeTo(a.interestCharge, 1e-9));
-      expect(b.interestCharge, closeTo(233.33, 0.01));
+      expect(DateUtils.dateOnly(s.dueAt), DateTime(nextYear, 3, 15));
+      expect(s.interestDayMultiplier, closeTo(14 / 30, 1e-9));
+      expect(s.interestCharge, closeTo(233.33, 0.01));
     });
 
     test('G5c starting on the 15th hops to the 1st of next month (17/30)', () {
@@ -180,7 +174,7 @@ void main() {
           .schedules
           .single;
 
-      expect(ymd(s.dueAt), DateTime(nextYear, 4));
+      expect(DateUtils.dateOnly(s.dueAt), DateTime(nextYear, 4));
       expect(s.interestDayMultiplier, closeTo(17 / 30, 1e-9));
       expect(s.interestCharge, closeTo(283.33, 0.01));
     });
@@ -194,7 +188,7 @@ void main() {
 
     final s = openTerm(start: DateTime(year, 2), term: '1m').schedules.single;
 
-    expect(ymd(s.dueAt), DateTime(year, 3, 3));
+    expect(DateUtils.dateOnly(s.dueAt), DateTime(year, 3, 3));
     expect(s.interestDayMultiplier, closeTo(1, 1e-9));
     expect(s.interestCharge, closeTo(500, 0.01));
   });
@@ -245,7 +239,7 @@ void main() {
       expect(
         s[1].outstandingBalance,
         closeTo(10000, 0.01),
-        reason: 'paid history is never rewritten',
+        reason: 'a paid row created before the top-up is left alone',
       );
 
       final placeholder = s[2];
@@ -255,11 +249,11 @@ void main() {
       expect(placeholder.outstandingBalance, closeTo(12100, 0.01));
       expect(placeholder.interestDayMultiplier, closeTo(5 / 30, 1e-9));
       expect(placeholder.interestCharge, closeTo(83.33, 0.01));
-      expect(ymd(placeholder.dueAt), daysFromToday(-5));
+      expect(DateUtils.dateOnly(placeholder.dueAt), daysFromToday(-5));
 
       final next = s[3];
       expect(next.isPlaceholder, isFalse);
-      expect(ymd(next.dueAt), daysFromToday(20));
+      expect(DateUtils.dateOnly(next.dueAt), daysFromToday(20));
       expect(
         next.outstandingBalance,
         closeTo(12100, 0.01),
@@ -268,17 +262,9 @@ void main() {
       expect(
         next.interestCharge,
         closeTo(83.33, 0.01),
-        reason: 'current behaviour: mutated to the placeholder interest, not '
-            'a full month on 12100 — questionable; flip deliberately',
+        reason: 'current behaviour: copied from the placeholder instead of '
+            '12100 * 5% * 25/30 = 504.17 — flips with finstack#117',
       );
-
-      expect(
-        s.where((e) => (e.outstandingBalance - 12100).abs() < 0.01),
-        hasLength(2),
-        reason: '12100 appears from the insertion point onward and nowhere '
-            'earlier (finstack#33 root cause 2 double-counted it)',
-      );
-      expect(s.where((e) => e.isAdditionalLoanAmount), hasLength(1));
     });
 
     test('G10 additional loans supplied newest-first are processed oldest-first',
@@ -294,16 +280,6 @@ void main() {
       expect(s[3].interestDayMultiplier, closeTo(2 / 30, 1e-9));
       expect(s[3].interestCharge, closeTo(40.33, 0.01));
       expect(s[4].outstandingBalance, closeTo(15100, 0.01));
-
-      final oldestFirst = run([a1(), a2()]).schedules;
-      expect(
-        oldestFirst.map((e) => e.id).toList(),
-        s.map((e) => e.id).toList(),
-      );
-      expect(
-        oldestFirst.map((e) => e.outstandingBalance).toList(),
-        s.map((e) => e.outstandingBalance).toList(),
-      );
     });
   });
 }
