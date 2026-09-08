@@ -4,6 +4,19 @@ Log of refactoring and bug fix work done across multiple sessions.
 
 ---
 
+## Loan-engine golden suite — campaign Phase 1 / Gate 1 (finstack#112, 2026-09-08)
+
+Branch `feat/golden-suite-112` (off `develop`). `fvm flutter test test/services/` is now the Gate 1 oracle: 26 tests, 21 of them golden scenarios G1–G10 in four files (`loan_calculation_service_test.dart` G1–G3, `loan_calculation_open_term_test.dart` G4–G6 + G9/G10, `loan_calculation_settlement_test.dart` G7, `charge_calculator_test.dart` G8). Every expected number was derived by hand first; the derivations are comments at the top of each file.
+
+- **Extraction (behaviour-preserving):** `LoanCalculationService.calculateSettlementBalance(loans:, paidSchedules:)`; `LoanSettlementBloc` delegates. The `=`-instead-of-`+=` loop (campaign D9) is preserved verbatim and G7 pins it at 8800 (accumulation gives 8300). Fix D9 in its own PR and flip G7 in the same commit.
+- **Mutation check:** `/ 30` → `/ 31` in `loan_calculation_service.dart` fails all 8 open-term scenarios (verified, then restored).
+- **Clock coupling:** scenarios anchor dates so `now` cannot matter (yesterday / a fixed future month / past-dated additional loans). Still UNCOVERED: the past-due clamp and the `'D1,D2'` third sub-branch (need an injectable clock, campaign S2). G11 (UI refresh after an additional loan) parked — widget flow, not math.
+- **G9 pins a questionable behaviour:** the computed schedule adjacent to an additional-loan placeholder is mutated to the placeholder's *prorated* interest (83.33 on 12100), not a full month. Change deliberately, with the test.
+- **Settings test flake fixed:** `settings_service_test.dart` was order-dependent (`SettingsService.initialize` is idempotent by design; the router calls it lazily). Added `SettingsService.resetForTest()` (`@visibleForTesting`) and call it in `setUp`; green under seeds 1/4/5/random.
+- Fresh-worktree bootstrap: `packages/get_dependencies.sh` → `packages/build_models.sh` → `apps/loans` `fvm flutter pub get` (`*.g.dart` are not versioned); package `pub get` rewrites every `packages/*/*/analysis_options.yaml` — revert, never stage.
+
+---
+
 ## Issue #47 — Reviews: admin responses to borrower reviews (IN PROGRESS)
 
 Adds the ability for a company's `admin`/`reviewModerator` to respond to a borrower review; the borrower sees the response and gets notified. Tracks `anatechopc/loooans` issue #47. Branch: `develop` (uncommitted as of 2026-06-02).

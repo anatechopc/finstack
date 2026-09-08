@@ -129,7 +129,9 @@ three writers.
   cover the sub-modules. Vet each sub-module directory.
 
 ### D9 (Flutter, CANDIDATE) — early-settlement balance sums only the last schedule
-- `apps/loans/lib/features/loans/bloc/loan_settlement_bloc.dart` ~104-110:
+- Now `LoanCalculationService.calculateSettlementBalance` in
+  `apps/loans/lib/services/loan_calculation_service.dart` (extracted from
+  the bloc 2026-09-08; the bloc delegates):
 
   ```dart
   for (final schedule in loanSchedules) {
@@ -144,10 +146,11 @@ three writers.
   `=` instead of `+=` — with 2+ paid schedules the displayed remaining
   balance ignores all but the last schedule's payments (overstates the
   balance owed).
-- Status: CANDIDATE — the pattern is almost certainly a bug, but pin the
-  intended semantics with golden scenario G7 before changing it. The bloc
-  has no test seam (constructor takes `BuildContext`); extract the formula
-  into a pure helper first (see golden-scenarios.md, G7).
+- Status 2026-09-08: CONFIRMED and pinned — G7
+  (`test/services/loan_calculation_settlement_test.dart`) shows
+  10200 - 1400 = 8800 where accumulation gives 8300. The pure helper now
+  exists; the fix is `+=` in `calculateSettlementBalance` plus flipping G7
+  to 8300 in the same commit.
 
 ## Untested-code reality
 

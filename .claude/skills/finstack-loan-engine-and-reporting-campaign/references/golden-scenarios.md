@@ -1,5 +1,10 @@
 # Golden scenario suite for the loan math core (Phase 1 working material)
 
+> **Status 2026-09-08: implemented** (finstack#112). G1–G10 live in
+> `apps/loans/test/services/` (four files, derivations in comments); G5c
+> (start on the second salary day) was added as a bonus now-free branch.
+> The table below stays as the design record.
+
 Target under test: `apps/loans/lib/services/loan_calculation_service.dart`
 (478 lines, static methods, pure except for wall-clock reads — see "Clock
 coupling" below), plus `charge_calculator.dart` and the early-settlement
@@ -129,7 +134,8 @@ Notes:
 - **G4a sentinel:** `totalLoanPayment = double.infinity` for open-term is
   intentional ("no fixed total"); pin it so a refactor that "fixes" it to 0
   or NaN is caught and forced to be a deliberate, documented change.
-- **G7 requires an extraction first:** the formula currently lives inline in
+- **G7 requires an extraction first (DONE 2026-09-08 as
+  `LoanCalculationService.calculateSettlementBalance`):** the formula lived inline in
   `LoanSettlementBloc._handleSettleLoanAccountEvent` (no seam). Extract it
   to a pure static (suggested: `LoanCalculationService.
   calculateSettlementBalance(loans, schedules)`) with the bloc delegating —

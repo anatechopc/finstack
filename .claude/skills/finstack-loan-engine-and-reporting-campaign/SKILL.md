@@ -39,11 +39,11 @@ entry gate and a falsifiable exit; do not skip gates.
 | Math core (Flutter, static methods) | `apps/loans/lib/services/loan_calculation_service.dart` |
 | Amortization formula | `apps/loans/lib/utils/extensions.dart` (`calculateMonthlyPayment`) |
 | Charges math | `apps/loans/lib/services/charge_calculator.dart` |
-| Early settlement (inline formula, no seam) | `apps/loans/lib/features/loans/bloc/loan_settlement_bloc.dart` |
+| Early settlement (`calculateSettlementBalance`, extracted 2026-09-08; the bloc delegates) | `apps/loans/lib/services/loan_calculation_service.dart` |
 | Math call sites | `loans_functions.dart`, `payment_center_bloc.dart`, `reports_bloc_extension_soa.dart`, (`additional_loan_bloc.dart` historically) |
 | Report writers (Go) | `functions/loans/triggers/loan_changes.go`, `loan_schedule_changes.go`, `capital_created.go` |
 | Report reader (Flutter) | `packages/loans/reports_repository/.../reports_realtime_database_service.dart` + `apps/loans/lib/features/reports/` |
-| Existing math test (1 test) | `apps/loans/test/services/loan_calculation_service_test.dart` |
+| Golden suite G1–G10 (Phase 1 DONE 2026-09-08) | `apps/loans/test/services/loan_calculation_{service,open_term,settlement}_test.dart`, `charge_calculator_test.dart` |
 | Campaign references | `references/golden-scenarios.md`, `references/aggregation-triggers.md` |
 | Race proof tool (emulator-only) | `scripts/race_demo/` |
 
@@ -97,6 +97,14 @@ open-term `totalLoanPayment == double.infinity` sentinel.
 description), no unexplained failures.
 
 ## PHASE 1 — Golden scenario suite for the math core
+
+**Status: DONE 2026-09-08** (finstack#112, branch `feat/golden-suite-112`):
+21 tests across four files in `apps/loans/test/services/`, every number
+derived first (derivations live as comments in each file). Mutation check
+verified: `/ 30` → `/ 31` fails all 8 open-term scenarios. G7 pins the
+CURRENT D9 semantics (8800, not 8300) — flip it in the D9 fix. G11 parked
+(widget flow, note in the open-term file). Two clock-dependent branches
+remain `UNCOVERED` pending the S2 seam.
 
 Full scenario table, fixture recipes, and the worked-derivation template are
 in **`references/golden-scenarios.md`**. Summary:
@@ -291,7 +299,7 @@ grep -n 'dataErrors =' functions/loans/triggers/loan_changes.go            # D3 
 grep -n '%\$w' functions/loans/triggers/loan_changes.go                    # D7 (2 hits)
 grep -n 'TODO(deibeeed)' functions/loans/triggers/loan_changes.go          # D6 (1 hit)
 grep -n 'document.v1.written' .github/scripts/deploy_functions.sh          # D1 precondition (loanChanges + messageWritten)
-grep -n 'totalLoanPayment =' apps/loans/lib/features/loans/bloc/loan_settlement_bloc.dart  # D9
+grep -n 'totalLoanPayment =' apps/loans/lib/services/loan_calculation_service.dart  # D9 (moved out of the bloc 2026-09-08)
 
 # Math-core test inventory
 ls apps/loans/test/services/
