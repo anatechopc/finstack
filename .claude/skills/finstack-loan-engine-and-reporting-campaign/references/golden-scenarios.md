@@ -72,16 +72,15 @@ There is no injectable clock. Two coping strategies, in preference order:
   a fall-back lands at 23:00 the previous day (G5/G5b fail under US rules,
   G5c under EU rules, G2's fixed dates under Australia/Sydney — verified).
   Do not "fix" the fixtures with UTC anchors; that would hide the defect.
-- **Parked / uncovered (tracked here, not in the test files):** G11 (UI
-  refresh after an additional loan — a widget flow, not math), the past-due
-  clamp (`nextDate.isSameOrBefore(now)`) and the `'D1,D2'` branch when the
-  start day is neither salary day. The last two wait for the S2 clock seam.
-- **S2 (behavior-preserving seam, allowed pre-gate): add an optional
-  `DateTime? now` parameter** defaulting to the real clock. This is a seam,
-  not a math change — land it with the suite proving output is bit-identical
-  when the parameter is omitted. Only do this if S1 cannot express a
-  scenario you need (the third `'D1,D2'` sub-branch is the one that truly
-  requires it).
+- **Parked (tracked here, not in the test files):** G11 (UI refresh after an
+  additional loan — a widget flow, not math). The past-due clamp and the
+  `'D1,D2'` neither-day branch are covered by G4c/G5d through the S2 seam
+  (optional `now` on `calculateOpenTermSchedules` / `calculateOpenTerm`,
+  landed 2026-09-08 in the follow-up PR to #115).
+- **S2 (DONE 2026-09-08): optional `DateTime? now` parameter** on
+  `calculateOpenTermSchedules` and `calculateOpenTerm`, defaulting to the
+  real clock. A seam, not a math change: every earlier scenario omits it and
+  stays green (the bit-identical proof); G4c and G5d pass a fixed date.
 
 ## The worked-derivation method template (G1)
 
@@ -131,6 +130,8 @@ double-derivation IS the proof.
 | G3 | `calculateFixedTerm` | resume with 1 persisted paid schedule | output contains ONLY computed schedules (all `id == NO_ID`), count = n-1, amortization taken from `paidSchedules.first.amortization` | teller double-count (EXISTS — keep) |
 | G4a | `calculateOpenTermSchedules` | 10000, 5%, `'1m'`, start = now-1d | 1 schedule; dueAt = start+30d; multiplier 1.0; interestCharge 500.00; principalPayment 0; OB stays 10000; amortization 500.00; `totalLoanPayment == double.infinity` (sentinel — pin it) | 30-day-month convention; interest-only invariant |
 | G4b | `calculateOpenTermSchedules` | same but `'15d'` | dueAt = start+15d; multiplier 0.5; interestCharge 250.00 | 15-day proration |
+| G4c | `calculateOpenTermSchedules` (S2 seam) | paid row due Aug 1 (OB 10000), `now` = 2026-09-08 noon | next due Aug 31 is past → snaps to Sep 8; diff 38 → multiplier 38/30; interestCharge 633.33; amortization stays 500 (pinned oddity); with `now` = Aug 15: due Aug 31, 500 | past-due clamp (the overdue path penalties run on) |
+| G5d | `calculateOpenTermSchedules` (S2 seam) | `'1,15'` start on neither day; `now` fixed | start Sep 5 / now Sep 8 → due Sep 15, 10 d, 166.67; start Sep 18 / now Sep 20 → due Oct 1, 13 d, 216.67; `'5,20'` start Sep 2 / now Sep 3 → due Sep 5, 3 d, 50.00 | `'D1,D2'` third sub-branch (next due derived from today) |
 | G5 | `calculateOpenTermSchedules` | 10000, 5%, term `'1,15'`, start ON day 1 (next month, future) | dueAt = day 15 same month; diff 14 days; multiplier 14/30 = 0.4667; interestCharge closeTo 233.33 | `'D1,D2'` comma parsing + salary-day hop |
 | G5b | `calculateOpenTermSchedules` | term `'15,1'` (reversed order), start ON day 1 | identical to G5 (code min/maxes the two days) | salary-day ordering |
 | G6 | `calculateOpenTermSchedules` | 10000, 5%, `'1m'`, start = Feb 1 of the next NON-LEAP year (test helper picks it, keeping it in the future) | dueAt = Mar 3 that year (Feb 1 + 30 CALENDAR days); multiplier exactly 1.0; interest 500.00 | month-boundary proration: 1 month = 30 days, NOT calendar month |
@@ -156,9 +157,11 @@ Notes:
   test oracles: (1) UI didn't refresh → G11; (2) OB mutated twice (bloc +
   service) → G9; (3) newest-first iteration → G10.
 - The `'D1,D2'` third sub-branch (start date on NEITHER salary day) and the
-  past-due-date clamp are wall-clock-dependent (see Clock coupling). Cover
-  them only after the S2 seam exists; until then list them in the suite file
-  as `// UNCOVERED: needs clock seam` comments so the gap is visible.
+  past-due-date clamp are wall-clock-dependent (see Clock coupling); covered
+  by G5d and G4c through the S2 seam since 2026-09-08. G4c also pins that an
+  overdue row's amortization stays capped at one month's interest while
+  interestCharge keeps growing — current behaviour, questionable (candidate
+  for the catalog once the owner decides what an overdue row should bill).
 
 ## Gate check
 

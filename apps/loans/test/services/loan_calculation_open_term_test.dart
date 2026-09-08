@@ -12,8 +12,8 @@ import 'package:loooans_helpers/data_helpers.dart';
 // cannot matter: start dates are one day in the past or fixed in a future
 // month, and additional loans are dated in the past (freshly computed
 // schedules carry createdAt = now, which is what positions them). The two
-// clock-dependent branches stay uncovered until the clock seam exists; G11
-// is parked. Both are tracked in the campaign reference, not here.
+// clock-dependent branches are covered through the `now` parameter (G4c and
+// G5d below); G11 is parked in the campaign reference.
 //
 // Assumes a timezone WITHOUT daylight saving (dev boxes are Asia/Manila; CI
 // pins TZ=UTC): jiffy floors day diffs and adds days as a Duration, so
@@ -48,6 +48,17 @@ import 'package:loooans_helpers/data_helpers.dart';
 //             A2 OB = 12100 + 3000 = 15100 with interest 12100*0.05*2/30 =
 //             40.33, and the computed schedule ends at 15100. Before
 //             finstack#33 the reverse iteration produced 15100/15100/13000.
+//   G4c overdue clamp (now = 2026-09-08 noon): paid row due Aug 1, OB 10000;
+//             next = Aug 31 <= now, so the due date snaps to Sep 8; 38 days
+//             since the paid row, mult 38/30, interest 633.33; amortization
+//             stays min(500, 633.33) = 500 — current behaviour (capped at
+//             one month's interest), pinned. Seen on Aug 15 the same loan is
+//             due Aug 31 with 30 days -> 500.
+//   G5d '1,15' start on neither salary day: the next due date comes from
+//             `now` and interest runs from the start date:
+//             start Sep 5,  now Sep 8  (< 15)  -> due Sep 15, 10 d -> 166.67
+//             start Sep 18, now Sep 20 (>= 15) -> due Oct 1,  13 d -> 216.67
+//             '5,20' start Sep 2, now Sep 3 (< 5) -> due Sep 5, 3 d -> 50.00
 
 final DateTime today = DateUtils.dateOnly(DateTime.now());
 
@@ -280,6 +291,83 @@ void main() {
       expect(s[3].interestDayMultiplier, closeTo(2 / 30, 1e-9));
       expect(s[3].interestCharge, closeTo(40.33, 0.01));
       expect(s[4].outstandingBalance, closeTo(15100, 0.01));
+    });
+  });
+
+  group('clock seam: the two wall-clock branches', () {
+    LoanSchedule afterPaidRow({required DateTime now}) =>
+        LoanCalculationService.calculateOpenTermSchedules(
+          amount: 10000,
+          date: DateTime(2026, 7, 2),
+          interestRate: 5,
+          term: '1m',
+          companyId: 'co-1',
+          paidSchedules: [
+            paidSchedule(
+              id: 'sched-1',
+              createdAt: DateTime(2026, 7, 2),
+              dueAt: DateTime(2026, 8),
+              outstandingBalance: 10000,
+            ),
+          ],
+          now: now,
+        ).schedules.single;
+
+    test('G4c an overdue open-term row snaps its due date to today', () {
+      final overdue = afterPaidRow(now: DateTime(2026, 9, 8, 12));
+
+      expect(DateUtils.dateOnly(overdue.dueAt), DateTime(2026, 9, 8));
+      expect(overdue.interestDayMultiplier, closeTo(38 / 30, 1e-9));
+      expect(overdue.interestCharge, closeTo(633.33, 0.01));
+      expect(overdue.outstandingBalance, closeTo(10000, 0.01));
+      expect(
+        overdue.amortization,
+        closeTo(500, 0.01),
+        reason: 'current behaviour: capped at one month of interest although '
+            '633.33 is charged — change deliberately',
+      );
+
+      final onTime = afterPaidRow(now: DateTime(2026, 8, 15));
+
+      expect(DateUtils.dateOnly(onTime.dueAt), DateTime(2026, 8, 31));
+      expect(onTime.interestDayMultiplier, closeTo(1, 1e-9));
+      expect(onTime.interestCharge, closeTo(500, 0.01));
+    });
+
+    test('G5d salary-day start on neither day: the next due comes from now',
+        () {
+      LoanSchedule at({
+        required DateTime start,
+        required DateTime now,
+        String term = '1,15',
+      }) =>
+          LoanCalculationService.calculateOpenTermSchedules(
+            amount: 10000,
+            date: start,
+            interestRate: 5,
+            term: term,
+            companyId: 'co-1',
+            now: now,
+          ).schedules.single;
+
+      final beforeSecond =
+          at(start: DateTime(2026, 9, 5), now: DateTime(2026, 9, 8));
+      expect(DateUtils.dateOnly(beforeSecond.dueAt), DateTime(2026, 9, 15));
+      expect(beforeSecond.interestDayMultiplier, closeTo(10 / 30, 1e-9));
+      expect(beforeSecond.interestCharge, closeTo(166.67, 0.01));
+
+      final afterSecond =
+          at(start: DateTime(2026, 9, 18), now: DateTime(2026, 9, 20));
+      expect(DateUtils.dateOnly(afterSecond.dueAt), DateTime(2026, 10));
+      expect(afterSecond.interestCharge, closeTo(216.67, 0.01));
+
+      final beforeFirst = at(
+        start: DateTime(2026, 9, 2),
+        now: DateTime(2026, 9, 3),
+        term: '5,20',
+      );
+      expect(DateUtils.dateOnly(beforeFirst.dueAt), DateTime(2026, 9, 5));
+      expect(beforeFirst.interestCharge, closeTo(50, 0.01));
     });
   });
 }

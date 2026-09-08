@@ -103,9 +103,10 @@ Suite in `apps/loans/test/services/` (derivations as file-top comments);
 mutation check verified (`/ 30` → `/ 31` at BOTH sites fails every
 open-term scenario). G7 pins the CURRENT settlement formula (8800) —
 finstack#116 owns the redesign and the flip; G9 pins the current top-up
-interest — finstack#117 flips it. G11 parked and the two clock-dependent
-branches uncovered: see references/golden-scenarios.md. The suite assumes
-a zone without DST (D11); CI pins `TZ=UTC`.
+interest — finstack#117 flips it. G11 parked (see references/golden-scenarios.md);
+the two clock-dependent branches are covered through the S2 `now` seam
+(G4c/G5d, follow-up PR to #115). The suite assumes a zone without DST
+(D11); CI pins `TZ=UTC`.
 
 Full scenario table, fixture recipes, and the worked-derivation template are
 in **`references/golden-scenarios.md`**. Summary:
