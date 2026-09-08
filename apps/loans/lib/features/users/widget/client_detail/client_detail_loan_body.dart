@@ -21,9 +21,9 @@ import 'package:loooans/services/payment_confirmation_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
+import 'package:loooans/widgets/image_viewer_dialog.dart';
 import 'package:loooans/widgets/payment_penalty_section.dart';
 import 'package:payment_repository/payment_repository.dart';
-import 'package:photo_view/photo_view.dart';
 
 class ClientDetailLoanBody extends StatelessWidget {
   const ClientDetailLoanBody({
@@ -215,8 +215,10 @@ class ClientDetailLoanBody extends StatelessWidget {
                   children: [
                     if (originalUrl != null && displayUrl != null)
                       GestureDetector(
-                        onTap: () =>
-                            _showFullImage(dialogContext, originalUrl),
+                        onTap: () => showImageViewerDialog(
+                          dialogContext,
+                          url: originalUrl,
+                        ),
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(8),
                           child: CachedNetworkImage(
@@ -371,42 +373,6 @@ class ClientDetailLoanBody extends StatelessWidget {
         const SnackBar(content: Text('Failed to reject payment')),
       );
     }
-  }
-
-  /// Full-screen proof image viewer. Mirrors the Payment Center's
-  /// `_showFullImage` (`pending_submission_section.dart`) for consistency.
-  void _showFullImage(BuildContext context, String url) {
-    showDialog<void>(
-      context: context,
-      builder: (context) {
-        return Dialog(
-          insetPadding: const EdgeInsets.all(16),
-          child: Stack(
-            children: [
-              SizedBox(
-                height: 400,
-                width: double.infinity,
-                child: PhotoView(
-                  imageProvider: CachedNetworkImageProvider(url),
-                  backgroundDecoration: const BoxDecoration(
-                    color: AppColors.white,
-                  ),
-                ),
-              ),
-              Positioned(
-                top: 8,
-                right: 8,
-                child: IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () =>
-                      Navigator.of(context, rootNavigator: true).maybePop(),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
   }
 
   /// Mirrors the Payment Center's reject reason dialog

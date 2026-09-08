@@ -10,9 +10,9 @@ import 'package:loooans/features/payment_center/model/pending_submission.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
+import 'package:loooans/widgets/image_viewer_dialog.dart';
 import 'package:loooans/widgets/payment_penalty_section.dart';
 import 'package:loooans_helpers/data_helpers.dart';
-import 'package:photo_view/photo_view.dart';
 
 /// Lender-facing list of borrower payment submissions awaiting confirm/reject,
 /// for the currently selected borrower. Submissions are grouped per
@@ -246,7 +246,7 @@ class _PendingSubmissionCardState extends State<_PendingSubmissionCard> {
       );
     }
     return GestureDetector(
-      onTap: () => _showFullImage(context, originalUrl),
+      onTap: () => showImageViewerDialog(context, url: originalUrl),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(6),
         child: CachedNetworkImage(
@@ -275,7 +275,7 @@ class _PendingSubmissionCardState extends State<_PendingSubmissionCard> {
       const Gap(12),
       if (originalUrl != null && displayUrl != null)
         GestureDetector(
-          onTap: () => _showFullImage(context, originalUrl),
+          onTap: () => showImageViewerDialog(context, url: originalUrl),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),
             child: CachedNetworkImage(
@@ -344,39 +344,6 @@ class _PendingSubmissionCardState extends State<_PendingSubmissionCard> {
     );
   }
 
-  void _showFullImage(BuildContext context, String url) {
-    showDialog<void>(
-      context: context,
-      builder: (context) {
-        return Dialog(
-          insetPadding: const EdgeInsets.all(16),
-          child: Stack(
-            children: [
-              SizedBox(
-                height: 400,
-                width: double.infinity,
-                child: PhotoView(
-                  imageProvider: CachedNetworkImageProvider(url),
-                  backgroundDecoration: const BoxDecoration(
-                    color: AppColors.white,
-                  ),
-                ),
-              ),
-              Positioned(
-                top: 8,
-                right: 8,
-                child: IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () =>
-                      Navigator.of(context, rootNavigator: true).maybePop(),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
 }
 
 Future<String?> _showRejectReasonDialog(BuildContext context) {
