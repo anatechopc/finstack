@@ -160,6 +160,10 @@ jobs:
           fi
 
       - name: Run app tests
+        # The loan-math golden suite (apps/loans/test/services/) assumes a
+        # zone without daylight saving; pin it instead of trusting the runner.
+        env:
+          TZ: UTC
         run: flutter test
 
       - name: Build web
