@@ -140,17 +140,28 @@ class _PaymentPenaltySectionState extends State<PaymentPenaltySection> {
           ),
         ),
         if (penaltyTotal > 0) ...[
-          FormBuilderCheckbox(
-            name: 'waive_penalty',
-            initialValue: false,
-            title: const Text('Waive penalties'),
-            subtitle: const Text(
-              'Records who waived and why on the installment.',
-              style: TextStyle(fontSize: 10),
+          Padding(
+            padding: const EdgeInsets.only(top: 4, left: 4),
+            child: FormBuilderCheckbox(
+              name: 'waive_penalty',
+              initialValue: false,
+              title: const Text('Waive penalties'),
+              subtitle: const Text(
+                'Records who waived and why on the installment.',
+                style: TextStyle(fontSize: 10),
+              ),
+              activeColor: AppColors.black,
+              checkColor: AppColors.white,
+              onChanged: (value) => setState(() => _waive = value ?? false),
+              decoration: const InputDecoration(
+                border: InputBorder.none,
+                contentPadding: EdgeInsets.zero,
+                isDense: true,
+              ),
+              contentPadding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+              controlAffinity: ListTileControlAffinity.leading,
             ),
-            activeColor: AppColors.black,
-            checkColor: AppColors.white,
-            onChanged: (value) => setState(() => _waive = value ?? false),
           ),
           if (_waive)
             KeyedSubtree(
