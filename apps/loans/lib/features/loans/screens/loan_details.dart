@@ -306,7 +306,7 @@ class _LoanDetailsState extends State<LoanDetails> {
         final loan = context.read<LoansBloc>().selectedLoan;
         final schedules = context.read<LoansBloc>().clientLoanSchedules;
         // The whole panel scrolls; the schedule table is sized to its content
-        // (48px per row including the header) so a long schedule extends the
+        // (LoanScheduleWidget.rowHeight px per row including the header) so a long schedule extends the
         // scroll instead of being squeezed by the fixed top section.
         return SingleChildScrollView(
           child: Column(
