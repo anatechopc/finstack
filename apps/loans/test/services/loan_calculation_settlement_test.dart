@@ -31,7 +31,10 @@ void main() {
   }) =>
       LoanSchedule()
         ..isOpenTerm = openTerm
-        ..interestCharge = interest
+        // Real fixed-term rows mirror interestCharge into interestPayment
+        // (pinned by G1); the sentinel makes sure the fixed-term branch
+        // really reads interestPayment.
+        ..interestCharge = openTerm ? interest : 999999
         ..interestPayment = openTerm ? 0 : interest
         ..principalPayment = principal
         ..extraPayment = extra;

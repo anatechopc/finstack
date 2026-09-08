@@ -6,7 +6,7 @@
 > The table below stays as the design record.
 
 Target under test: `apps/loans/lib/services/loan_calculation_service.dart`
-(478 lines, static methods, pure except for wall-clock reads — see "Clock
+(~510 lines, static methods, pure except for wall-clock reads — see "Clock
 coupling" below), plus `charge_calculator.dart` and the early-settlement
 formula. Formula semantics live in loans-domain-reference; this file is the
 test plan with hand-computed expected numbers.
@@ -65,6 +65,10 @@ There is no injectable clock. Two coping strategies, in preference order:
   ON a salary day (path 1 or 2 of the branch, both now-free). Expected
   numbers stay deterministic because interest depends on day DIFFS, not
   absolute dates.
+- **DST caveat:** the suite assumes a zone without daylight saving (dev =
+  Asia/Manila, CI = UTC). jiffy floors day diffs and adds days as a
+  Duration, so DST-zone users would see a one-day-short diff across a
+  transition — a candidate engine defect, not covered by G1–G10.
 - **S2 (behavior-preserving seam, allowed pre-gate): add an optional
   `DateTime? now` parameter** defaulting to the real clock. This is a seam,
   not a math change — land it with the suite proving output is bit-identical

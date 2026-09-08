@@ -12,6 +12,12 @@ import 'package:loooans_helpers/data_helpers.dart';
 // month, and additional loans are dated in the past (freshly computed
 // schedules carry createdAt = now, which is what positions them).
 //
+// Assumes a timezone WITHOUT daylight saving (dev boxes are Asia/Manila, CI
+// is UTC): jiffy's day diff floors whole days and add(days:) is a Duration
+// add, so across a DST transition a diff comes out one day short and a due
+// date one hour early. That is a candidate engine defect for DST-zone users,
+// not something these scenarios cover.
+//
 // Derivations (interest = OB * rate * diffDays / 30; 1 month = 30 days):
 //   G4a '1m'  start = yesterday: due = start + 30d, diff 30, mult 1.0,
 //             interest 10000 * 0.05 = 500; principal 0; OB stays 10000;

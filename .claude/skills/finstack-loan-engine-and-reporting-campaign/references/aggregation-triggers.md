@@ -128,13 +128,13 @@ three writers.
 - Root-module `go vet ./...` from `functions/loans/` is clean — it does NOT
   cover the sub-modules. Vet each sub-module directory.
 
-### D9 (Flutter, CANDIDATE) — early-settlement balance sums only the last schedule
+### D9 (Flutter, CONFIRMED 2026-09-08 → finstack#116) — early-settlement balance sums only the last schedule
 - Now `LoanCalculationService.calculateSettlementBalance` in
   `apps/loans/lib/services/loan_calculation_service.dart` (extracted from
   the bloc 2026-09-08; the bloc delegates):
 
   ```dart
-  for (final schedule in loanSchedules) {
+  for (final schedule in paidSchedules) {
     totalLoanPayment = (schedule.isOpenTerm
             ? schedule.interestCharge
             : schedule.interestPayment) +

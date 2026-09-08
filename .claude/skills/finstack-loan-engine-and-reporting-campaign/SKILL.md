@@ -299,7 +299,7 @@ grep -n 'dataErrors =' functions/loans/triggers/loan_changes.go            # D3 
 grep -n '%\$w' functions/loans/triggers/loan_changes.go                    # D7 (2 hits)
 grep -n 'TODO(deibeeed)' functions/loans/triggers/loan_changes.go          # D6 (1 hit)
 grep -n 'document.v1.written' .github/scripts/deploy_functions.sh          # D1 precondition (loanChanges + messageWritten)
-grep -n 'totalLoanPayment =' apps/loans/lib/services/loan_calculation_service.dart  # D9 (moved out of the bloc 2026-09-08)
+grep -n 'totalLoanPayment = (schedule' apps/loans/lib/services/loan_calculation_service.dart  # D9: 1 hit until finstack#116 lands
 
 # Math-core test inventory
 ls apps/loans/test/services/
