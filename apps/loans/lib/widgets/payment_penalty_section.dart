@@ -158,9 +158,7 @@ class _PaymentPenaltySectionState extends State<PaymentPenaltySection> {
                 contentPadding: EdgeInsets.zero,
                 isDense: true,
               ),
-              contentPadding: EdgeInsets.zero,
               visualDensity: VisualDensity.compact,
-              controlAffinity: ListTileControlAffinity.leading,
             ),
           ),
           if (_waive)
