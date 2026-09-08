@@ -153,8 +153,14 @@ class _PaymentPenaltySectionState extends State<PaymentPenaltySection> {
               activeColor: AppColors.black,
               checkColor: AppColors.white,
               onChanged: (value) => setState(() => _waive = value ?? false),
+              // Mirrors FormBuilderCheckbox's own default (every border off);
+              // overriding only `border` let the theme's enabled outline show.
               decoration: const InputDecoration(
                 border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                errorBorder: InputBorder.none,
+                disabledBorder: InputBorder.none,
                 contentPadding: EdgeInsets.zero,
                 isDense: true,
               ),
