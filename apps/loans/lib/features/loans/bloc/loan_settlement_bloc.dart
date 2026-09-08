@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
+import 'package:loooans/services/loan_calculation_service.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:loooans_helpers/logging_helpers.dart';
 
@@ -93,23 +94,11 @@ class LoanSettlementBloc
         ],
       );
 
-      var totalLoanAmount = 0.0;
-      var totalLoanPayment = 0.0;
-
-      for (final loan in allLoans) {
-        totalLoanAmount += (loan.amount + loan.additionalCharges) -
-            (loan.deductions + loan.additionalChargeUpfrontCollection);
-      }
-
-      for (final schedule in loanSchedules) {
-        totalLoanPayment = (schedule.isOpenTerm
-                ? schedule.interestCharge
-                : schedule.interestPayment) +
-            schedule.principalPayment +
-            schedule.extraPayment;
-      }
-
-      final remainingBalance = totalLoanAmount - totalLoanPayment;
+      final remainingBalance =
+          LoanCalculationService.calculateSettlementBalance(
+        loans: allLoans,
+        paidSchedules: loanSchedules,
+      );
 
       _log.fine('remainingBalance: $remainingBalance');
 

@@ -38,6 +38,36 @@ class LoanCalculationService {
     return outstandingBalance * monthlyInterestRate;
   }
 
+  /// Early-settlement balance for a loan family (parent + special loans):
+  /// the net amount released minus what the paid schedules collected.
+  ///
+  /// Extracted verbatim from `LoanSettlementBloc` (campaign G7 seam). The
+  /// payment loop ASSIGNS instead of accumulating, so only the last schedule
+  /// counts (campaign defect D9). G7 pins that behaviour; flip the test in
+  /// the PR that changes this line, never silently.
+  static double calculateSettlementBalance({
+    required List<Loan> loans,
+    required List<LoanSchedule> paidSchedules,
+  }) {
+    var totalLoanAmount = 0.0;
+    var totalLoanPayment = 0.0;
+
+    for (final loan in loans) {
+      totalLoanAmount += (loan.amount + loan.additionalCharges) -
+          (loan.deductions + loan.additionalChargeUpfrontCollection);
+    }
+
+    for (final schedule in paidSchedules) {
+      totalLoanPayment = (schedule.isOpenTerm
+              ? schedule.interestCharge
+              : schedule.interestPayment) +
+          schedule.principalPayment +
+          schedule.extraPayment;
+    }
+
+    return totalLoanAmount - totalLoanPayment;
+  }
+
   /// Calculates loan schedules for fixed-term loans.
   ///
   /// P = (Pv*R) / [1 - (1 + R)^(-n)]
