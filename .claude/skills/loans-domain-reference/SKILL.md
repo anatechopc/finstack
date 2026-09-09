@@ -90,7 +90,7 @@ On a loan doc (`loan_entity.dart`): `amount` (principal requested),
 
 - **`loanAmount = amount + additionalCharges - deductions`** — `LoanCalculationService.calculateLoanAmount` (`loan_calculation_service.dart:30-32`). This is the amount that gets amortized.
 - **Upfront-collection charges are NOT rolled into the amortized amount** — they are collected at release: `receivable = totalAmount - totalUpfrontCollection` (`loans_bloc.dart:381`, `:472`).
-- Settlement uses `(amount + additionalCharges) - (deductions + additionalChargeUpfrontCollection)` (`loan_settlement_bloc.dart:100-101`).
+- Settlement uses `(amount + additionalCharges) - (deductions + additionalChargeUpfrontCollection)` (`LoanCalculationService.calculateSettlementBalance`, `loan_calculation_service.dart`; extracted from the bloc 2026-09-08 — the whole formula is under review as finstack#116).
 
 Charges are defined per product as `Charge` objects
 (`packages/loans/product_repository/lib/src/model/charge.dart`): `amount`,
@@ -181,8 +181,9 @@ created after the payment (`:191-208`); the backend denormalizes `payments.loan_
 (home: `finstack-architecture-contract`).
 
 **Early Settlement** = the only way an open-term loan ends
-(`loan_settlement_bloc.dart`): computes remaining balance across the parent loan and
-its `parent_id` children, then marks them all `LoanStatus.completed` (`:130-173`).
+(`loan_settlement_bloc.dart`, formula in `LoanCalculationService.calculateSettlementBalance`):
+computes remaining balance across the parent loan and its `parent_id` children, then
+marks them all `LoanStatus.completed` (confirm handler `:119-178`, completion `:155-162`; the bloc lost 12 lines on 2026-09-08).
 Borrower-side payment submission (pending→confirmed with lender confirmation) lives in
 `apps/loans/lib/features/payments/` + `payment_center/`.
 

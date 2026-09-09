@@ -50,6 +50,7 @@ void main() {
     // The settings widget the screen embeds reads SettingsService.instance,
     // which the router initializes at startup and a test must do itself.
     // It is a bare singleton — no storage, no Firebase.
+    SettingsService.resetForTest();
     SettingsService.initialize();
     // Each test states the UI mode it needs; start from the default.
     SettingsService.instance.setClassicUIForTest(enabled: false);

@@ -57,6 +57,7 @@ void main() {
   );
 
   setUp(() {
+    SettingsService.resetForTest();
     SettingsService.initialize();
     bloc = _MockSearchBloc();
     when(() => bloc.state).thenReturn(const SearchState());
