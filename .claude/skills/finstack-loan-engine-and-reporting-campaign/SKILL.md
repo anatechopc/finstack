@@ -45,7 +45,7 @@ entry gate and a falsifiable exit; do not skip gates.
 | Report reader (Flutter) | `packages/loans/reports_repository/.../reports_realtime_database_service.dart` + `apps/loans/lib/features/reports/` |
 | Golden suite G1–G10 (Phase 1 DONE 2026-09-08) | `apps/loans/test/services/loan_calculation_{service,open_term,settlement}_test.dart`, `charge_calculator_test.dart` |
 | Campaign references | `references/golden-scenarios.md`, `references/aggregation-triggers.md` |
-| Race proof tool (emulator-only) | `scripts/race_demo/` |
+| Race proof tool (emulator-only) | `functions/loans/cmd/race_demo/` + `functions/loans/test/triggers/report_store_emulator_test.go` (`go test -tags emulator`) |
 
 Standing constraints (see finstack-change-control for the full set): never
 touch prod data by hand; schema changes ship both sides, backend first;
@@ -140,6 +140,14 @@ only separable because each got its own oracle.
 
 ## PHASE 2 — Reporting defect catalog + proofs
 
+**Status: DONE 2026-09-09** (branch `fix/report-triggers-108`, spec
+`docs/superpowers/specs/2026-09-09-report-triggers-rebuild.md`). Proofs
+recorded in `functions/loans/MEMORY.md`: emulator race 2/50 racy vs 50/50
+atomic; concurrent claims 1 winner of 10; double delivery through the real
+store books once. D1–D8 fixed in the same change (plus D13 item overwrite,
+D14 delete events, D15 prod schedule collection name); D9–D12 are Flutter
+(finstack#116/#117/#120).
+
 The verified defect catalog (D1-D12, with file/line evidence and fix
 directions) is **`references/aggregation-triggers.md`**. Headlines:
 
@@ -160,10 +168,12 @@ directions) is **`references/aggregation-triggers.md`**. Headlines:
 
 Required proofs in this phase (before choosing a solution):
 
-1. **Race proof (D2):** run `scripts/race_demo/` against the RTDB emulator —
-   exact commands in the reference. Verified run 2026-07-07: racy mode
-   landed 2/50 increments; transaction mode 50/50. The tool refuses to run
-   without `FIREBASE_DATABASE_EMULATOR_HOST` set (never-touch-prod).
+1. **Race proof (D2):** run `functions/loans/cmd/race_demo` (shipped path:
+   server-value increments) or the skill-local `scripts/race_demo/`
+   (transaction variant) against the RTDB emulator — exact commands in the
+   reference. Verified 2026-07-07 and 2026-09-09: racy mode landed 2/50
+   increments; the fixed path 50/50. Both refuse to run without
+   `FIREBASE_DATABASE_EMULATOR_HOST` set (never-touch-prod).
 2. **Idempotency demonstration (D1):** deliver the same `approved` loan
    event twice through the extracted core (or emulator) and show
    `total_amount_released` doubles. This becomes the regression test.
@@ -175,6 +185,14 @@ Required proofs in this phase (before choosing a solution):
 explicitly marked not-reproducible-with-reason in your notes.
 
 ## PHASE 3 — Solution menu (ranked) and decision gate
+
+**Decision 2026-09-09 (owner): (a) in full now, recompute tool as the next
+PR** — i.e. (c) delivered in two steps. Writers are adapter + core
+(`triggers/report_core.go`, `report_handlers.go`, `report_store.go`): a
+status-transition guard plus an event-id claim (idempotency), one atomic
+multi-path update with server-value increments (concurrency), errors
+returned and `--retry` enabled on the three triggers. `completed` books the
+remaining principal (owner decision). Recorded in `functions/loans/MEMORY.md`.
 
 **(a) Fix-in-place** — keep the trigger-fan-in design; make it correct.
 Idempotency guard via `data.GetOldValue()` status comparison; `Ref.Transaction`
@@ -269,8 +287,9 @@ recompute tool is built once and reused.
 - `cd functions/loans && CGO_ENABLED=0 go test ./...` is green and includes
   core tests for all three report writers, among them a double-delivery test
   asserting totals unchanged on redelivery.
-- `scripts/race_demo` `-txn` mode (or the CI equivalent emulator test) exits
-  0; the racy mode is retired to documentation.
+- `functions/loans/cmd/race_demo` lands n/n in atomic mode and the
+  `go test -tags emulator ./test/triggers/` proofs pass (done 2026-09-09;
+  the skill-local `scripts/race_demo -txn` remains as the original demo).
 - `cd functions/loans/triggers && CGO_ENABLED=0 go vet ./...` prints nothing.
 - `grep -rn '%\$w' functions/loans/` returns nothing; `grep -n 'TODO(deibeeed)'
   functions/loans/triggers/loan_changes.go` returns nothing (D5/D6 resolved,
@@ -301,9 +320,10 @@ cd functions/loans && CGO_ENABLED=0 go test ./...                          # all
 cd functions/loans/triggers && CGO_ENABLED=0 go vet ./...                  # 2 warnings @2026-07-07
 
 # Defects still present?
-grep -n 'dataErrors =' functions/loans/triggers/loan_changes.go            # D3 (many hits)
-grep -n '%\$w' functions/loans/triggers/loan_changes.go                    # D7 (2 hits)
-grep -n 'TODO(deibeeed)' functions/loans/triggers/loan_changes.go          # D6 (1 hit)
+grep -n 'dataErrors =' functions/loans/triggers/loan_changes.go            # D3 (0 hits since 2026-09-09)
+grep -n '%\$w' functions/loans/triggers/loan_changes.go                    # D7 (0 hits since 2026-09-09)
+grep -n 'TODO(deibeeed)' functions/loans/triggers/loan_changes.go          # D6 (0 hits since 2026-09-09)
+grep -n 'ClaimEvent' functions/loans/triggers/report_handlers.go           # idempotency guard present (1+ hits)
 grep -n 'document.v1.written' .github/scripts/deploy_functions.sh          # D1 precondition (loanChanges + messageWritten)
 grep -n 'totalLoanPayment = (schedule' apps/loans/lib/services/loan_calculation_service.dart  # D9: 1 hit until finstack#116 lands
 
