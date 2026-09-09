@@ -4,6 +4,22 @@ Log of work done on the loans Cloud Functions (Go backend).
 
 ---
 
+## Report triggers rebuild — campaign Phase 2/3, option (a) in full (2026-09-09)
+
+Branch `fix/report-triggers-108` → develop. Spec: `docs/superpowers/specs/2026-09-09-report-triggers-rebuild.md`. Closes finstack#108 (D5) and the campaign's D1–D8.
+
+**Phase 3 decision (owner, 2026-09-09):** fix-in-place in full now; the recompute/backfill tool (Phase 4) is the next PR. Historical totals inflated by D1/D2 are NOT repaired by this change.
+
+**Design.** The three writers (`loanChanges`, `loanScheduleChanges`, `capitalCreated`) are adapter + core: `triggers/report_core.go` turns a parsed event into a `ReportPlan` (increments relative to `report_summary` + data items, pure, table-tested); `report_handlers.go` orchestrates transition check → product type → schedules → **claim event id** (transaction on `report_summary/applied_events/{eventId}`) → **one atomic multi-path `Update` with `{".sv": {"increment": δ}}`** → release the claim on failure; `report_store.go` is the RTDB adapter. The old `applyToNodeValue` / `addReportDataItem` / `getProductType` / `getPathEnv` helpers are gone.
+
+**Defects and outcomes.** D1: only status transitions count (`approved`/`bad_debt`/`completed` with `status != old`), redelivery caught by the claim. D2: server-value increments in one atomic update. D3: errors returned (and `errors.Join` where two occur); `--retry` enabled on the three triggers in `deploy_functions.sh`. D4/D7: rewritten. D5/D6: `completed` books the **remaining principal** `(amount + charges − deductions − upfront) − Σ principal − Σ extra` as collection, principal and returned capital, no interest (owner decision; the old Σ-of-schedules re-add double counted every payment). D8: `*firestoredata.DocumentEventData` / `*db.Client`; `go vet` clean. New: D13 (two items per event shared a key → second overwrote first; keys now suffixed), D14 (hard delete returned an error forever → nil), D15 (schedule query built `{env}_loan_schedules`, in production `_loan_schedules` → uses `GetCollectionPrefix()`).
+
+**Proofs (RTDB emulator, `firebase emulators:start --only database --project demo-finstack`, tests with `FIREBASE_DATABASE_EMULATOR_HOST='localhost:9000?ns=demo-finstack' go test -tags emulator ./test/triggers/ -run Emulator`):** atomic path 50/50 concurrent increments, racy Get/Set 2/50 (also `go run ./cmd/race_demo`); 1 of 10 concurrent claims wins; the same loan event delivered twice books one release. Unit: 74 report cases in `test/triggers/report_*_test.go` (double delivery, same-status no-op, claim released on failure, both errors surfaced, completed = 4200 for the reference loan, schedule/capital once).
+
+**Kept on purpose (not this PR's decision):** `payment_submitted` rows count as collections at creation; bad debt = `amount − Σ principal_payment`; a missing product-type node errors (and now retries). SDK note: the Go Admin SDK rejects `option.WithoutAuthentication()` with the emulator (it injects its own token) and needs the emulator variable as `host:port?ns=name` with an https placeholder `DatabaseURL`.
+
+---
+
 ## Server-side user provisioning — addUser + sendPasswordSetupLink (2026-06-19)
 
 Phase A of issue #69 (server-side user creation). Two new HTTP Cloud Functions following the adapter+core pattern.

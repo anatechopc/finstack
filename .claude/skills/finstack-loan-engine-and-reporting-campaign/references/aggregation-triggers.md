@@ -1,5 +1,18 @@
 # RTDB aggregation triggers — defect catalog (verified against source 2026-07-07)
 
+> **Status 2026-09-09:** D1–D8 FIXED on branch `fix/report-triggers-108`
+> (spec `docs/superpowers/specs/2026-09-09-report-triggers-rebuild.md`).
+> The three writers are adapter + core: `triggers/report_core.go` plans,
+> `report_store.go` applies one atomic multi-path update with server-value
+> increments after claiming the event id, `report_handlers.go` orchestrates.
+> Also fixed: **D13** two data items of one event shared a key (the second
+> overwrote the first); **D14** hard deletes on the `written` trigger
+> returned an error forever; **D15** the schedule query used
+> `{env}_loan_schedules`, which in production named a non-existent
+> collection (bad-debt/completed maths ran with zero schedules). The
+> line-number evidence below describes the code BEFORE that change; keep it
+> as the incident record.
+
 This is Phase 2 working material for the campaign in `../SKILL.md`. Every
 defect below was verified by reading the file at the stated line on
 2026-07-07 (branch `feature/chat-messaging`). Line numbers drift — re-grep
