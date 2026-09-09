@@ -63,7 +63,10 @@ func (p *ReportPlan) addToSummary(now time.Time, productType, field string, delt
 	p.add("sales/"+field, delta)
 }
 
-// timePaths returns the total_summary buckets for now, coarsest first.
+// timePaths returns the total_summary buckets for now, coarsest first. The
+// week is the ISO week, so the last days of December can sit in week 53 of
+// their own year and January 1 can be week 53 of the new year (historical
+// behaviour, kept).
 func timePaths(now time.Time) []string {
 	year, month, day := now.Date()
 	_, week := now.ISOWeek()
@@ -99,10 +102,31 @@ func dataItem(now time.Time, amount, interest, principal float64, productType, d
 }
 
 // ScheduleAmounts is what the loan-level branches need from one loan_schedule.
+// Status matters: the app persists planned rows too (the first schedule at
+// approval carries status approved and principal_payment = amount for
+// open-term loans), and only rows that are payments have collected anything.
 type ScheduleAmounts struct {
+	Status    string
 	Principal float64 // principal_payment
 	Extra     float64 // extra_payment
 	Interest  float64 // interest_payment
+}
+
+// collectedPrincipal sums the principal (and, when withExtra, the extra
+// payments) of the rows that are payments, in the same status set the
+// schedule trigger books as collections.
+func collectedPrincipal(schedules []ScheduleAmounts, withExtra bool) float64 {
+	var total float64
+	for _, s := range schedules {
+		if !isCollectionStatus(s.Status) {
+			continue
+		}
+		total += s.Principal
+		if withExtra {
+			total += s.Extra
+		}
+	}
+	return total
 }
 
 // LoanReportInput is the parsed loan write.
@@ -139,12 +163,9 @@ func PlanLoanReport(in LoanReportInput) (ReportPlan, string) {
 		p.appendItem(dataItem(in.Now, in.Amount, 0, 0, in.ProductType, "release", "", in.LoanId))
 
 	case "bad_debt":
-		// Bad debt is the principal never collected: amount minus principal paid.
-		var principalPaid float64
-		for _, s := range in.Schedules {
-			principalPaid += s.Principal
-		}
-		badDebt := in.Amount - principalPaid
+		// Bad debt is the principal never collected: amount minus principal
+		// paid, floored at zero (an overpaid loan is not a negative debt).
+		badDebt := max(in.Amount-collectedPrincipal(in.Schedules, false), 0)
 		for _, tp := range timePaths(in.Now) {
 			p.add("total_summary/"+tp+"/total_bad_debts", badDebt)
 		}
@@ -154,15 +175,12 @@ func PlanLoanReport(in LoanReportInput) (ReportPlan, string) {
 
 	case "completed":
 		// Early settlement books the remaining principal (owner decision
-		// 2026-09-09): released amount minus the principal the schedule rows
-		// already returned. Interest is not booked here; every paid row booked
-		// its own interest when it was created (loanScheduleChanges).
+		// 2026-09-09): released amount minus the principal the paid rows
+		// already returned, floored at zero. Interest is not booked here;
+		// every paid row booked its own interest when it was created
+		// (loanScheduleChanges).
 		loanAmount := in.Amount + in.AdditionalCharges - in.Deductions - in.UpfrontCollection
-		var principalPaid float64
-		for _, s := range in.Schedules {
-			principalPaid += s.Principal + s.Extra
-		}
-		remaining := loanAmount - principalPaid
+		remaining := max(loanAmount-collectedPrincipal(in.Schedules, true), 0)
 		p.add("capital_usage/total_capital", remaining)
 		p.appendItem(dataItem(in.Now, remaining, 0, 0, "", "refresh_capital", "", ""))
 		p.addToSummary(in.Now, in.ProductType, "total_collections", remaining)
@@ -173,8 +191,8 @@ func PlanLoanReport(in LoanReportInput) (ReportPlan, string) {
 	return p, ""
 }
 
-// isCollectionStatus reports whether a schedule created in this status books
-// a collection. A borrower submission counts before confirmation: kept as-is.
+// isCollectionStatus reports whether a schedule row in this status is a
+// payment. A borrower submission counts before confirmation: kept as-is.
 func isCollectionStatus(status string) bool {
 	switch status {
 	case "payment_submitted", "paid_on_time", "paid_late":

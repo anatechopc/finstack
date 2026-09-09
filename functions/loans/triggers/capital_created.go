@@ -30,22 +30,11 @@ func CapitalCreated(ctx context.Context, ev event.Event) error {
 	}
 	log.Debug(fmt.Sprintf("Function triggered by change to: %v", ev.Source()))
 
-	if data.GetValue() == nil {
-		return errors.New("no value for newly created doc")
-	}
-	fields := data.GetValue().GetFields()
-	name := data.GetValue().GetName()
-
-	capitalEvent := CapitalCreatedEvent{EventId: ev.ID()}
-	var ok bool
-	if capitalEvent.CompanyId, ok = stringField(fields, "provider_id"); !ok {
-		return fmt.Errorf("no provider_id for capital: %s", name)
-	}
-	if capitalEvent.CapitalId, ok = stringField(fields, "id"); !ok {
-		return fmt.Errorf("no id for capital: %s", name)
-	}
-	if capitalEvent.Amount, ok = numberField(fields, "amount"); !ok {
-		return fmt.Errorf("no amount for capital: %s", name)
+	capitalEvent, err := parseCapitalCreated(ev.ID(), &data)
+	if err != nil {
+		// A malformed document cannot be fixed by retrying: log and drop.
+		log.Error("skipping malformed capital event: " + err.Error())
+		return nil
 	}
 
 	app, err := utils.InitializeFirebase(ctx)
@@ -66,4 +55,26 @@ func CapitalCreated(ctx context.Context, ev event.Event) error {
 		log.Error("report: " + err.Error())
 	}
 	return err
+}
+
+// parseCapitalCreated extracts what the capital booking needs.
+func parseCapitalCreated(eventId string, data *firestoredata.DocumentEventData) (CapitalCreatedEvent, error) {
+	capitalEvent := CapitalCreatedEvent{EventId: eventId}
+	if data.GetValue() == nil {
+		return capitalEvent, errors.New("no value for newly created doc")
+	}
+	fields := data.GetValue().GetFields()
+	name := data.GetValue().GetName()
+
+	var ok bool
+	if capitalEvent.CompanyId, ok = stringField(fields, "provider_id"); !ok {
+		return capitalEvent, fmt.Errorf("no provider_id for capital: %s", name)
+	}
+	if capitalEvent.CapitalId, ok = stringField(fields, "id"); !ok {
+		return capitalEvent, fmt.Errorf("no id for capital: %s", name)
+	}
+	if capitalEvent.Amount, ok = numberField(fields, "amount"); !ok {
+		return capitalEvent, fmt.Errorf("no amount for capital: %s", name)
+	}
+	return capitalEvent, nil
 }

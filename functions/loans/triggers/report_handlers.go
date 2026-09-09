@@ -7,26 +7,70 @@ import (
 	"time"
 )
 
+// ClaimResult is the store's answer to "may this delivery apply the event?".
+type ClaimResult int
+
+const (
+	// ClaimWon: this delivery applies the event.
+	ClaimWon ClaimResult = iota
+	// ClaimApplied: the event was already applied; nothing to do.
+	ClaimApplied
+	// ClaimInProgress: another delivery holds a fresh lease; retry later.
+	ClaimInProgress
+)
+
+// ClaimRecord is what the store keeps per event under report_events/{id}.
+type ClaimRecord struct {
+	ClaimedAt int64 `json:"claimed_at"`
+	Applied   bool  `json:"applied"`
+	AppliedAt int64 `json:"applied_at,omitempty"`
+}
+
+// claimLease bounds how long a claim without an apply blocks a retry. It must
+// exceed the trigger's timeout so an in-flight delivery is never overtaken.
+const claimLease = 10 * time.Minute
+
+// DecideClaim is the one claim rule, shared by the RTDB transaction and the
+// test fake: nothing recorded → win; applied → done; a stale lease → win
+// again (the previous delivery died between claim and apply); otherwise
+// someone is applying it right now.
+func DecideClaim(current *ClaimRecord, now time.Time) (ClaimResult, ClaimRecord) {
+	if current == nil {
+		return ClaimWon, ClaimRecord{ClaimedAt: now.UnixMilli()}
+	}
+	if current.Applied {
+		return ClaimApplied, *current
+	}
+	if now.Sub(time.UnixMilli(current.ClaimedAt)) > claimLease {
+		return ClaimWon, ClaimRecord{ClaimedAt: now.UnixMilli()}
+	}
+	return ClaimInProgress, *current
+}
+
+// ErrReportInProgress is returned when another delivery of the same event
+// holds a fresh lease; returning it makes the platform retry later.
+var ErrReportInProgress = errors.New("report event is being applied by another delivery; retry later")
+
 // ReportStore is the Realtime Database side of the report writers.
 // NewRTDBReportStore is the production adapter; the tests use an in-memory one.
 type ReportStore interface {
-	// ClaimEvent records eventId under report_summary/applied_events and
-	// reports false when it was already recorded (a redelivered event).
-	ClaimEvent(ctx context.Context, basePath, eventId string) (bool, error)
-	// ReleaseEvent forgets a claim so a retry can re-apply the event.
-	ReleaseEvent(ctx context.Context, basePath, eventId string) error
+	// ClaimEvent records the delivery under report_events/{eventId} following
+	// DecideClaim, inside a transaction.
+	ClaimEvent(ctx context.Context, basePath, eventId string, now time.Time) (ClaimResult, error)
 	// ProductType reads {basePath}/loans/{loanId}:product_type.
 	ProductType(ctx context.Context, basePath, loanId string) (string, error)
-	// Apply performs the plan as one atomic write.
-	Apply(ctx context.Context, basePath string, plan ReportPlan) error
+	// Apply performs the plan AND marks the event applied in ONE atomic write,
+	// so a write that committed while the client saw an error is still
+	// recognised as applied by the retry.
+	Apply(ctx context.Context, basePath, eventId string, now time.Time, plan ReportPlan) error
 }
 
 // ReportDeps injects every side effect of the report handlers.
 type ReportDeps struct {
 	Store ReportStore
-	// LoadSchedules returns the amounts of every loan_schedule of a loan; the
-	// bad_debt and completed branches need them. May be nil for the schedule
-	// and capital handlers.
+	// LoadSchedules returns status and amounts of every loan_schedule of a
+	// loan; the bad_debt and completed branches need them. May be nil for the
+	// schedule and capital handlers.
 	LoadSchedules func(ctx context.Context, loanId string) ([]ScheduleAmounts, error)
 	Now           func() time.Time
 	LogInfo       func(format string, args ...any)
@@ -48,6 +92,8 @@ const (
 	ReportSkipped
 	// ReportAlreadyApplied: a redelivery of an event that was already written.
 	ReportAlreadyApplied
+	// ReportFailed: returned together with an error.
+	ReportFailed
 )
 
 // LoanChangeEvent is the parsed, storage-agnostic view of a loan write.
@@ -95,17 +141,17 @@ func HandleLoanChangeCore(ctx context.Context, pathEnv string, ev LoanChangeEven
 
 	productType, err := deps.Store.ProductType(ctx, base, ev.LoanId)
 	if err != nil {
-		return ReportSkipped, fmt.Errorf("cannot get product type for loan %s: %w", ev.LoanId, err)
+		return ReportFailed, fmt.Errorf("cannot get product type for loan %s: %w", ev.LoanId, err)
 	}
 
 	var schedules []ScheduleAmounts
 	if ev.Status == "bad_debt" || ev.Status == "completed" {
 		if deps.LoadSchedules == nil {
-			return ReportSkipped, fmt.Errorf("loan %s: status %q needs schedules but no loader is wired", ev.LoanId, ev.Status)
+			return ReportFailed, fmt.Errorf("loan %s: status %q needs schedules but no loader is wired", ev.LoanId, ev.Status)
 		}
 		schedules, err = deps.LoadSchedules(ctx, ev.LoanId)
 		if err != nil {
-			return ReportSkipped, fmt.Errorf("cannot get loan schedules for loan %s: %w", ev.LoanId, err)
+			return ReportFailed, fmt.Errorf("cannot get loan schedules for loan %s: %w", ev.LoanId, err)
 		}
 	}
 
@@ -133,7 +179,7 @@ func HandleScheduleCreatedCore(ctx context.Context, pathEnv string, ev ScheduleC
 	base := companyBasePath(pathEnv, ev.CompanyId)
 	productType, err := deps.Store.ProductType(ctx, base, ev.LoanId)
 	if err != nil {
-		return ReportSkipped, fmt.Errorf("cannot get product type for loan %s: %w", ev.LoanId, err)
+		return ReportFailed, fmt.Errorf("cannot get product type for loan %s: %w", ev.LoanId, err)
 	}
 	plan, _ := PlanScheduleReport(ScheduleReportInput{
 		Status: ev.Status, Interest: ev.Interest, Principal: ev.Principal,
@@ -149,24 +195,26 @@ func HandleCapitalCreatedCore(ctx context.Context, pathEnv string, ev CapitalCre
 	return applyReport(ctx, deps, base, ev.EventId, plan)
 }
 
-// applyReport claims the event, applies the plan atomically and releases the
-// claim if the apply failed so a retry can redo it. A redelivered event that
-// was already claimed is a no-op (campaign D1 / the idempotency proof).
+// applyReport claims the event and applies the plan together with the
+// event's applied marker in one atomic write. The claim is never released:
+// if the write committed while the client saw an error, the marker went with
+// it and the retry is a no-op; if it did not commit, the lease expires and
+// the retry re-applies. Either way an event is never counted twice.
 func applyReport(ctx context.Context, deps ReportDeps, basePath, eventId string, plan ReportPlan) (ReportOutcome, error) {
-	claimed, err := deps.Store.ClaimEvent(ctx, basePath, eventId)
+	now := deps.Now().UTC()
+	result, err := deps.Store.ClaimEvent(ctx, basePath, eventId, now)
 	if err != nil {
-		return ReportSkipped, fmt.Errorf("cannot claim event %s: %w", eventId, err)
+		return ReportFailed, fmt.Errorf("cannot claim event %s: %w", eventId, err)
 	}
-	if !claimed {
+	switch result {
+	case ClaimApplied:
 		deps.info("event %s already applied to %s, skipping", eventId, basePath)
 		return ReportAlreadyApplied, nil
+	case ClaimInProgress:
+		return ReportFailed, fmt.Errorf("event %s on %s: %w", eventId, basePath, ErrReportInProgress)
 	}
-	if err := deps.Store.Apply(ctx, basePath, plan); err != nil {
-		applyErr := fmt.Errorf("cannot apply report for event %s: %w", eventId, err)
-		if relErr := deps.Store.ReleaseEvent(ctx, basePath, eventId); relErr != nil {
-			return ReportSkipped, errors.Join(applyErr, fmt.Errorf("cannot release claim for event %s: %w", eventId, relErr))
-		}
-		return ReportSkipped, applyErr
+	if err := deps.Store.Apply(ctx, basePath, eventId, now, plan); err != nil {
+		return ReportFailed, fmt.Errorf("cannot apply report for event %s: %w", eventId, err)
 	}
 	return ReportApplied, nil
 }

@@ -34,7 +34,9 @@ func LoanChanges(ctx context.Context, ev event.Event) error {
 
 	loanEvent, err := parseLoanChange(ev.ID(), &data)
 	if err != nil {
-		return err
+		// A malformed document cannot be fixed by retrying: log and drop.
+		log.Error("skipping malformed loan event: " + err.Error())
+		return nil
 	}
 	if loanEvent.IsDelete {
 		// A hard delete: nothing to report or notify, and an error would only
@@ -148,7 +150,9 @@ func firestoreScheduleLoader(client *firestore.Client, collectionPrefix string) 
 		schedules := make([]ScheduleAmounts, 0, len(docs))
 		for _, doc := range docs {
 			fields := doc.Data()
+			status, _ := fields["status"].(string)
 			schedules = append(schedules, ScheduleAmounts{
+				Status:    status,
 				Principal: numberOf(fields["principal_payment"]),
 				Extra:     numberOf(fields["extra_payment"]),
 				Interest:  numberOf(fields["interest_payment"]),

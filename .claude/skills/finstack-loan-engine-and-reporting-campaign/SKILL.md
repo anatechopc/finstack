@@ -168,10 +168,12 @@ directions) is **`references/aggregation-triggers.md`**. Headlines:
 
 Required proofs in this phase (before choosing a solution):
 
-1. **Race proof (D2):** run `scripts/race_demo/` against the RTDB emulator —
-   exact commands in the reference. Verified run 2026-07-07: racy mode
-   landed 2/50 increments; transaction mode 50/50. The tool refuses to run
-   without `FIREBASE_DATABASE_EMULATOR_HOST` set (never-touch-prod).
+1. **Race proof (D2):** run `functions/loans/cmd/race_demo` (shipped path:
+   server-value increments) or the skill-local `scripts/race_demo/`
+   (transaction variant) against the RTDB emulator — exact commands in the
+   reference. Verified 2026-07-07 and 2026-09-09: racy mode landed 2/50
+   increments; the fixed path 50/50. Both refuse to run without
+   `FIREBASE_DATABASE_EMULATOR_HOST` set (never-touch-prod).
 2. **Idempotency demonstration (D1):** deliver the same `approved` loan
    event twice through the extracted core (or emulator) and show
    `total_amount_released` doubles. This becomes the regression test.
@@ -285,8 +287,9 @@ recompute tool is built once and reused.
 - `cd functions/loans && CGO_ENABLED=0 go test ./...` is green and includes
   core tests for all three report writers, among them a double-delivery test
   asserting totals unchanged on redelivery.
-- `scripts/race_demo` `-txn` mode (or the CI equivalent emulator test) exits
-  0; the racy mode is retired to documentation.
+- `functions/loans/cmd/race_demo` lands n/n in atomic mode and the
+  `go test -tags emulator ./test/triggers/` proofs pass (done 2026-09-09;
+  the skill-local `scripts/race_demo -txn` remains as the original demo).
 - `cd functions/loans/triggers && CGO_ENABLED=0 go vet ./...` prints nothing.
 - `grep -rn '%\$w' functions/loans/` returns nothing; `grep -n 'TODO(deibeeed)'
   functions/loans/triggers/loan_changes.go` returns nothing (D5/D6 resolved,

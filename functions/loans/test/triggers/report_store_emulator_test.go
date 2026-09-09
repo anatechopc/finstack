@@ -3,7 +3,7 @@
 // Emulator-backed proofs for the report writers (campaign Phase 2):
 //
 //	cd apps/loans && firebase emulators:start --only database --project demo-finstack
-//	cd functions/loans && FIREBASE_DATABASE_EMULATOR_HOST=localhost:9000?ns=demo-finstack \
+//	cd functions/loans && FIREBASE_DATABASE_EMULATOR_HOST='localhost:9000?ns=demo-finstack' \
 //	  CGO_ENABLED=0 go test -tags emulator ./test/triggers/ -run Emulator -v
 //
 // They refuse to run without the emulator variable (never-touch-prod).
@@ -25,12 +25,11 @@ import (
 
 func emulatorClient(t *testing.T) *db.Client {
 	t.Helper()
-	host := os.Getenv("FIREBASE_DATABASE_EMULATOR_HOST")
-	if host == "" {
-		t.Skip("set FIREBASE_DATABASE_EMULATOR_HOST=localhost:9000?ns=demo-finstack to run the emulator proofs")
+	if os.Getenv("FIREBASE_DATABASE_EMULATOR_HOST") == "" {
+		t.Skip("set FIREBASE_DATABASE_EMULATOR_HOST='localhost:9000?ns=demo-finstack' to run the emulator proofs")
 	}
 	// With the emulator variable set the SDK ignores this URL's host and talks
-	// to the emulator (the variable itself must be host:port?ns=name).
+	// to the emulator with its own emulator token (no auth option needed).
 	app, err := firebase.NewApp(context.Background(), &firebase.Config{DatabaseURL: "https://demo-finstack.firebaseio.com"})
 	if err != nil {
 		t.Fatalf("firebase app: %v", err)
@@ -57,27 +56,32 @@ func readTotal(t *testing.T, client *db.Client, path string) float64 {
 	return total
 }
 
-// Concurrency proof (D2): 50 concurrent applies through the atomic path all land.
-func TestEmulator_Apply_ConcurrentIncrements_LoseNothing(t *testing.T) {
+// Concurrency proof (D2): 50 concurrent applies of the full six-node release
+// plan (plus its data item) through the atomic multi-path path all land.
+func TestEmulator_Apply_ConcurrentMultiPathIncrements_LoseNothing(t *testing.T) {
 	client := emulatorClient(t)
 	store := triggers.NewRTDBReportStore(client)
 	base := isolatedEnv(t) + "/companies/C1"
-	plan := triggers.ReportPlan{Increments: map[string]float64{"sales/total_amount_released": 1}}
+	plan, _ := triggers.PlanLoanReport(triggers.LoanReportInput{
+		Status: "approved", OldStatus: "pending", Amount: 1, ProductType: "business", LoanId: "L1", Now: testNow,
+	})
 
 	var wg sync.WaitGroup
-	for range 50 {
+	for i := range 50 {
 		wg.Add(1)
-		go func() {
+		go func(i int) {
 			defer wg.Done()
-			if err := store.Apply(context.Background(), base, plan); err != nil {
+			if err := store.Apply(context.Background(), base, fmt.Sprintf("e%d", i), testNow, plan); err != nil {
 				t.Errorf("apply: %v", err)
 			}
-		}()
+		}(i)
 	}
 	wg.Wait()
 
-	if got := readTotal(t, client, base+"/report_summary/sales/total_amount_released"); got != 50 {
-		t.Fatalf("atomic increments: got %v, want 50", got)
+	for _, path := range summaryPaths("total_amount_released", "business") {
+		if got := readTotal(t, client, base+"/report_summary/"+path); got != 50 {
+			t.Errorf("%s: got %v, want 50", path, got)
+		}
 	}
 }
 
@@ -111,8 +115,8 @@ func TestEmulator_RacyGetSet_LosesUpdates(t *testing.T) {
 	}
 }
 
-// Idempotency proof (D1): only one of several concurrent claims wins, and a
-// released claim can be taken again.
+// Idempotency proof (D1): only one of several concurrent claims wins; the
+// others see a fresh lease; after the apply the marker says applied.
 func TestEmulator_ClaimEvent_OnlyOneDeliveryWins(t *testing.T) {
 	client := emulatorClient(t)
 	store := triggers.NewRTDBReportStore(client)
@@ -120,34 +124,37 @@ func TestEmulator_ClaimEvent_OnlyOneDeliveryWins(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	wins := 0
+	wins, inProgress := 0, 0
 	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			claimed, err := store.ClaimEvent(context.Background(), base, "e1")
+			result, err := store.ClaimEvent(context.Background(), base, "e1", testNow)
 			if err != nil {
 				t.Errorf("claim: %v", err)
 				return
 			}
-			if claimed {
-				mu.Lock()
+			mu.Lock()
+			defer mu.Unlock()
+			switch result {
+			case triggers.ClaimWon:
 				wins++
-				mu.Unlock()
+			case triggers.ClaimInProgress:
+				inProgress++
 			}
 		}()
 	}
 	wg.Wait()
-	if wins != 1 {
-		t.Fatalf("claims won: got %d, want exactly 1", wins)
+	if wins != 1 || inProgress != 9 {
+		t.Fatalf("claims: %d won, %d in progress; want 1 and 9", wins, inProgress)
 	}
 
-	if err := store.ReleaseEvent(context.Background(), base, "e1"); err != nil {
-		t.Fatalf("release: %v", err)
+	if err := store.Apply(context.Background(), base, "e1", testNow, triggers.ReportPlan{}); err != nil {
+		t.Fatalf("apply: %v", err)
 	}
-	claimed, err := store.ClaimEvent(context.Background(), base, "e1")
-	if err != nil || !claimed {
-		t.Fatalf("after release the claim must be available again: claimed=%v err=%v", claimed, err)
+	result, err := store.ClaimEvent(context.Background(), base, "e1", testNow.Add(time.Hour))
+	if err != nil || result != triggers.ClaimApplied {
+		t.Fatalf("after apply the claim must report applied: %v err=%v", result, err)
 	}
 }
 
@@ -188,5 +195,12 @@ func TestEmulator_HandleLoanChange_DoubleDelivery_BooksOnce(t *testing.T) {
 	var item map[string]any
 	if err := client.NewRef(base+"data/"+itemKey).Get(context.Background(), &item); err != nil || item["data_type"] != "release" {
 		t.Fatalf("data item: %v err=%v", item, err)
+	}
+	var summary map[string]any
+	if err := client.NewRef(env+"/companies/C1/report_summary").Get(context.Background(), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if _, leaked := summary["applied_events"]; leaked {
+		t.Fatalf("claims must not live inside report_summary (the client streams it)")
 	}
 }

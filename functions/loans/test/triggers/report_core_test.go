@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"com.loooans.app/triggers"
 )
@@ -56,6 +57,17 @@ func expectItem(t *testing.T, item triggers.ReportDataItem, want map[string]any)
 			t.Errorf("item %s: field %s got %v (%T), want %v (%T)", item.Key, field, item.Item[field], item.Item[field], value, value)
 		}
 	}
+}
+
+// referenceSchedules is what Firestore holds for the spec's reference loan:
+// the planned first row the app persists at approval (status approved,
+// principal_payment = amount for an open-term loan), two payments, and an
+// unpaid planned row. Only the two payments have collected anything.
+var referenceSchedules = []triggers.ScheduleAmounts{
+	{Status: "approved", Principal: 10000},
+	{Status: "paid_on_time", Principal: 3000, Extra: 1000, Interest: 500},
+	{Status: "paid_late", Principal: 2000, Interest: 400},
+	{Status: "not_paid", Principal: 2500, Interest: 300},
 }
 
 func TestPlanLoanReport_Approved_ReleasesAmountAcrossSixNodesAndOneItem(t *testing.T) {
@@ -114,16 +126,13 @@ func TestPlanLoanReport_OnlyStatusTransitionsCount(t *testing.T) {
 	}
 }
 
-func TestPlanLoanReport_BadDebt_IsAmountMinusPrincipalPaid(t *testing.T) {
-	// 10000 released; principal paid 3000 + 2000 -> bad debt 5000.
-	// Extra and interest payments do not reduce it (kept as-is).
+func TestPlanLoanReport_BadDebt_IsAmountMinusPrincipalOfPaidRows(t *testing.T) {
+	// 10000 released; principal of the PAID rows 3000 + 2000 -> bad debt 5000.
+	// The planned rows (approved first row, unpaid row), extra and interest
+	// payments do not reduce it.
 	plan, skip := triggers.PlanLoanReport(triggers.LoanReportInput{
 		Status: "bad_debt", OldStatus: "approved", Amount: 10000,
-		ProductType: "business", LoanId: "L1", Now: testNow,
-		Schedules: []triggers.ScheduleAmounts{
-			{Principal: 3000, Extra: 500, Interest: 400},
-			{Principal: 2000, Interest: 300},
-		},
+		ProductType: "business", LoanId: "L1", Now: testNow, Schedules: referenceSchedules,
 	})
 	if skip != "" {
 		t.Fatalf("skipped: %s", skip)
@@ -143,20 +152,17 @@ func TestPlanLoanReport_BadDebt_IsAmountMinusPrincipalPaid(t *testing.T) {
 	expectItem(t, plan.Items[0], map[string]any{"data_type": "bad_debt", "amount": 5000.0, "loan_id": "L1"})
 }
 
-func TestPlanLoanReport_Completed_BooksRemainingPrincipal(t *testing.T) {
+func TestPlanLoanReport_Completed_BooksRemainingPrincipalOfPaidRows(t *testing.T) {
 	// released  = 10000 + 500 charges - 200 deductions - 100 upfront = 10200
-	// returned  = 3000 principal + 1000 extra + 2000 principal        = 6000
+	// returned  = paid rows only: 3000 + 1000 extra + 2000            = 6000
 	// remaining = 4200 (owner decision 2026-09-09)
-	// Before: charges subtracted twice (D5) and interest subtracted from
-	// principal (D6): (10200 - 500) - (6000 + 900) = 2800.
+	// Summing every row would count the planned first row (10000) and the
+	// unpaid row (2500) and book -8300. Before this PR: charges subtracted
+	// twice (D5) and interest subtracted from principal (D6).
 	plan, skip := triggers.PlanLoanReport(triggers.LoanReportInput{
 		Status: "completed", OldStatus: "approved",
 		Amount: 10000, AdditionalCharges: 500, Deductions: 200, UpfrontCollection: 100,
-		ProductType: "business", LoanId: "L1", Now: testNow,
-		Schedules: []triggers.ScheduleAmounts{
-			{Principal: 3000, Extra: 1000, Interest: 500},
-			{Principal: 2000, Interest: 400},
-		},
+		ProductType: "business", LoanId: "L1", Now: testNow, Schedules: referenceSchedules,
 	})
 	if skip != "" {
 		t.Fatalf("skipped: %s", skip)
@@ -187,6 +193,40 @@ func TestPlanLoanReport_Completed_BooksRemainingPrincipal(t *testing.T) {
 	})
 	if refresh.Key != itemKey || collection.Key != itemKey+":2" {
 		t.Errorf("keys must be unique within the plan: %q, %q", refresh.Key, collection.Key)
+	}
+}
+
+func TestPlanLoanReport_Completed_WithoutPaidRowsBooksTheWholeRelease(t *testing.T) {
+	// Settled before any payment: remaining = released = 10200.
+	plan, _ := triggers.PlanLoanReport(triggers.LoanReportInput{
+		Status: "completed", OldStatus: "approved",
+		Amount: 10000, AdditionalCharges: 500, Deductions: 200, UpfrontCollection: 100,
+		ProductType: "business", LoanId: "L1", Now: testNow,
+		Schedules: []triggers.ScheduleAmounts{{Status: "approved", Principal: 10000}},
+	})
+	if got := plan.Increments["sales/total_collections"]; got != 10200 {
+		t.Errorf("collections: got %v, want 10200", got)
+	}
+}
+
+func TestPlanLoanReport_OverpaidPrincipalFloorsAtZero(t *testing.T) {
+	// Paid rows returned more than was released (extra payments): the
+	// settlement and the bad debt book 0, never a negative amount.
+	overpaid := []triggers.ScheduleAmounts{{Status: "paid_on_time", Principal: 9000, Extra: 3000}}
+	completed, _ := triggers.PlanLoanReport(triggers.LoanReportInput{
+		Status: "completed", OldStatus: "approved", Amount: 10000,
+		ProductType: "business", LoanId: "L1", Now: testNow, Schedules: overpaid,
+	})
+	if got := completed.Increments["sales/total_collections"]; got != 0 {
+		t.Errorf("completed collections: got %v, want 0", got)
+	}
+	badDebt, _ := triggers.PlanLoanReport(triggers.LoanReportInput{
+		Status: "bad_debt", OldStatus: "approved", Amount: 10000,
+		ProductType: "business", LoanId: "L1", Now: testNow,
+		Schedules: []triggers.ScheduleAmounts{{Status: "paid_on_time", Principal: 12000}},
+	})
+	if got := badDebt.Increments["capital_usage/total_bad_debts"]; got != 0 {
+		t.Errorf("bad debt: got %v, want 0", got)
 	}
 }
 
@@ -224,7 +264,7 @@ func TestPlanScheduleReport_PaidRowBooksCollectionInterestPrincipalAndCapital(t 
 func TestPlanScheduleReport_OnlyPaidOrSubmittedRowsCount(t *testing.T) {
 	for status, counted := range map[string]bool{
 		"payment_submitted": true, "paid_on_time": true, "paid_late": true,
-		"not_paid": false, "not_paid_overdue": false, "pending": false,
+		"not_paid": false, "not_paid_overdue": false, "pending": false, "approved": false,
 	} {
 		plan, skip := triggers.PlanScheduleReport(triggers.ScheduleReportInput{Status: status, Principal: 1, ProductType: "p", Now: testNow})
 		if got := skip == ""; got != counted {
@@ -244,4 +284,22 @@ func TestPlanCapitalReport_AddsCapitalAndItem(t *testing.T) {
 		t.Fatalf("items: got %d, want 1", len(plan.Items))
 	}
 	expectItem(t, plan.Items[0], map[string]any{"data_type": "add_capital", "amount": 50000.0, "capital_id": "C1", "loan_id": ""})
+}
+
+func TestTimeBuckets_UseTheISOWeekAcrossTheYearBoundary(t *testing.T) {
+	// Historical behaviour, pinned: the ISO week is combined with the calendar
+	// year and month, so Dec 31 2026 sits in week 53 of 2026 and Jan 1 2027 in
+	// week 53 of 2027 (derived by hand: 2026-12-31 is a Thursday of ISO week 53).
+	cases := map[time.Time]string{
+		time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC): "total_summary/year:2026:month:12:week:53:day:31/total_amount_released",
+		time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC):   "total_summary/year:2027:month:1:week:53:day:1/total_amount_released",
+	}
+	for now, path := range cases {
+		loanPlan, _ := triggers.PlanLoanReport(triggers.LoanReportInput{
+			Status: "approved", OldStatus: "pending", Amount: 1, ProductType: "p", Now: now,
+		})
+		if _, ok := loanPlan.Increments[path]; !ok {
+			t.Errorf("%s: missing bucket %s in %v", now.Format("2006-01-02"), path, sortedKeys(loanPlan.Increments))
+		}
+	}
 }

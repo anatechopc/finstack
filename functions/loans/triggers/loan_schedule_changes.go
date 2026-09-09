@@ -31,28 +31,11 @@ func LoanScheduleChanges(ctx context.Context, ev event.Event) error {
 	}
 	log.Debug(fmt.Sprintf("Function triggered by change to: %v", ev.Source()))
 
-	if data.GetValue() == nil {
-		return errors.New("no value for newly created doc")
-	}
-	fields := data.GetValue().GetFields()
-	name := data.GetValue().GetName()
-
-	scheduleEvent := ScheduleCreatedEvent{EventId: ev.ID()}
-	var ok bool
-	if scheduleEvent.CompanyId, ok = stringField(fields, "company_id"); !ok {
-		return fmt.Errorf("no company_id for loan schedule: %s", name)
-	}
-	if scheduleEvent.Status, ok = stringField(fields, "status"); !ok {
-		return fmt.Errorf("no status for loan schedule: %s", name)
-	}
-	if scheduleEvent.LoanId, ok = stringField(fields, "loan_id"); !ok {
-		return fmt.Errorf("no loan_id for loan schedule: %s", name)
-	}
-	if scheduleEvent.Interest, ok = numberField(fields, "interest_payment"); !ok {
-		return fmt.Errorf("no interest_payment for loan schedule: %s", name)
-	}
-	if scheduleEvent.Principal, ok = numberField(fields, "principal_payment"); !ok {
-		return fmt.Errorf("no principal_payment for loan schedule: %s", name)
+	scheduleEvent, err := parseScheduleCreated(ev.ID(), &data)
+	if err != nil {
+		// A malformed document cannot be fixed by retrying: log and drop.
+		log.Error("skipping malformed loan schedule event: " + err.Error())
+		return nil
 	}
 
 	if !isCollectionStatus(scheduleEvent.Status) {
@@ -78,4 +61,32 @@ func LoanScheduleChanges(ctx context.Context, ev event.Event) error {
 		log.Error("report: " + err.Error())
 	}
 	return err
+}
+
+// parseScheduleCreated extracts what the collection booking needs.
+func parseScheduleCreated(eventId string, data *firestoredata.DocumentEventData) (ScheduleCreatedEvent, error) {
+	scheduleEvent := ScheduleCreatedEvent{EventId: eventId}
+	if data.GetValue() == nil {
+		return scheduleEvent, errors.New("no value for newly created doc")
+	}
+	fields := data.GetValue().GetFields()
+	name := data.GetValue().GetName()
+
+	var ok bool
+	if scheduleEvent.CompanyId, ok = stringField(fields, "company_id"); !ok {
+		return scheduleEvent, fmt.Errorf("no company_id for loan schedule: %s", name)
+	}
+	if scheduleEvent.Status, ok = stringField(fields, "status"); !ok {
+		return scheduleEvent, fmt.Errorf("no status for loan schedule: %s", name)
+	}
+	if scheduleEvent.LoanId, ok = stringField(fields, "loan_id"); !ok {
+		return scheduleEvent, fmt.Errorf("no loan_id for loan schedule: %s", name)
+	}
+	if scheduleEvent.Interest, ok = numberField(fields, "interest_payment"); !ok {
+		return scheduleEvent, fmt.Errorf("no interest_payment for loan schedule: %s", name)
+	}
+	if scheduleEvent.Principal, ok = numberField(fields, "principal_payment"); !ok {
+		return scheduleEvent, fmt.Errorf("no principal_payment for loan schedule: %s", name)
+	}
+	return scheduleEvent, nil
 }

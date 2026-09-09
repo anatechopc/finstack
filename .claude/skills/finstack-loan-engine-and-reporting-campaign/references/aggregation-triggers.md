@@ -80,8 +80,13 @@ three writers.
   nodes.
 - Fix direction: `db.Ref.Transaction` (verified available in
   `firebase.google.com/go/v4 v4.13.0`, the version in `triggers/go.mod`).
-- Proof: `scripts/race_demo/` — see "Discriminating experiment" below. Run
-  2026-07-07: racy mode landed 2/50 increments (48 lost); txn mode 50/50.
+- Proof: `scripts/race_demo/` (skill-local, transaction variant) — see
+  "Discriminating experiment" below. Run 2026-07-07: racy 2/50, txn 50/50.
+  Shipped fix (2026-09-09): server-value increments in one multi-path
+  update, proven by `functions/loans/cmd/race_demo` (racy 2/50, atomic
+  50/50) and `functions/loans/test/triggers/report_store_emulator_test.go`
+  (the six-node release plan under 50 concurrent writers: 50/50 on every
+  node).
 
 ### D3 — Swallowed errors: `dataErrors` reassigned, not accumulated
 - Every branch does `dataErrors = applyToNodeValue(...)` repeatedly
@@ -212,6 +217,14 @@ three writers.
   fake conventions in `functions/loans/test/fakes/fakes.go`).
 
 ## Discriminating experiment for D2 (race proof)
+
+> 2026-09-09: the shipped implementation uses server-value increments, not
+> `Ref.Transaction`. The proof for the shipped path is
+> `cd functions/loans && FIREBASE_DATABASE_EMULATOR_HOST='localhost:9000?ns=demo-finstack' go run ./cmd/race_demo -n 50`
+> (both modes in one run; `apps/loans/firebase.json` already configures the
+> emulator on port 9000, start it with
+> `cd apps/loans && firebase emulators:start --only database --project demo-finstack`).
+> The block below is the original transaction demo, kept as the record.
 
 Run `scripts/race_demo/` (it refuses to start unless
 `FIREBASE_DATABASE_EMULATOR_HOST` is set — emulator only, honoring the
