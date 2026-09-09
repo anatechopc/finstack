@@ -42,7 +42,7 @@ Make the three RTDB report writers (`loanChanges`, `loanScheduleChanges`, `capit
 
 Semantics deliberately **kept** (not this PR's decision): `payment_submitted` rows count as collections at creation (before confirmation), and the same set of statuses counts as returned principal at settlement / bad debt; bad debt = `amount − Σ principal_payment` of paid rows, floored at zero (as is the settlement remainder: an overpaid loan is not a negative amount); the product-type node must exist or the event errors and is retried.
 
-Small changes beyond the catalogue, listed so they are deliberate: whole-number `principal_payment` values stored as integers (the web app writes those) now count toward bad debt, where the old code only read doubles; non-report status transitions (`pending`, `declined`) are not claimed, so a platform redelivery of one of those can send its notifications twice (pre-existing at-least-once behaviour; `--retry` does not add to it because notification failures are logged, not returned).
+Small changes beyond the catalogue, listed so they are deliberate: whole-number `principal_payment` values stored as integers (the web app writes those) now count toward bad debt, where the old code only read doubles; non-report status transitions (`pending`, `declined`) are not claimed, so a platform redelivery of one of those can send its notifications twice (pre-existing at-least-once behaviour; notification failures are logged, not returned, so `--retry` only adds the case of a delivery that timed out mid-way); bad debt counts `principal_payment` only while settlement also counts `extra_payment` as returned principal (kept: bad debt keeps its historical definition).
 
 ### 3.3 Idempotency and failure windows
 

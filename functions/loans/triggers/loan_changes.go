@@ -2,6 +2,7 @@ package triggers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -65,8 +66,13 @@ func LoanChanges(ctx context.Context, ev event.Event) error {
 		LogInfo:       func(format string, args ...any) { log.Info(fmt.Sprintf(format, args...)) },
 	})
 	if reportErr != nil {
-		// Returned so the event is retried; the claim was released.
-		log.Error("report: " + reportErr.Error())
+		// Returned so the event is retried. A duplicate delivery racing the
+		// winner is expected, not a fault.
+		if errors.Is(reportErr, ErrReportInProgress) {
+			log.Warn("report: " + reportErr.Error())
+		} else {
+			log.Error("report: " + reportErr.Error())
+		}
 		return reportErr
 	}
 	if outcome == ReportAlreadyApplied {

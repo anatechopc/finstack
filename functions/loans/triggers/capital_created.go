@@ -51,7 +51,9 @@ func CapitalCreated(ctx context.Context, ev event.Event) error {
 		Now:     time.Now,
 		LogInfo: func(format string, args ...any) { log.Info(fmt.Sprintf(format, args...)) },
 	})
-	if err != nil {
+	if errors.Is(err, ErrReportInProgress) {
+		log.Warn("report: " + err.Error())
+	} else if err != nil {
 		log.Error("report: " + err.Error())
 	}
 	return err

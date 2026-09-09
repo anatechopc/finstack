@@ -200,7 +200,13 @@ func TestEmulator_HandleLoanChange_DoubleDelivery_BooksOnce(t *testing.T) {
 	if err := client.NewRef(env+"/companies/C1/report_summary").Get(context.Background(), &summary); err != nil {
 		t.Fatal(err)
 	}
-	if _, leaked := summary["applied_events"]; leaked {
-		t.Fatalf("claims must not live inside report_summary (the client streams it)")
+	// The client streams report_summary in full: only the reporting nodes may
+	// live there, never claims or any future bookkeeping.
+	for child := range summary {
+		switch child {
+		case "sales", "products", "total_summary", "capital_usage", "data":
+		default:
+			t.Fatalf("unexpected child %q under report_summary", child)
+		}
 	}
 }
