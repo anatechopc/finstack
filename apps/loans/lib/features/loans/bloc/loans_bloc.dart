@@ -460,8 +460,15 @@ class LoansBloc extends Bloc<LoansEvent, LoansState> {
         period /= 2;
       }
 
-      final (:totalAmount, :totalUpfrontCollection) =
-          ChargeCalculator.applyChargesAndDeductions(
+      // One calculation feeds the quotation AND the stored loan: every
+      // percentage is of the principal (golden scenario G8), never of the
+      // running total (finstack#107).
+      final (
+        :totalAmount,
+        :totalUpfrontCollection,
+        :totalAdditionalCharges,
+        :totalDeductions,
+      ) = ChargeCalculator.applyChargesAndDeductionsDetailed(
         baseAmount: amount,
         charges: additionalCharges,
         deductions: deductions,
@@ -520,33 +527,8 @@ class LoansBloc extends Bloc<LoansEvent, LoansState> {
           companyId: product.providerId,
           productId: product.id,
           amount: amount,
-          additionalCharges: additionalCharges.fold(0, (prev, charge) {
-            var totalAdditionalCharge = prev;
-
-            if (charge.isUpfrontCollection) {
-              return totalAdditionalCharge;
-            }
-
-            if (charge.isPercentage) {
-              final amount = charge.amount / 100;
-              totalAdditionalCharge += amount * totalAmount;
-            } else {
-              totalAdditionalCharge += charge.amount;
-            }
-
-            return totalAdditionalCharge;
-          }),
-          deductions: deductions.fold(0, (prev, charge) {
-            var totalDeductions = prev;
-            if (charge.isPercentage) {
-              final amount = charge.amount / 100;
-              totalDeductions += amount * totalAmount;
-            } else {
-              totalDeductions += charge.amount;
-            }
-
-            return totalDeductions;
-          }),
+          additionalCharges: totalAdditionalCharges,
+          deductions: totalDeductions,
           period: period.toInt(),
           requirements: [],
           isForceCollect: product.forceCollect,
