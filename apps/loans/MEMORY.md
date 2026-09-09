@@ -4,6 +4,10 @@ Log of refactoring and bug fix work done across multiple sessions.
 
 ---
 
+## Percentage charges stored against the principal (finstack#107, 2026-09-09)
+
+Branch `feat/charges-base-107` → develop. `LoansBloc._handleAddLoanEvent` persisted `additional_charges` / `deductions` through two ad-hoc folds that multiplied percentage charges by the running charge-adjusted `totalAmount`, while the quotation used `ChargeCalculator` with the principal as base (G8). The handler now takes both figures from `ChargeCalculator.applyChargesAndDeductionsDetailed(baseAmount: amount, …)`, the same call that feeds the quotation, so there is one computation and no second implementation to test. Evidence: G8 (`test/services/charge_calculator_test.dart`) + suite green. No bloc-level test in this PR: `LoansBloc` takes a `BuildContext` and has no `withDependencies` seam, so a regression test needs a widget harness with nine mocked repositories (feasible, ~60 lines; add it or the seam the next time the bloc is touched). Pre-existing loans keep their stored values (no backfill). The independent review re-derived G8: old stored charges/deductions 675/155 vs new 650/150, and confirmed every downstream reader (settlement, SOA, reports, the Go completed branch) only becomes more consistent.
+
 ## Loan-engine golden suite — campaign Phase 1 / Gate 1 (finstack#112, 2026-09-08)
 
 Branch `feat/golden-suite-112` (off `develop`). `fvm flutter test test/services/` is now the Gate 1 oracle: 29 tests, 24 of them golden scenarios (G1–G10, the clock-seam G4c/G5d, three G7 cases) in four files (`loan_calculation_service_test.dart` G1–G3, `loan_calculation_open_term_test.dart` G4–G6 + G9/G10, `loan_calculation_settlement_test.dart` G7, `charge_calculator_test.dart` G8). Every expected number was derived by hand first; the derivations are comments at the top of each file.
