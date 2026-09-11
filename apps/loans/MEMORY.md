@@ -766,6 +766,11 @@ Branch `feat/penalties-72-definitions` → `develop`. Design: `docs/superpowers/
 - Two loan-math bugs found on the way are NOT in this branch (campaign gate): finstack#107 (stored percentage charges use the running total; `loans_bloc.dart` `Loan.create` folds vs `ChargeCalculator` base) and finstack#108 (campaign D5 in `loan_changes.go`).
 - `CompanyState` has no refresh status and is not Equatable, so the defaults section is a StatefulWidget owning its list; the bloc listener is scoped by `CompanyBloc.defaultPenaltiesSavedMessage` / `defaultPenaltiesFailedMessage` because `CompanyBloc` is shared with the edit-profile dialog.
 
+### Independent review (2026-09-11, before merge)
+- Verdict: mergeable, no blockers; every new field carries `@JsonKey(defaultValue:)` and the generated files were read to confirm old documents load; Go triggers read none of the new fields.
+- Applied: `UpdateDefaultPenaltiesEvent` now registered with a sequential transformer (`events.asyncExpand(mapper)`, Bloc 8 default is concurrent, so two quick chip edits raced the full-list write and the rollback copy); the dialog's `_validateAmount` became `validatePenaltyAmount` (visibleForTesting) with a table test. Suite 353 green.
+- Catalogued, not changed: the wizard quotation preview follows the saved `allowLatePayments`, not the unsaved switch (spec 7.6 fallback, owner walked it through); `ProductBloc.unselectProduct` clears penalties but not charges/deductions (no caller can hit it behind an open wizard); `termDaysOf` scales `Nm`/`Nd` beyond its "otherwise 30" doc (only `1m`/`15d` are ever written); a two-line checkbox restyle in `requirements_section.dart` rode along.
+
 ### Process lesson
 - This feature was first built (14 commits, two draft PRs) against the stale pre-monorepo repos `anatechopc/loooans` and `loooans_cloud_functions`, because the issue link pointed there. Those PRs were closed and the work ported here. Check repo recency before building; the old repos still host the issues.
 

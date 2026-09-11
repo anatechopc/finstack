@@ -30,7 +30,9 @@ Penalty penaltyFromFields(Map<String, dynamic> fields) {
   );
 }
 
-String? _validateAmount(String? value) {
+/// Rejects 0, negatives and percentages above 100; empty is left to `required`.
+@visibleForTesting
+String? validatePenaltyAmount(String? value) {
   if (value == null || value.isEmpty) {
     return null;
   }
@@ -75,7 +77,7 @@ Future<Penalty?> showPenaltyDialog(BuildContext context) {
                   helperText: 'Allowed: amount or percentage (e.g 100, 3.5%)',
                   validator: FormBuilderValidators.compose([
                     FormBuilderValidators.required(),
-                    _validateAmount,
+                    validatePenaltyAmount,
                   ]),
                   inputFormatters: [
                     FilteringTextInputFormatter.allow(

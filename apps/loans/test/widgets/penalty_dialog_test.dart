@@ -40,6 +40,28 @@ void main() {
     });
   });
 
+  group('validatePenaltyAmount', () {
+    const accepted = <String>['100', '0.5', '5.', '2.5%', '100%'];
+    const rejected = <String>['0', '-1', '5.5.5', '%', '0%', '100.1%', 'abc'];
+
+    test('accepts positive amounts and percentages up to 100', () {
+      for (final value in accepted) {
+        expect(validatePenaltyAmount(value), isNull, reason: value);
+      }
+    });
+
+    test('rejects zero, negatives, malformed and percentages over 100', () {
+      for (final value in rejected) {
+        expect(validatePenaltyAmount(value), isNotNull, reason: value);
+      }
+    });
+
+    test('leaves empty input to the required validator', () {
+      expect(validatePenaltyAmount(null), isNull);
+      expect(validatePenaltyAmount(''), isNull);
+    });
+  });
+
   group('PenaltyLabels', () {
     test('formats fixed and percentage amounts with the frequency suffix', () {
       const fixed = Penalty(
