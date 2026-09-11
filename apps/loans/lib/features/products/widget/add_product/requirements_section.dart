@@ -56,6 +56,8 @@ These requirements will be in a form of PDF or image format.''',
                             children: [
                               Checkbox(
                                 activeColor: AppColors.black,
+                                checkColor: AppColors.white,
+                                side: const BorderSide(),
                                 value: state,
                                 onChanged: (val) {
                                   if (val == false) {

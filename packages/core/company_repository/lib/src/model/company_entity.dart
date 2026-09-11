@@ -104,6 +104,15 @@ class CompanyEntity implements BaseEntity {
   )
   late CompanyManagementType managementType;
 
+  /// Penalties every new product of this company starts with. Copied into
+  /// the product at creation; editing these does not touch existing products.
+  @JsonKey(
+    name: 'default_penalties',
+    defaultValue: [],
+    toJson: Penalty.listToJson,
+  )
+  List<Penalty> defaultPenalties = [];
+
   @override
   List<Object?> get props => [
         createdAt,
@@ -120,6 +129,7 @@ class CompanyEntity implements BaseEntity {
         reviewCount,
         type,
         managementType,
+        defaultPenalties,
       ];
 
   @override
@@ -144,6 +154,7 @@ class CompanyEntity implements BaseEntity {
       ..totalRating = totalRating
       ..reviewCount = reviewCount
       ..type = type
-      ..managementType = managementType;
+      ..managementType = managementType
+      ..defaultPenalties = defaultPenalties;
   }
 }

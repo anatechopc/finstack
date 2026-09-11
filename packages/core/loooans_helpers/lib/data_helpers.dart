@@ -11,5 +11,6 @@ export 'src/data_helpers/model/base_model.dart';
 export 'src/data_helpers/model/data_type.dart';
 export 'src/data_helpers/model/file_url.dart';
 export 'src/data_helpers/model/image_url.dart';
+export 'src/data_helpers/model/penalty.dart';
 export 'src/data_helpers/query_exception.dart';
 export 'src/data_helpers/query_statement.dart';

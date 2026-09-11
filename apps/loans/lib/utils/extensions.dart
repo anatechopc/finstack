@@ -6,6 +6,7 @@ import 'package:flutter_form_builder/flutter_form_builder.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loooans/utils/constants.dart';
 import 'package:loooans/utils/screen_helpers.dart';
+import 'package:loooans_helpers/data_helpers.dart';
 import 'package:user_repository/user_repository.dart';
 
 extension DefaultDateformat on DateTime {
@@ -331,4 +332,17 @@ extension DurationExtension on Duration {
     final twoDigitSeconds = twoDigits(inSeconds.remainder(60).abs());
     return '$negativeSign$twoDigitMinutes:$twoDigitSeconds';
   }
+}
+
+extension PenaltyLabels on Penalty {
+  /// e.g. "₱100.00 / day" or "2.0% / month".
+  String get amountLabel {
+    final amountStr = isPercentage
+        ? '${amount % 1 == 0 ? amount.toInt() : amount}%'
+        : amount.toCurrency();
+    return '$amountStr ${frequency.suffix}';
+  }
+
+  /// e.g. "Late fee · ₱100.00 / day".
+  String get chipLabel => '$name · $amountLabel';
 }

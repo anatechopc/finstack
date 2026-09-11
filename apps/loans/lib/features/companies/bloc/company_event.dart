@@ -12,3 +12,9 @@ class UpdateCompanyEvent extends CompanyEvent {
   final Map<String, dynamic> fields;
   final Company company;
 }
+
+class UpdateDefaultPenaltiesEvent extends CompanyEvent {
+  UpdateDefaultPenaltiesEvent({required this.penalties});
+
+  final List<Penalty> penalties;
+}

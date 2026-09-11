@@ -20,6 +20,7 @@ import 'package:loooans/features/products/widget/add_product/loan_term_section.d
 import 'package:loooans/features/products/widget/add_product/loan_type_section.dart';
 import 'package:loooans/features/products/widget/add_product/max_loanable_amount_field.dart';
 import 'package:loooans/features/products/widget/add_product/max_period_field.dart';
+import 'package:loooans/features/products/widget/add_product/penalties_section.dart';
 import 'package:loooans/features/products/widget/add_product/preview_section.dart';
 import 'package:loooans/features/products/widget/add_product/requirements_section.dart';
 import 'package:loooans/features/products/widget/add_product/upload_terms_conditions_field.dart';
@@ -200,35 +201,36 @@ class _AddProductScreenState extends State<AddProductScreen> {
           2 => LoanTermSection(productView: _productView),
           3 => AdditionalChargesSection(isFullScreen: widget.isFullScreen),
           4 => DeductionsSection(isFullScreen: widget.isFullScreen),
-          5 => InterestRateField(productView: _productView),
-          6 => MaxLoanableAmountField(
+          5 => PenaltiesSection(product: _product),
+          6 => InterestRateField(productView: _productView),
+          7 => MaxLoanableAmountField(
               formKey: _formKey,
               productView: _productView,
             ),
-          7 => _maxPeriodField(),
-          8 => _additionalLoansDocsConditional(),
+          8 => _maxPeriodField(),
+          9 => _additionalLoansDocsConditional(),
           // TODO(deibeeed): https://github.com/anatechopc/loooans/issues/58
-          9 => Container(),
           10 => Container(),
-          11 => UploadTermsConditionsField(product: _product),
-          12 => CoMakerCountSection(product: _product),
-          13 => const RequirementsSection(),
-          14 => const Text(
+          11 => Container(),
+          12 => UploadTermsConditionsField(product: _product),
+          13 => CoMakerCountSection(product: _product),
+          14 => const RequirementsSection(),
+          15 => const Text(
               'Preview',
               style: TextStyle(
                 fontWeight: FontWeight.w600,
                 fontSize: 16,
               ),
             ),
-          15 => const Text('How clients sees your loan offer'),
-          16 => BlocBuilder<ProductBloc, ProductState>(
+          16 => const Text('How clients sees your loan offer'),
+          17 => BlocBuilder<ProductBloc, ProductState>(
               buildWhen: (prev, next) =>
                   next.status == ProductStatus.refresh,
               builder: (context, state) => PreviewDetail(
                 productView: context.read<ProductBloc>().tempProductView,
               ),
             ),
-          17 => Padding(
+          18 => Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: AddProductButton(
                 formKey: _formKey,
@@ -239,10 +241,10 @@ class _AddProductScreenState extends State<AddProductScreen> {
         };
       },
       separatorBuilder: (context, index) {
-        if (index == 8) return Container();
+        if (index == 9) return Container();
         return const Gap(16);
       },
-      itemCount: 18,
+      itemCount: 19,
       padding: const EdgeInsets.symmetric(horizontal: 16),
     );
   }
@@ -296,6 +298,8 @@ class _AddProductScreenState extends State<AddProductScreen> {
         AdditionalChargesSection(isFullScreen: widget.isFullScreen),
         const Gap(16),
         DeductionsSection(isFullScreen: widget.isFullScreen),
+        const Gap(16),
+        PenaltiesSection(product: _product),
         const Gap(16),
         InterestRateField(productView: _productView),
         const Gap(16),

@@ -145,6 +145,39 @@ class LoanScheduleEntity implements BaseEntity {
   )
   late double interestDayMultiplier;
 
+  /// When the money was actually received, set at payment confirmation.
+  /// Lateness and penalties are measured from this date, not from [paidAt].
+  @JsonKey(
+    name: 'collected_at',
+    toJson: handleDateTimeToJson,
+    fromJson: handleDateTimeNullableFromJson,
+  )
+  DateTime? collectedAt;
+
+  /// Calendar days between [dueAt] and [collectedAt], floored at 0.
+  @JsonKey(name: 'days_late', defaultValue: 0)
+  int daysLate = 0;
+
+  /// Penalty amount actually charged on this installment. 0 when on time,
+  /// when the loan allows late payments, or when waived.
+  @JsonKey(defaultValue: 0.0)
+  double penalty = 0;
+
+  /// The penalty definitions that applied, copied from the loan at
+  /// confirmation. Lines are recomputed from these plus [daysLate].
+  @JsonKey(
+    defaultValue: [],
+    toJson: Penalty.listToJson,
+  )
+  List<Penalty> penalties = [];
+
+  /// User id of the provider who waived the penalty, if any.
+  @JsonKey(name: 'penalty_waived_by')
+  String? penaltyWaivedBy;
+
+  @JsonKey(name: 'penalty_waive_reason')
+  String? penaltyWaiveReason;
+
   @override
   List<Object?> get props => [
         createdAt,
@@ -166,6 +199,12 @@ class LoanScheduleEntity implements BaseEntity {
         interestDayMultiplier,
         companyId,
         advanceInterestPayments,
+        collectedAt,
+        daysLate,
+        penalty,
+        penalties,
+        penaltyWaivedBy,
+        penaltyWaiveReason,
       ];
 
   @override
@@ -195,6 +234,12 @@ class LoanScheduleEntity implements BaseEntity {
       ..interestCharge = interestCharge
       ..interestDayMultiplier = interestDayMultiplier
       ..companyId = companyId
-      ..advanceInterestPayments = advanceInterestPayments;
+      ..advanceInterestPayments = advanceInterestPayments
+      ..collectedAt = collectedAt
+      ..daysLate = daysLate
+      ..penalty = penalty
+      ..penalties = penalties
+      ..penaltyWaivedBy = penaltyWaivedBy
+      ..penaltyWaiveReason = penaltyWaiveReason;
   }
 }

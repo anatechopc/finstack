@@ -151,6 +151,21 @@ class ProductEntity implements BaseEntity {
   )
   late bool allowAddOns;
 
+  /// Late-payment penalties for loans under this product. Pre-filled from
+  /// the company defaults when the product is created.
+  @JsonKey(
+    defaultValue: [],
+    toJson: Penalty.listToJson,
+  )
+  List<Penalty> penalties = [];
+
+  /// When true, late payments are neither tagged paid_late nor penalized.
+  @JsonKey(
+    name: 'allow_late_payments',
+    defaultValue: false,
+  )
+  bool allowLatePayments = false;
+
   @override
   List<Object?> get props => [
         createdAt,
@@ -172,6 +187,8 @@ class ProductEntity implements BaseEntity {
         requiredCoMakerCount,
         allowAddOns,
         additionalLoanDocs,
+        penalties,
+        allowLatePayments,
       ];
 
   @override
@@ -211,6 +228,8 @@ class ProductEntity implements BaseEntity {
       ..maxPeriod = maxPeriod
       ..requiredCoMakerCount = requiredCoMakerCount
       ..allowAddOns = allowAddOns
-      ..additionalLoanDocs = additionalLoanDocs;
+      ..additionalLoanDocs = additionalLoanDocs
+      ..penalties = penalties
+      ..allowLatePayments = allowLatePayments;
   }
 }

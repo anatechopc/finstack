@@ -450,6 +450,8 @@ class ClientDetailLoanBody extends StatelessWidget {
                     loanAmount: selectedLoan.amount,
                     period: selectedLoan.period,
                     interestRate: selectedLoan.interestRate,
+                    penalties: selectedLoan.penalties,
+                    allowLatePayments: selectedLoan.allowLatePayments,
                   );
                 },
               ),
@@ -496,6 +498,8 @@ class ClientDetailLoanBody extends StatelessWidget {
                 loanAmount: selectedLoan.amount,
                 period: selectedLoan.period,
                 interestRate: selectedLoan.interestRate,
+                penalties: selectedLoan.penalties,
+                allowLatePayments: selectedLoan.allowLatePayments,
               );
             },
           ),
