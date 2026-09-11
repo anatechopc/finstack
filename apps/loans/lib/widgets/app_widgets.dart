@@ -231,6 +231,8 @@ class AppWidgets {
     DateTime? lastDate,
     DateTime? initialDate,
     bool enabled = true,
+    DateTime? initialValue,
+    ValueChanged<DateTime?>? onChanged,
   }) =>
       FormWidgets.defaultFormBuilderDatePicker(
         name: name,
@@ -242,6 +244,8 @@ class AppWidgets {
         lastDate: lastDate,
         initialDate: initialDate,
         enabled: enabled,
+        initialValue: initialValue,
+        onChanged: onChanged,
       );
 
   static Future<Map<String, dynamic>?> defaultMediaChooserDialog(

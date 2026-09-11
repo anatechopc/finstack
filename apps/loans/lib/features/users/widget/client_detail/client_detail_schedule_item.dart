@@ -16,6 +16,7 @@ class ClientDetailScheduleItem extends StatelessWidget {
     required this.onMakePayment,
     this.onReviewPayment,
     this.isHeader = false,
+    this.loan,
     super.key,
   });
 
@@ -27,6 +28,9 @@ class ClientDetailScheduleItem extends StatelessWidget {
   /// Opens a review dialog (proof screenshot + confirm/reject) for a
   /// `payment_submitted` row.
   final void Function(LoanSchedule schedule)? onReviewPayment;
+
+  /// The loan the row belongs to. Null hides the running-penalty line.
+  final Loan? loan;
 
   String _getLoanStatusLabel() {
     // Open-term placeholders carry their own meaningful status.
@@ -62,6 +66,39 @@ class ClientDetailScheduleItem extends StatelessWidget {
     }
 
     return amount.toCurrency();
+  }
+
+  /// Running penalty for an unpaid row, or what was charged/waived on a paid
+  /// one. Lines are 11px so the row keeps its height on one-line rows.
+  List<Widget> _penaltyLines() {
+    const style = TextStyle(color: AppColors.red2, fontSize: 11);
+    final currentLoan = loan;
+    final preview = currentLoan == null
+        ? PenaltyResult.none
+        : previewPenalty(schedule: schedule, loan: currentLoan);
+    final daysLateNow = calculateDaysLate(
+      dueAt: schedule.dueAt,
+      collectedAt: DateTime.now(),
+    );
+
+    return [
+      if (preview.total > 0)
+        Text(
+          '+ ${preview.total.toCurrency()} penalty · $daysLateNow days late',
+          style: style,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      if (schedule.penalty > 0)
+        Text(
+          '+ ${schedule.penalty.toCurrency()} penalty charged',
+          style: style,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      if (schedule.penaltyWaivedBy != null)
+        const Text('penalty waived', style: TextStyle(fontSize: 11)),
+    ];
   }
 
   @override
@@ -227,12 +264,19 @@ class ClientDetailScheduleItem extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: Text(
-              _displayAmount(
-                schedule.isOpenTerm
-                    ? schedule.outstandingBalance
-                    : schedule.amortization,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _displayAmount(
+                    schedule.isOpenTerm
+                        ? schedule.outstandingBalance
+                        : schedule.amortization,
+                  ),
+                ),
+                ..._penaltyLines(),
+              ],
             ),
           ),
           if (schedule.isOpenTerm) ...[
@@ -297,7 +341,7 @@ class ClientDetailScheduleItem extends StatelessWidget {
     final isSelfManaged =
         company.managementType == CompanyManagementType.selfManaged;
     final showMakePaymentButton = isSelfManaged &&
-        user.isTeller() &&
+        (user.isAdmin() || user.isTeller()) &&
         schedule.status == LoanStatus.not_paid;
     final showAdditionalLoanAmountDetailsButton = isSelfManaged &&
         (user.isLoanOfficer() || user.isAdmin()) &&

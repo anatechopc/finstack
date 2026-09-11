@@ -10,6 +10,7 @@ import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/features/cash_pool/bloc/cash_pool_functions.dart';
 import 'package:loooans/services/authentication_service.dart';
+import 'package:loooans/services/payment_confirmation_service.dart';
 import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans_helpers/data_helpers.dart';
@@ -92,6 +93,9 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
     Uint8List? signatureBytes,
     bool force = false,
     bool otpVerified = false,
+    DateTime? collectedAt,
+    bool waivePenalty = false,
+    String? waiveReason,
   }) {
     add(
       PayLoanScheduleEvent(
@@ -104,6 +108,9 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
         signatureBytes: signatureBytes,
         force: force,
         otpVerified: otpVerified,
+        collectedAt: collectedAt,
+        waivePenalty: waivePenalty,
+        waiveReason: waiveReason,
       ),
     );
   }
@@ -119,18 +126,14 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
       /// for now, payment is only supported for self managed company types.
       if (authService.company.managementType ==
           CompanyManagementType.selfManaged) {
+        if (event.waivePenalty &&
+            (event.waiveReason?.trim().isEmpty ?? true)) {
+          throw Exception('A reason is required to waive penalties');
+        }
+
         final schedule = event.schedule
           ..paidAt = DateTime.timestamp()
           ..loanId = loan.id;
-
-        final now = DateTime.now();
-        var status = LoanStatus.payment_submitted;
-
-        if (schedule.dueAt.toLocal().isBefore(now)) {
-          status = LoanStatus.paid_late;
-        } else {
-          status = LoanStatus.paid_on_time;
-        }
 
         ImageUrl? transactionPhotoUrl;
         ImageUrl? signatureUrl;
@@ -186,6 +189,15 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
           user:email: ${authService.user.emailAddress}
           confirmed_at: ${DateTime.timestamp().toDefaultDateFormatExtended()}''';
         }
+
+        final status = PaymentConfirmationService.applyLateness(
+          schedule: schedule,
+          loan: loan,
+          collectedAt: event.collectedAt ?? DateTime.now(),
+          actorId: authService.user.id,
+          waivePenalty: event.waivePenalty,
+          waiveReason: event.waiveReason,
+        );
 
         final tempPayment = Payment.create(
           userId: loan.userId,

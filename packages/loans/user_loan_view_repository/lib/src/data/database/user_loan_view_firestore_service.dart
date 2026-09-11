@@ -133,7 +133,9 @@ final class UserLoanViewFirestoreService
 
     var query = root
         .where('deleted_at', isNull: true)
-        .orderBy('updated_at', descending: true);
+        // Same order as loadNext: the declared composite indexes pair the
+        // equality filters with created_at, not updated_at.
+        .orderBy('created_at', descending: true);
 
     if (lastDocumentSnapshot != null) {
       query = query.startAfterDocument(lastDocumentSnapshot!);

@@ -54,6 +54,7 @@ void main() {
   Future<void> pumpDialog(
     WidgetTester tester, {
     required List<BankDetails> bankDetails,
+    double penalty = 0,
   }) async {
     when(
       () => bankRepo.load(
@@ -78,6 +79,7 @@ void main() {
                     loanId: 'loan-1',
                     companyId: 'company-1',
                     amount: 1000,
+                    penalty: penalty,
                     createBloc: (_) => bloc,
                   ),
                   child: const Text('open'),
@@ -144,6 +146,29 @@ void main() {
 
       // Nothing selected and no file chosen yet -> Send still disabled.
       expect(sendButton(tester).onPressed, isNull);
+    },
+  );
+
+  testWidgets(
+    'shows the late penalty line when a penalty is passed',
+    (tester) async {
+      await pumpDialog(
+        tester,
+        bankDetails: [_companyBankDetails()],
+        penalty: 16.14,
+      );
+
+      expect(find.textContaining('16.14'), findsOneWidget);
+      expect(find.textContaining('late penalty'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'shows no late penalty line when penalty is the default (0)',
+    (tester) async {
+      await pumpDialog(tester, bankDetails: [_companyBankDetails()]);
+
+      expect(find.textContaining('late penalty'), findsNothing);
     },
   );
 }

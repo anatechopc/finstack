@@ -579,6 +579,24 @@
           "order": "ASCENDING"
         },
         {
+          "fieldPath": "loan_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "created_at",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "dev_user_loan_views",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "deleted_at",
+          "order": "ASCENDING"
+        },
+        {
           "fieldPath": "user_id",
           "order": "ASCENDING"
         },

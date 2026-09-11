@@ -175,7 +175,8 @@ extension ReportsBlocExtensionSoa on ReportsBloc {
               interestPayment: sched.interestPayment,
               principalPayment: sched.principalPayment,
               principalBalance: sched.outstandingBalance,
-              numberOfDays: (sched.interestDayMultiplier * 30).toString(),),
+              numberOfDays: (sched.interestDayMultiplier * 30).toString(),
+              penalty: sched.penalty,),
         );
       }
 
@@ -200,16 +201,21 @@ extension ReportsBlocExtensionSoa on ReportsBloc {
         var interestCharge = 0.0;
         var interestPayment = 0.0;
         var principalPayment = 0.0;
+        var penalty = 0.0;
 
         if (entry != null) {
           outstandingBalance = entry.principalBalance;
           interestCharge = entry.interestCharge;
           interestPayment = entry.interestPayment;
           principalPayment = entry.principalPayment;
-          entry.toRemove = Jiffy.parseFromDateTime(entry.date).isSame(
+          // Only a same-day entry is replaced by this one; copying its penalty
+          // on the fallback path would bill it twice.
+          final sameDay = Jiffy.parseFromDateTime(entry.date).isSame(
             Jiffy.parseFromDateTime(amount.createdAt),
             unit: Unit.day,
           );
+          penalty = sameDay ? entry.penalty : 0;
+          entry.toRemove = sameDay;
         }
 
         entries.add(
@@ -222,6 +228,7 @@ extension ReportsBlocExtensionSoa on ReportsBloc {
             principalPayment: principalPayment,
             principalBalance: outstandingBalance + amount.amount,
             numberOfDays: '',
+            penalty: penalty,
           ),
         );
       }
@@ -267,6 +274,9 @@ extension ReportsBlocExtensionSoa on ReportsBloc {
         }),
       ]);
 
+      final totalPenalties =
+          entries.fold<double>(0, (prev, entry) => prev + entry.penalty);
+
       // add the last entry
       entries.add(
         SOAEntry(
@@ -279,6 +289,7 @@ extension ReportsBlocExtensionSoa on ReportsBloc {
           principalPayment: results[4],
           principalBalance: entries.last.principalBalance,
           numberOfDays: '',
+          penalty: totalPenalties,
         ),
       );
 
@@ -297,6 +308,12 @@ extension ReportsBlocExtensionSoa on ReportsBloc {
             ),
           )
           .toList();
+
+      if (totalPenalties > 0) {
+        additionalCharges.add(
+          ChargeSimple(amount: totalPenalties, description: 'Penalties'),
+        );
+      }
 
       final totalAmount = entries.last.principalBalance -
           deductions.fold<double>(0, (prev, next) {

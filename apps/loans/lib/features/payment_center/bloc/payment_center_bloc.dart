@@ -22,6 +22,7 @@ import 'package:loooans_helpers/logging_helpers.dart';
 import 'package:payment_repository/payment_repository.dart';
 import 'package:product_repository/product_repository.dart';
 import 'package:storage_repository/storage_repository.dart';
+import 'package:user_loan_view_repository/user_loan_view_repository.dart';
 import 'package:user_repository/user_repository.dart';
 
 part 'payment_center_event.dart';
@@ -45,6 +46,7 @@ class PaymentCenterBloc
     this.settingsService = settingsService ?? SettingsService.instance;
     cashPoolRepository = context.read<CashPoolRepository>();
     productRepository = context.read<ProductRepository>();
+    userLoanViewRepository = context.read<UserLoanViewRepository>();
     on<SearchBorrowersEvent>(_handleSearchBorrowersEvent);
     on<SelectBorrowerEvent>(_handleSelectBorrowerEvent);
     on<ClearBorrowerEvent>(_handleClearBorrowerEvent);
@@ -74,6 +76,7 @@ class PaymentCenterBloc
     required this.storageRepository,
     CashPoolRepository? cashPoolRepository,
     ProductRepository? productRepository,
+    BaseRepository<UserLoanView>? userLoanViewRepository,
     AuthenticationService? authService,
     SettingsService? settingsService,
   })  : authService = authService ?? AuthenticationService.instance,
@@ -87,6 +90,10 @@ class PaymentCenterBloc
     if (productRepository != null) {
       this.productRepository = productRepository;
     }
+    if (userLoanViewRepository != null) {
+      this.userLoanViewRepository = userLoanViewRepository;
+    }
+    on<SearchBorrowersEvent>(_handleSearchBorrowersEvent);
     on<RequestOtpEvent>(_handleRequestOtpEvent);
     on<VerifyOtpEvent>(_handleVerifyOtpEvent);
   }
@@ -111,6 +118,10 @@ class PaymentCenterBloc
   /// [PaymentCenterBloc.withDependencies].
   late final ProductRepository productRepository;
 
+  /// `late` so the test seam can omit it — see
+  /// [PaymentCenterBloc.withDependencies].
+  late final BaseRepository<UserLoanView> userLoanViewRepository;
+
   Future<void> _handleSearchBorrowersEvent(
     SearchBorrowersEvent event,
     Emitter<PaymentCenterState> emit,
@@ -126,28 +137,7 @@ class PaymentCenterBloc
 
       emit(state.copyWith(isLoading: true));
 
-      final users = await userRepository.load(
-        limit: null,
-        reset: true,
-        statements: [
-          QueryStatement(
-            field: 'company_id',
-            isEqualTo: authService.company.id,
-          ),
-          QueryStatement(
-            field: 'user_role',
-            isEqualTo: UserRole.customer.name,
-          ),
-        ],
-      );
-
-      final filtered = users
-          .where(
-            (user) => user.completeNameWesternOrder
-                .toLowerCase()
-                .contains(event.query.toLowerCase()),
-          )
-          .toList();
+      final filtered = await findBorrowers(event.query);
 
       emit(state.copyWith(
         status: PaymentCenterStatus.searchResults,
@@ -162,6 +152,64 @@ class PaymentCenterBloc
         isLoading: false,
       ));
     }
+  }
+
+  /// Borrowers matching [query] for the current company: company-owned
+  /// customers plus marketplace borrowers resolved from the company's loan
+  /// views (their user documents carry no company_id). Used by the search
+  /// box's type-ahead and by [SearchBorrowersEvent].
+  Future<List<User>> findBorrowers(String query) async {
+    if (query.trim().isEmpty) return const [];
+
+    final users = await userRepository.load(
+      limit: null,
+      reset: true,
+      statements: [
+        QueryStatement(
+          field: 'company_id',
+          isEqualTo: authService.company.id,
+        ),
+        QueryStatement(
+          field: 'user_role',
+          isEqualTo: UserRole.customer.name,
+        ),
+      ],
+    );
+
+    // Marketplace borrowers apply on their own and carry no company_id, so
+    // find them through the company's loan views, as the clients list does.
+    final lowerQuery = query.toLowerCase();
+    final views = await userLoanViewRepository.load(
+      limit: null,
+      reset: true,
+      statements: [
+        QueryStatement(
+          field: 'company_id',
+          isEqualTo: authService.company.id,
+        ),
+      ],
+    );
+    final known = users.map((user) => user.id).toSet();
+    final extraIds = views
+        .where((view) => view.userFullName.toLowerCase().contains(lowerQuery))
+        .map((view) => view.userId)
+        .where((id) => !known.contains(id))
+        .toSet();
+    final extras = <User>[];
+    for (final id in extraIds) {
+      try {
+        extras.add(await userRepository.get(id: id));
+      } catch (err) {
+        _log.warning('Borrower $id from a loan view could not be loaded: $err');
+      }
+    }
+
+    return [...users, ...extras]
+        .where(
+          (user) =>
+              user.completeNameWesternOrder.toLowerCase().contains(lowerQuery),
+        )
+        .toList();
   }
 
   Future<void> _handleSelectBorrowerEvent(
@@ -266,6 +314,7 @@ class PaymentCenterBloc
 
       // Group submissionId -> payments and accumulate schedule amounts.
       final paymentsBySubmission = <String, List<Payment>>{};
+      final schedulesBySubmission = <String, List<LoanSchedule>>{};
       final amountBySubmission = <String, double>{};
 
       for (final schedule in submittedSchedules) {
@@ -286,6 +335,7 @@ class PaymentCenterBloc
         // submission still surfaces as its own item.
         final key = payment.submissionId ?? payment.id;
         paymentsBySubmission.putIfAbsent(key, () => []).add(payment);
+        schedulesBySubmission.putIfAbsent(key, () => []).add(schedule);
         amountBySubmission.update(
           key,
           (value) => value + schedule.amortization,
@@ -300,6 +350,8 @@ class PaymentCenterBloc
             (entry) => PendingSubmission(
               submissionId: entry.key,
               payments: entry.value,
+              loan: loan,
+              schedules: schedulesBySubmission[entry.key] ?? const [],
               totalAmount: amountBySubmission[entry.key],
             ),
           )
@@ -630,6 +682,9 @@ class PaymentCenterBloc
     Uint8List? signatureBytes,
     bool force = false,
     bool otpVerified = false,
+    DateTime? collectedAt,
+    bool waivePenalty = false,
+    String? waiveReason,
   }) {
     add(
       MakePaymentEvent(
@@ -642,6 +697,9 @@ class PaymentCenterBloc
         signatureBytes: signatureBytes,
         force: force,
         otpVerified: otpVerified,
+        collectedAt: collectedAt,
+        waivePenalty: waivePenalty,
+        waiveReason: waiveReason,
       ),
     );
   }
@@ -663,18 +721,13 @@ class PaymentCenterBloc
         throw Exception('This action is not supported');
       }
 
+      if (event.waivePenalty && (event.waiveReason?.trim().isEmpty ?? true)) {
+        throw Exception('A reason is required to waive penalties');
+      }
+
       final schedule = event.schedule
         ..paidAt = DateTime.timestamp()
         ..loanId = loan.id;
-
-      final now = DateTime.now();
-      var status = LoanStatus.payment_submitted;
-
-      if (schedule.dueAt.toLocal().isBefore(now)) {
-        status = LoanStatus.paid_late;
-      } else {
-        status = LoanStatus.paid_on_time;
-      }
 
       ImageUrl? transactionPhotoUrl;
       ImageUrl? signatureUrl;
@@ -690,6 +743,15 @@ class PaymentCenterBloc
         signatureUrl = result.$2;
         comment = result.$3;
       }
+
+      final status = PaymentConfirmationService.applyLateness(
+        schedule: schedule,
+        loan: loan,
+        collectedAt: event.collectedAt ?? DateTime.now(),
+        actorId: authService.user.id,
+        waivePenalty: event.waivePenalty,
+        waiveReason: event.waiveReason,
+      );
 
       final tempPayment = Payment.create(
         userId: loan.userId,
@@ -795,6 +857,9 @@ class PaymentCenterBloc
     Uint8List? signatureBytes,
     bool force = false,
     bool otpVerified = false,
+    DateTime? collectedAt,
+    bool waivePenalty = false,
+    String? waiveReason,
   }) {
     add(
       MakeOverduePaymentEvent(
@@ -807,6 +872,9 @@ class PaymentCenterBloc
         signatureBytes: signatureBytes,
         force: force,
         otpVerified: otpVerified,
+        collectedAt: collectedAt,
+        waivePenalty: waivePenalty,
+        waiveReason: waiveReason,
       ),
     );
   }
@@ -827,6 +895,11 @@ class PaymentCenterBloc
           CompanyManagementType.selfManaged) {
         throw Exception('This action is not supported');
       }
+
+      if (event.waivePenalty && (event.waiveReason?.trim().isEmpty ?? true)) {
+        throw Exception('A reason is required to waive penalties');
+      }
+      final collectedAt = event.collectedAt ?? DateTime.now();
 
       ImageUrl? transactionPhotoUrl;
       ImageUrl? signatureUrl;
@@ -871,10 +944,14 @@ class PaymentCenterBloc
           ..paidAt = DateTime.timestamp()
           ..loanId = loan.id;
 
-        final now = DateTime.now();
-        final status = schedule.dueAt.toLocal().isBefore(now)
-            ? LoanStatus.paid_late
-            : LoanStatus.paid_on_time;
+        final status = PaymentConfirmationService.applyLateness(
+          schedule: schedule,
+          loan: loan,
+          collectedAt: collectedAt,
+          actorId: authService.user.id,
+          waivePenalty: event.waivePenalty,
+          waiveReason: event.waiveReason,
+        );
 
         // Distribute payment proportionally per schedule
         final interestPayment = schedule.isOpenTerm
@@ -1203,8 +1280,20 @@ class PaymentCenterBloc
   }
 
   /// Confirm a borrower payment submission (all schedules under it).
-  void confirmSubmission(List<Payment> payments) =>
-      add(ConfirmSubmissionEvent(payments: payments));
+  void confirmSubmission(
+    List<Payment> payments, {
+    DateTime? collectedAt,
+    bool waivePenalty = false,
+    String? waiveReason,
+  }) =>
+      add(
+        ConfirmSubmissionEvent(
+          payments: payments,
+          collectedAt: collectedAt,
+          waivePenalty: waivePenalty,
+          waiveReason: waiveReason,
+        ),
+      );
 
   /// Reject a borrower payment submission (all schedules under it).
   void rejectSubmission(List<Payment> payments, String reason) =>
@@ -1226,6 +1315,10 @@ class PaymentCenterBloc
         throw Exception('This action is not supported');
       }
 
+      if (event.waivePenalty && (event.waiveReason?.trim().isEmpty ?? true)) {
+        throw Exception('A reason is required to waive penalties');
+      }
+
       emit(state.copyWith(
         status: PaymentCenterStatus.paymentLoading,
         isLoading: true,
@@ -1237,6 +1330,9 @@ class PaymentCenterBloc
         await service.confirm(
           payment: payment,
           confirmedById: authService.user.id,
+          collectedAt: event.collectedAt,
+          waivePenalty: event.waivePenalty,
+          waiveReason: event.waiveReason,
         );
       }
 
