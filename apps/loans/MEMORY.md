@@ -4,6 +4,25 @@ Log of refactoring and bug fix work done across multiple sessions.
 
 ---
 
+## Percentage charges stored against the principal (finstack#107, 2026-09-09)
+
+Branch `feat/charges-base-107` → develop. `LoansBloc._handleAddLoanEvent` persisted `additional_charges` / `deductions` through two ad-hoc folds that multiplied percentage charges by the running charge-adjusted `totalAmount`, while the quotation used `ChargeCalculator` with the principal as base (G8). The handler now takes both figures from `ChargeCalculator.applyChargesAndDeductionsDetailed(baseAmount: amount, …)`, the same call that feeds the quotation, so there is one computation and no second implementation to test. Evidence: G8 (`test/services/charge_calculator_test.dart`) + suite green. No bloc-level test in this PR: `LoansBloc` takes a `BuildContext` and has no `withDependencies` seam, so a regression test needs a widget harness with nine mocked repositories (feasible, ~60 lines; add it or the seam the next time the bloc is touched). Pre-existing loans keep their stored values (no backfill). The independent review re-derived G8: old stored charges/deductions 675/155 vs new 650/150, and confirmed every downstream reader (settlement, SOA, reports, the Go completed branch) only becomes more consistent.
+
+## Loan-engine golden suite — campaign Phase 1 / Gate 1 (finstack#112, 2026-09-08)
+
+Branch `feat/golden-suite-112` (off `develop`). `fvm flutter test test/services/` is now the Gate 1 oracle: 29 tests, 24 of them golden scenarios (G1–G10, the clock-seam G4c/G5d, three G7 cases) in four files (`loan_calculation_service_test.dart` G1–G3, `loan_calculation_open_term_test.dart` G4–G6 + G9/G10, `loan_calculation_settlement_test.dart` G7, `charge_calculator_test.dart` G8). Every expected number was derived by hand first; the derivations are comments at the top of each file.
+
+- **Extraction (behaviour-preserving):** `LoanCalculationService.calculateSettlementBalance(loans:, schedules:)`; `LoanSettlementBloc` delegates. G7 pins the CURRENT output (8800). The independent code review of PR #115 showed the formula is wrong four ways (assigns not accumulates — and production credits the least recently updated row because rows load newest-first; unconfirmed submissions credited; open-term credits the charge not the recorded cash; top-ups ignored) and that `+=` (8300) is not the fix either. finstack#116 re-scoped to a formula decision; flip G7 there.
+- **Review follow-ups landed in PR #115:** `TZ=UTC` pinned on the CI "Run app tests" step and in the gate command (the suite is confirmed red under New York / London / Sydney time — campaign D11, catalogued); `SettingsService.resetForTest()` now also closes the discarded controller and is called in every setUp that initialises the singleton (search overlay, borrowers screen, main-screen borrowers, loan offers); G1/G2 compute inside each test; G7 fixtures use row states the payment blocs can write; G9 names finstack#117; campaign D9/D10/D11 rows and the loans-domain-reference line refs updated.
+- **Clock seam (owner-requested 2026-09-08; built on `feat/clock-seam-112` as PR #119, then folded into #115 by fast-forward so there is one golden-suite PR):** optional `DateTime? now` on `calculateOpenTermSchedules` / `calculateOpenTerm` (defaults to the wall clock; no caller changes; the earlier scenarios omit it and stay green). G4c pins the overdue clamp (due date snaps to today; 38/30 → 633.33; amortization stays capped at 500 — questionable, flagged in the reference) and G5d the `'1,15'` neither-day branch (next due derived from today, interest from the start date).
+- **Mutation check:** `/ 30` → `/ 31` in `loan_calculation_service.dart` fails all 10 open-term scenarios (verified, then restored).
+- **Clock coupling:** scenarios anchor dates so `now` cannot matter (yesterday / a fixed future month / past-dated additional loans). The past-due clamp and the `'D1,D2'` third sub-branch are covered through the clock seam (G4c/G5d, below). G11 (UI refresh after an additional loan) parked — widget flow, not math.
+- **G9 pins a confirmed defect (finstack#117, campaign D10):** the computed schedule adjacent to an additional-loan placeholder is mutated to the placeholder's *prorated* interest (83.33 on 12100). Owner decided 2026-09-08: the next row charges the new balance for the remaining days (504.17). Flip G9 with that fix.
+- **Settings test flake fixed:** `settings_service_test.dart` was order-dependent (`SettingsService.initialize` is idempotent by design; the router calls it lazily). Added `SettingsService.resetForTest()` (`@visibleForTesting`) and call it in `setUp`; green under seeds 1/4/5/random.
+- Fresh-worktree bootstrap: `packages/get_dependencies.sh` → `packages/build_models.sh` → `apps/loans` `fvm flutter pub get` (`*.g.dart` are not versioned); package `pub get` rewrites every `packages/*/*/analysis_options.yaml` — revert, never stage.
+
+---
+
 ## Issue #47 — Reviews: admin responses to borrower reviews (IN PROGRESS)
 
 Adds the ability for a company's `admin`/`reviewModerator` to respond to a borrower review; the borrower sees the response and gets notified. Tracks `anatechopc/loooans` issue #47. Branch: `develop` (uncommitted as of 2026-06-02).
@@ -746,6 +765,11 @@ Branch `feat/penalties-72-definitions` → `develop`. Design: `docs/superpowers/
 - Flutter-only fields → not Class B; no Go PR (spec D10). If a Go trigger ever reads `penalties`, it becomes Class B: backend tolerates the shape first.
 - Two loan-math bugs found on the way are NOT in this branch (campaign gate): finstack#107 (stored percentage charges use the running total; `loans_bloc.dart` `Loan.create` folds vs `ChargeCalculator` base) and finstack#108 (campaign D5 in `loan_changes.go`).
 - `CompanyState` has no refresh status and is not Equatable, so the defaults section is a StatefulWidget owning its list; the bloc listener is scoped by `CompanyBloc.defaultPenaltiesSavedMessage` / `defaultPenaltiesFailedMessage` because `CompanyBloc` is shared with the edit-profile dialog.
+
+### Independent review (2026-09-11, before merge)
+- Verdict: mergeable, no blockers; every new field carries `@JsonKey(defaultValue:)` and the generated files were read to confirm old documents load; Go triggers read none of the new fields.
+- Applied: `UpdateDefaultPenaltiesEvent` now registered with a sequential transformer (`events.asyncExpand(mapper)`, Bloc 8 default is concurrent, so two quick chip edits raced the full-list write and the rollback copy); the dialog's `_validateAmount` became `validatePenaltyAmount` (visibleForTesting) with a table test. Suite 353 green.
+- Catalogued, not changed: the wizard quotation preview follows the saved `allowLatePayments`, not the unsaved switch (spec 7.6 fallback, owner walked it through); `ProductBloc.unselectProduct` clears penalties but not charges/deductions (no caller can hit it behind an open wizard); `termDaysOf` scales `Nm`/`Nd` beyond its "otherwise 30" doc (only `1m`/`15d` are ever written); a two-line checkbox restyle in `requirements_section.dart` rode along.
 
 ### Process lesson
 - This feature was first built (14 commits, two draft PRs) against the stale pre-monorepo repos `anatechopc/loooans` and `loooans_cloud_functions`, because the issue link pointed there. Those PRs were closed and the work ported here. Check repo recency before building; the old repos still host the issues.

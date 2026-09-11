@@ -22,7 +22,12 @@ class CompanyBloc extends Bloc<CompanyEvent, CompanyState> {
         addressRepository = context.read<AddressRepository>(),
         super(const CompanyState()) {
     on(_handleUpdateCompanyEvent);
-    on(_handleUpdateDefaultPenaltiesEvent);
+    on<UpdateDefaultPenaltiesEvent>(
+      _handleUpdateDefaultPenaltiesEvent,
+      // Sequential: the handler rewrites the whole list and keeps its own
+      // rollback copy, so overlapping saves must not interleave.
+      transformer: (events, mapper) => events.asyncExpand(mapper),
+    );
   }
 
   static const defaultPenaltiesSavedMessage = 'Default penalties updated';

@@ -131,22 +131,26 @@ Each top-up's `advance_charges` lands as `advanceInterestPayments` on its insert
 
 ## 4. Early Settlement arithmetic
 
-`apps/loans/lib/features/loans/bloc/loan_settlement_bloc.dart`:
+`LoanCalculationService.calculateSettlementBalance`
+(`apps/loans/lib/services/loan_calculation_service.dart`; extracted verbatim
+from `loan_settlement_bloc.dart` on 2026-09-08, the bloc delegates):
 
 ```
 totalLoanAmount  = Σ over parent + parent_id children:
-                     (amount + additionalCharges) − (deductions + additionalChargeUpfrontCollection)   // :100-101
-totalLoanPayment = per paid schedule: (isOpenTerm ? interestCharge : interestPayment)
-                     + principalPayment + extraPayment                                                  // :104-110
-remainingBalance = totalLoanAmount − totalLoanPayment                                                   // :112
+                     (amount + additionalCharges) − (deductions + additionalChargeUpfrontCollection)
+totalLoanPayment = per schedule with a payment id: (isOpenTerm ? interestCharge : interestPayment)
+                     + principalPayment + extraPayment          // ASSIGNED, not summed — finstack#116
+remainingBalance = totalLoanAmount − totalLoanPayment
 ```
 
-Confirmation marks parent + all children `LoanStatus.completed` (`:166-173`).
+CAUTION: the whole formula is wrong and under redesign (finstack#116): only
+the last row counts, unconfirmed submissions are credited, open-term rows
+credit the charge not the cash, and top-ups are ignored. Golden test G7
+pins the current 8800 for the reference family until that lands.
 
-CAUTION (open, as of 2026-07-07): the `totalLoanPayment` loop uses `=` not `+=`
-(`:104-110`), so only the LAST schedule's payment is counted. Whether this is a live
-defect or masked by call patterns is a campaign question — do not fix ad hoc; route
-via `finstack-loan-engine-and-reporting-campaign`.
+Confirmation marks parent + all children `LoanStatus.completed`
+(`loan_settlement_bloc.dart:155-162`). Do not fix the formula ad hoc; route via
+`finstack-loan-engine-and-reporting-campaign` (finstack#116).
 
 ## 5. Charge application order (`apps/loans/lib/services/charge_calculator.dart`)
 
