@@ -318,9 +318,10 @@ class LoanCalculationService {
       final schedule = LoanSchedule.create(
         dueAt: nextDate.dateTime,
         outstandingBalance: outstandingBalance,
-        amortization: min(
-          min(loanMonthlyAmortization, beginningBalance + interestCharge),
-          interestCharge,
+        amortization: _openTermAmountDue(
+          monthlyInterest: loanMonthlyAmortization,
+          balance: beginningBalance,
+          interestCharge: interestCharge,
         ),
         principalPayment: 0,
         interestCharge: interestCharge,
@@ -340,8 +341,24 @@ class LoanCalculationService {
     );
   }
 
+  /// Amount due on an open-term row: the interest charged, capped at one
+  /// month of interest on the row's balance ([monthlyInterest]). The cap is
+  /// finstack#120 (pinned by G4c and G9d); it is defined here only, so a
+  /// change to it applies to every open-term row.
+  static double _openTermAmountDue({
+    required double monthlyInterest,
+    required double balance,
+    required double interestCharge,
+  }) =>
+      min(min(monthlyInterest, balance + interestCharge), interestCharge);
+
   /// Calculates open-term loan with additional loan amounts and creates
   /// the full schedule list including paid schedules and placeholders.
+  ///
+  /// After a top-up is inserted before the computed due row, that row
+  /// charges the new balance for the days left in its cycle and its amount
+  /// due follows (finstack#117); the top-up row keeps the interest accrued
+  /// on the old balance.
   static LoanCalculationResult calculateOpenTerm({
     required double amount,
     required DateTime date,
@@ -445,9 +462,10 @@ class LoanCalculationService {
           tempClientLoanSchedules.setAll(index, [additionalSchedule]);
         } else {
           num diffDays = 0;
+          final isComputedSchedule =
+              lastLoanSchedule.id == NO_ID && !lastLoanSchedule.isPlaceholder;
 
-          if (lastLoanSchedule.id == NO_ID &&
-              !lastLoanSchedule.isPlaceholder) {
+          if (isComputedSchedule) {
             if (index > 0) {
               final priorSchedule = tempClientLoanSchedules[index - 1];
               final priorScheduleDate =
@@ -504,9 +522,39 @@ class LoanCalculationService {
           );
 
           tempClientLoanSchedules.insert(index, additionalSchedule);
-          lastLoanSchedule
-            ..outstandingBalance = additionalSchedule.outstandingBalance
-            ..interestCharge = additionalSchedule.interestCharge;
+          final newBalance = additionalSchedule.outstandingBalance;
+
+          if (isComputedSchedule) {
+            // The top-up row keeps the interest accrued on the old balance;
+            // the due row charges the new balance for the days left in its
+            // cycle (finstack#117). Days left = the row's own day count
+            // minus the days the top-up row accrued, so the two add up to
+            // the cycle whatever the time of day of the top-up. round()
+            // only undoes the division: the multiplier is whole days / 30.
+            final daysLeft = max(
+              (lastLoanSchedule.interestDayMultiplier * 30).round() - diffDays,
+              0,
+            );
+            final multiplierLeft = daysLeft / 30;
+            final monthlyInterest = calculateMonthlyPaymentSimple(
+              outstandingBalance: newBalance,
+              monthlyInterestRate: interestRate / 100,
+            );
+            final interestLeft = monthlyInterest * multiplierLeft;
+            lastLoanSchedule
+              ..outstandingBalance = newBalance
+              ..interestDayMultiplier = multiplierLeft
+              ..interestCharge = interestLeft
+              ..amortization = _openTermAmountDue(
+                monthlyInterest: monthlyInterest,
+                balance: newBalance,
+                interestCharge: interestLeft,
+              );
+          } else {
+            lastLoanSchedule
+              ..outstandingBalance = newBalance
+              ..interestCharge = additionalSchedule.interestCharge;
+          }
         }
       }
     }
