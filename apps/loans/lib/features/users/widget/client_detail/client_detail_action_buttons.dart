@@ -19,6 +19,7 @@ import 'package:loooans/features/products/bloc/product_status.dart';
 import 'package:loooans/features/products/requirement_temp_container.dart';
 import 'package:loooans/features/users/screens/additional_loan_docs_dialog.dart';
 import 'package:loooans/features/users/widget/client_detail/client_detail_dialogs.dart';
+import 'package:loooans/features/users/widget/client_detail/top_up_total_row.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/extensions.dart';
@@ -367,22 +368,10 @@ class ClientDetailActionButtons extends StatelessWidget {
                           color: AppColors.black,
                         ),
                         const Gap(8),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text('Total:'),
-                            Text(
-                              context
-                                  .read<ProductBloc>()
-                                  .computeTotalAdditionalLoanAmount(
-                                    product,
-                                    formKey.currentState
-                                            ?.simplifiedFields()['amount']
-                                        as String?,
-                                  )
-                                  .toCurrency(),
-                            ),
-                          ],
+                        TopUpTotalRow(
+                          product: product,
+                          amountText: formKey.currentState
+                              ?.simplifiedFields()['amount'] as String?,
                         ),
                       ],
                     );
