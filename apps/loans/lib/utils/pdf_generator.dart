@@ -102,6 +102,23 @@ class PdfGenerator {
     );
   }
 
+  /// The bytes [generatePdf] hands to the print dialog, for tests.
+  @visibleForTesting
+  static Future<Uint8List> buildPdfBytes({
+    required List<LoanSchedule> schedules,
+    required Loan loan,
+    required Product product,
+    required User user,
+  }) {
+    return _buildPdf(
+      PdfPageFormat.a4,
+      schedules: schedules,
+      loan: loan,
+      product: product,
+      user: user,
+    );
+  }
+
   static Future<void> generatePdfSoa({
     required SOAModel soaModel,
     Company? company,

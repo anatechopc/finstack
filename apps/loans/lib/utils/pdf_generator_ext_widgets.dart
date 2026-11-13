@@ -22,7 +22,10 @@ pw.Widget _personalDetails(String title, String content) {
 pw.Widget _quotationWidget({
   required Loan loan,
   required Product product,
+  required List<LoanSchedule> schedules,
 }) {
+  final totalPayable = pdfTotalPayable(loan, schedules);
+
   return pw.Column(
     mainAxisSize: pw.MainAxisSize.min,
     crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -92,10 +95,11 @@ pw.Widget _quotationWidget({
           },
         ),
       pw.Divider(),
-      _quotationItem(
-        title: 'Total payable',
-        detail: _computeTotalPayable(loan).toCurrency(),
-      ),
+      if (totalPayable != null)
+        _quotationItem(
+          title: 'Total payable',
+          detail: totalPayable.toCurrency(),
+        ),
       _quotationItem(
         title: 'Monthly Amortization',
         detail: loan.amortization.toCurrency(),
@@ -129,10 +133,19 @@ pw.Widget _quotationItem({
   );
 }
 
-double _computeTotalPayable(Loan loan) {
-  return (loan.amortization * loan.period) +
-      loan.additionalCharges -
-      loan.deductions;
+/// The PDF quotation's "Total payable" (finstack#124): the sum of the
+/// amortization of the schedules the PDF prints. Charges and deductions are
+/// already inside every amortization (it is computed on the charge-adjusted
+/// principal), so they are not added again. The sum also covers 15-day loans,
+/// whose stored `period` is in months while each amortization is per 15 days.
+///
+/// Null for an open-term loan (`period` 0): it has no total known in advance,
+/// and the PDF hides the line.
+@visibleForTesting
+double? pdfTotalPayable(Loan loan, List<LoanSchedule> schedules) {
+  if (loan.period <= 0) return null;
+
+  return schedules.fold<double>(0, (sum, s) => sum + s.amortization);
 }
 
 pw.Widget signatories({
