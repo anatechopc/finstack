@@ -535,14 +535,24 @@ class PaymentCenterBloc
         )
         .toList();
 
-    // Combine: persisted unpaid + generated, then deduplicate by dueAt
+    // Combine: persisted unpaid + generated. A stored unpaid row (a rejected
+    // submission) and a regenerated row for the same cycle are one row; the
+    // stored one is kept because it carries the id. A cycle is keyed by its
+    // lateness date, since the open-term clamp moves due_at to the day the
+    // row was computed (finstack#114). On an open-term loan a stored unpaid
+    // row dated after the last paid row is the current cycle, which also
+    // covers rows stored before original_due_at existed. Stored dates come
+    // back in UTC, so days are compared in local time.
+    final lastPaidDue = paidSchedules.fold<DateTime>(
+      loan.createdAt,
+      (latest, s) => s.dueAt.isAfter(latest) ? s.dueAt : latest,
+    );
     final allUnpaid = <LoanSchedule>[...persistedUnpaid];
     for (final gen in generatedSchedules) {
       final alreadyExists = allUnpaid.any(
         (s) =>
-            s.dueAt.year == gen.dueAt.year &&
-            s.dueAt.month == gen.dueAt.month &&
-            s.dueAt.day == gen.dueAt.day,
+            DateUtils.isSameDay(s.lateFrom.toLocal(), gen.lateFrom.toLocal()) ||
+            (gen.isOpenTerm && s.lateFrom.isAfter(lastPaidDue)),
       );
       if (!alreadyExists) {
         allUnpaid.add(gen);

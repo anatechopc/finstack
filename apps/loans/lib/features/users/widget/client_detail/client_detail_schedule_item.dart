@@ -364,7 +364,10 @@ class ClientDetailScheduleItem extends StatelessWidget {
       );
     }
 
-    if (schedule.paidAt == null && !schedule.isAdditionalLoanAmount) {
+    // Placeholder rows (the principal release and top-ups) are not
+    // installments: paying the principal release would record the whole
+    // principal as repaid on the loan's creation day.
+    if (schedule.paidAt == null && !schedule.isPlaceholder) {
       return Opacity(
         opacity: showMakePaymentButton ? 1.0 : 0.0,
         child: AppWidgets.defaultOutlinedButton(

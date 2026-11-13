@@ -134,12 +134,21 @@ final class LatenessResult {
 
 /// Decide lateness and penalties for a payment collected on [collectedAt].
 /// Unlike [previewPenalty] this ignores the row's current status, because
-/// the caller is about to set it.
+/// the caller is about to set it. An open-term placeholder row is never
+/// late.
 LatenessResult resolveLateness({
   required LoanSchedule schedule,
   required Loan loan,
   required DateTime collectedAt,
 }) {
+  if (schedule.isPlaceholder) {
+    return const LatenessResult(
+      daysLate: 0,
+      isLate: false,
+      penalties: PenaltyResult.none,
+    );
+  }
+
   final daysLate = calculateDaysLate(
     dueAt: schedule.lateFrom,
     collectedAt: collectedAt,

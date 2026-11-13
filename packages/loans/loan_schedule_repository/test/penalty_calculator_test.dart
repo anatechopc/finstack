@@ -435,6 +435,15 @@ void main() {
         ).total,
         0,
       );
+
+      final lateness = resolveLateness(
+        schedule: placeholder,
+        loan: loan(penalties: const [once500]),
+        collectedAt: sep3,
+      );
+      expect(lateness.daysLate, 0);
+      expect(lateness.isLate, false);
+      expect(lateness.penalties.total, 0);
     });
   });
 }

@@ -55,11 +55,12 @@ import 'package:loooans_helpers/data_helpers.dart';
 //   G13f collected Sep 5 (after Aug 31, before the Sep 8 billing date):
 //        5 days -> 100 + 500 = 600 (before: Sep 5 is before Sep 8, 0)
 //   G13g the principal-release placeholder row (due on the creation date,
-//        Jul 2; balance 0) is not an installment: 0 (before: the flat
-//        "100 once" was charged on it, 68 days "late")
+//        Jul 2; balance 0) is not an installment: previews 0 and confirms
+//        paid_on_time with 0 days and 0 (before: the flat "100 once" was
+//        charged on it, paid_late, 68 days "late")
 //
-// Mutation check: make `LoanSchedule.lateFrom` return `dueAt` -> G13a, d,
-// e and f fail.
+// Mutation check: make `LoanSchedule.lateFrom` return `dueAt` -> G13a, b,
+// d, e, f and g fail (g through its non-placeholder row).
 
 const lateFee100 = Penalty(id: 'late-fee', name: 'Late fee', amount: 100);
 const daily1pct = Penalty(
@@ -321,6 +322,17 @@ void main() {
         previewPenalty(schedule: schedules.last, loan: loan, asOf: sep8).total,
         closeTo(900, 0.01),
       );
+
+      // Confirming it is not late either (before: paid_late, 68 days, 100).
+      final status = PaymentConfirmationService.applyLateness(
+        schedule: placeholder,
+        loan: loan,
+        collectedAt: sep8,
+        actorId: 'teller-1',
+      );
+      expect(status, LoanStatus.paid_on_time);
+      expect(placeholder.daysLate, 0);
+      expect(placeholder.penalty, 0);
     });
   });
 }
