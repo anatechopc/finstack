@@ -6,7 +6,7 @@ Log of work done on the loans Cloud Functions (Go backend).
 
 ## Report recompute tool — campaign Phase 4 (2026-11-13)
 
-Branch `feat/report-recompute-tool` → develop (draft PR). Spec: `docs/superpowers/specs/2026-11-13-report-recompute-tool.md` (source and formula per total, the date rule per bucket, the differences from the live triggers, the race with triggers, 11 open decisions with the defaults built).
+Branch `feat/report-recompute-tool` → develop (draft PR #132). Spec: `docs/superpowers/specs/2026-11-13-report-recompute-tool.md` (source and formula per total, the date rule per bucket, the differences from the live triggers, the race with triggers, 11 open decisions with the defaults built).
 
 **What was built.** `triggers/report_recompute.go`: `RecomputeReport(RecomputeInput)` is pure. It takes a company's raw loan, schedule and capital documents plus the product-type map and returns the summed `ReportPlan`; every number comes from `PlanLoanReport` / `PlanScheduleReport` / `PlanCapitalReport`, called once per document with a document date in place of the event time. `ReportPlan.SummaryNode()` is the `report_summary` node. `cmd/recompute_reports/` is the CLI: `adapters.go` (Firestore reader on the prefixed collections; Realtime Database reader, conditional writer and run marker) and `main.go` (flags, refusals, the recomputed/live table). The trigger's schedule loader now shares `scheduleAmountsOf` with recompute; no trigger behaviour changed.
 

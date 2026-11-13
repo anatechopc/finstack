@@ -14,7 +14,7 @@
 > as the incident record.
 
 > **Status 2026-11-13 (Phase 4):** the recompute tool is built (branch
-> `feat/report-recompute-tool`; core `triggers/report_recompute.go`, CLI
+> `feat/report-recompute-tool`, PR #132; core `triggers/report_recompute.go`, CLI
 > `cmd/recompute_reports/`, spec
 > `docs/superpowers/specs/2026-11-13-report-recompute-tool.md`). It rebuilds
 > one company's `report_summary` from Firestore through the same planning

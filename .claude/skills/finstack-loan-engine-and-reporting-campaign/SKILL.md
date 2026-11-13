@@ -257,7 +257,7 @@ recompute tool is built once and reused.
 ## PHASE 4 — Validation, promotion, and data repair
 
 **Status 2026-11-13: the recompute tool is BUILT (branch
-`feat/report-recompute-tool`, draft PR to `develop`); no repair has been
+`feat/report-recompute-tool`, draft PR #132 to `develop`); no repair has been
 applied in any environment.** Spec:
 `docs/superpowers/specs/2026-11-13-report-recompute-tool.md`.
 
