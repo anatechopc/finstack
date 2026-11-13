@@ -4,6 +4,12 @@
 > `apps/loans/test/services/` (four files, derivations in comments); G5c
 > (start on the second salary day) was added as a bonus now-free branch.
 > The table below stays as the design record.
+>
+> **2026-11-13: G9 and G10 flipped by finstack#117** (campaign D10, fixed):
+> after a top-up the due row charges the new balance for the days left in
+> its cycle and its amount due follows. G9b–G9e were added with it (top-up
+> with a time of day, top-up on the due date, overdue row, top-up stamped
+> after the due date).
 
 Target under test: `apps/loans/lib/services/loan_calculation_service.dart`
 (~510 lines, static methods, pure except for wall-clock reads — see "Clock
@@ -138,8 +144,9 @@ double-derivation IS the proof.
 | G6 | `calculateOpenTermSchedules` | 10000, 5%, `'1m'`, start = Feb 1 of the next NON-LEAP year (test helper picks it, keeping it in the future) | dueAt = Mar 3 that year (Feb 1 + 30 CALENDAR days); multiplier exactly 1.0; interest 500.00 | month-boundary proration: 1 month = 30 days, NOT calendar month |
 | G7 | early-settlement formula | family of 1 loan (10000 + 500 charges - 200 deductions - 100 upfront) + an open-term row (interest 500) and a fixed-term row (interest 400 + principal 1000) | released 10200; CURRENT formula = released − last row only = 8800 (pinned); accumulation would give 8300 but is NOT the target (subtracts interest from principal) — finstack#116 decides the formula | D9 and its siblings (see aggregation-triggers.md D9) |
 | G8 | `ChargeCalculator.applyChargesAndDeductionsDetailed` | base 10000; charges [5%, flat 150, upfront 2%]; deductions [1%, flat 50] | additionalCharges 650, upfront 200, deductions 150, totalAmount 10500 | percent-vs-flat parsing; upfront excluded from principal |
-| G9 | `calculateOpenTerm` (finstack#33 RC2) | open-term loan, 1 paid schedule (OB 10000), 1 additional loan (2000 + 100 charges) dated after the paid schedule but in the past | additional-loan placeholder schedule has OB = 12100 EXACTLY ONCE; the adjacent computed schedule is updated in place to OB 12100 (the documented mutation at the end of `calculateOpenTerm`); the 12100 appears from the insertion point onward and nowhere earlier | double-counted OB (root cause 2 of finstack#33) |
-| G10 | `calculateOpenTerm` (finstack#33 RC3) | 2 additional loans supplied NEWEST-FIRST in `loan.additionalLoanAmounts` | processing order is by `createdAt` ascending: first placeholder OB = base+A1, second = base+A1+A2 | reverse-order iteration (root cause 3 of finstack#33; the `sortedBy` at ~line 357) |
+| G9 | `calculateOpenTerm` (finstack#33 RC2) | open-term loan, 1 paid schedule (OB 10000), 1 additional loan (2000 + 100 charges) dated after the paid schedule but in the past | additional-loan placeholder schedule has OB = 12100 EXACTLY ONCE and keeps the interest accrued on the old balance, 10000 × 5% × 5/30 = 83.33; the adjacent computed schedule is updated in place (the mutation at the end of `calculateOpenTerm`): OB 12100, days left 30 − 5 = 25, interest 12100 × 5% × 25/30 = 504.17, amortization 504.17 (finstack#117; it copied 83.33 and kept 500 before); the 12100 appears from the insertion point onward and nowhere earlier | double-counted OB (root cause 2 of finstack#33); top-up interest copied onto the due row (D10) |
+| G10 | `calculateOpenTerm` (finstack#33 RC3) | 2 additional loans supplied NEWEST-FIRST in `loan.additionalLoanAmounts` (A2 = 3000, two days after A1) | processing order is by `createdAt` ascending: first placeholder OB = base+A1 (83.33), second = base+A1+A2 = 15100 (12100 × 5% × 2/30 = 40.33); the computed schedule ends at 15100 with 25 − 2 = 23 days left: 15100 × 5% × 23/30 = 578.83, amortization 578.83 (finstack#117) | reverse-order iteration (root cause 3 of finstack#33; the `sortedBy` at ~line 357) |
+| G9b–G9e | `calculateOpenTerm` (S2 seam, finstack#117) | fixed dates: paid row due Aug 1 (OB 10000), one top-up of 2000 + 100 | **G9b** top-up Aug 6 14:30, now Aug 15: 5 + 25 days → 83.33 and 504.17 (the whole days from the top-up time to the due date would be 24); **G9c** top-up on the due date Aug 31: stamped 00:00:00 the same-instant branch replaces the due row with the top-up row (30 days, 500, no due row); stamped 10:15 the top-up row has 30 days / 500 and the due row 0 days / 0 / amount due 0; **G9d** now Sep 8 (38-day overdue row), top-up Aug 3: 2 days → 33.33, 36 days left → 726.00, amortization capped at 605 (one month on the new balance, finstack#120); **G9e** top-up stamped after the due date: days left floor at 0, never negative | time-of-day day loss; the two due-date branches; the cap on the new balance; negative interest |
 | G11 | bloc flow (finstack#33 RC1) | AdditionalLoanBloc success → LoansBloc refresh | `selectLoan()` invoked after success | stale-UI root cause 1 — NOT a math test; write as a bloc/widget test per finstack-testing-and-validation, or park it explicitly |
 
 Notes:
@@ -157,6 +164,14 @@ Notes:
   full narrative in finstack-failure-archaeology). Root causes, restated as
   test oracles: (1) UI didn't refresh → G11; (2) OB mutated twice (bloc +
   service) → G9; (3) newest-first iteration → G10.
+- **Top-up interest (finstack#117, campaign D10 — FIXED 2026-11-13):** the
+  top-up row keeps the old balance for the days since the previous row; the
+  computed due row charges the new balance for the days left and its amount
+  due follows. Days left = the due row's own day count minus the days the
+  top-up row counted, so the parts always add up to the cycle. Only the
+  computed row is recomputed: a persisted row that follows a top-up keeps
+  the earlier copy behaviour (and its balance gets the top-up added a
+  second time on screen — open defect, see `apps/loans/MEMORY.md`).
 - The `'D1,D2'` third sub-branch (start date on NEITHER salary day) and the
   past-due-date clamp are wall-clock-dependent (see Clock coupling); covered
   by G5d and G4c through the S2 seam since 2026-09-08. G4c also pins that an

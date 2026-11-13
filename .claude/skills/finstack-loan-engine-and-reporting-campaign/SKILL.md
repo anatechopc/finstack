@@ -102,8 +102,9 @@ description), no unexplained failures.
 Suite in `apps/loans/test/services/` (derivations as file-top comments);
 mutation check verified (`/ 30` → `/ 31` at BOTH sites fails every
 open-term scenario). G7 pins the CURRENT settlement formula (8800) —
-finstack#116 owns the redesign and the flip; G9 pins the current top-up
-interest — finstack#117 flips it. G11 parked (see references/golden-scenarios.md);
+finstack#116 owns the redesign and the flip; finstack#117 flipped G9/G10 on
+2026-11-13 (the due row after a top-up charges the new balance for the days
+left; G9b–G9e added). G11 parked (see references/golden-scenarios.md);
 the two clock-dependent branches are covered through the S2 `now` seam
 (G4c/G5d, folded into #115). The suite assumes a zone without DST
 (D11); CI pins `TZ=UTC`.
@@ -162,7 +163,7 @@ directions) is **`references/aggregation-triggers.md`**. Headlines:
 | D7 | `%$w` format typos (unwrapped errors) | `loan_changes.go` ~144/~183 |
 | D8 | 2 `go vet` lock-copy warnings (protobuf by value) | `loan_changes.go` ~317/~334 |
 | D9 | CONFIRMED → finstack#116: early-settlement formula wrong four ways (assigns not accumulates; credits unconfirmed rows; open-term credits the charge not the cash; top-ups ignored) — needs a formula decision | `loan_calculation_service.dart` `calculateSettlementBalance` |
-| D10 | CONFIRMED → finstack#117: after a top-up the next open-term row inherits the placeholder's prorated interest instead of charging the new balance | `loan_calculation_service.dart` (`calculateOpenTerm`, adjacent-row mutation) |
+| D10 | FIXED 2026-11-13 (finstack#117): after a top-up the next open-term row inherited the placeholder's prorated interest instead of charging the new balance; the computed due row now charges the new balance for the days left and its amount due follows (G9/G10 flipped) | `loan_calculation_service.dart` (`calculateOpenTerm`, adjacent-row mutation) |
 | D11 | CANDIDATE (no current users affected): open-term day math is not DST-safe — Duration day adds and floored day diffs | `loan_calculation_service.dart` (jiffy `add(days:)` / `diff(Unit.day)`) |
 | D12 | CONFIRMED → finstack#120: an overdue open-term row's amount due is capped at one month of interest while `interestCharge` keeps accruing (G4c: 500 vs 633.33) | `loan_calculation_service.dart` (`calculateOpenTermSchedules`, the `amortization` min chain) |
 

@@ -70,6 +70,17 @@ def main() -> None:
         print(f"  {days:2d} days elapsed -> multiplier {days/30:.4g} -> interest {got:.2f} "
               f"(skill says {expect})")
 
+    print("\n=== Example D: top-up split of one 30-day cycle (golden G9/G10, finstack#117) ===")
+    balance, days_left = 10_000.0, 30
+    for label, days, added, expect in (("top-up 2,000 + 100 on day 5", 5, 2_100, "83.33"),
+                                       ("top-up 3,000 two days later", 2, 3_000, "40.33")):
+        accrued = open_term_interest(balance, 0.05, days)  # old balance, days so far
+        balance, days_left = balance + added, days_left - days
+        print(f"  {label}: top-up row {days} days -> {accrued:.2f} (skill says {expect}); "
+              f"due row {balance:.0f} for {days_left} days -> "
+              f"{open_term_interest(balance, 0.05, days_left):.2f}")
+    print("  (skill says the due row is 504.17 after the first top-up, 578.83 after the second)")
+
     print("\nAll formulas mirror the Dart source cited in the docstring. If numbers")
     print("disagree with the skill, re-read loan_calculation_service.dart before editing.")
 

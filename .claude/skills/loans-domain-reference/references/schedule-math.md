@@ -123,8 +123,29 @@ each top-up in.
 5. **Insert case** (`:403-467`): compute `diffDays` from the top-up's `createdAt` to the
    anchor (or the prior row when the anchor is an unpersisted `NO_ID` row, `:406-429`),
    `multiplier = diffDays/30`, `interest = anchorOB × rate × multiplier`; insert the
-   row, then propagate the new OB and interest onto the displaced anchor row
-   (`:464-466`).
+   row, then update the displaced anchor row in place:
+   - anchor = the computed due row (`NO_ID`, not a placeholder) — finstack#117,
+     2026-11-13: new OB; `daysLeft = max(anchorDays − diffDays, 0)` where
+     `anchorDays` is the row's own day count (`interestDayMultiplier × 30`);
+     `interestCharge = newOB × rate × daysLeft/30`; `amortization` by the same
+     amount-due rule as every open-term row (`_openTermAmountDue`: the interest,
+     capped at one month on the new OB). The top-up row keeps the interest
+     accrued on the OLD balance. Days left come from the row's day count, not
+     from a date difference, so top-up row + due row always add up to the cycle
+     (a top-up has a time of day; whole days from it to the due date lose one).
+   - anchor = a persisted row or another placeholder: unchanged — the new OB and
+     the top-up row's interest are copied onto it. KNOWN DEFECT (open): a
+     persisted row created after the top-up already stores the raised balance,
+     so the top-up is added twice on screen (12100 → 14200).
+
+   **Worked example (golden G9/G10):** 10,000 at 5%, paid row due D−10, top-up
+   2,000 + 100 charges on D−5 → top-up row 12,100, 5 days, 10,000 × 5% × 5/30 =
+   **83.33**; due row (D+20) 12,100, 25 days, 12,100 × 5% × 25/30 = **504.17**,
+   amount due 504.17. Second top-up 3,000 on D−3 → its row 15,100, 2 days,
+   12,100 × 5% × 2/30 = **40.33**; due row 15,100, 23 days, **578.83**.
+   A top-up on the due date leaves the due row with 0 days and amount due 0
+   (the whole cycle is on the top-up row); when its timestamp equals the due
+   date to the microsecond, step 4 replaces the due row instead.
 
 Each top-up's `advance_charges` lands as `advanceInterestPayments` on its inserted row
 (`:397, :458`); its own `LoanStatus` rides along (`:399, :460`).

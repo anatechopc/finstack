@@ -181,13 +181,24 @@ three writers.
   Direction: settlement = last row's outstanding balance (top-ups included)
   + accrued interest, over confirmed rows only. Flip G7 with the fix.
 
-### D10 (Flutter, CONFIRMED 2026-09-08 → finstack#117) — top-up interest copied onto the next row
-- `calculateOpenTerm` (`apps/loans/lib/services/loan_calculation_service.dart`,
+### D10 (Flutter, FIXED 2026-11-13 → finstack#117) — top-up interest copied onto the next row
+- Was: `calculateOpenTerm` (`apps/loans/lib/services/loan_calculation_service.dart`,
   the `lastLoanSchedule..outstandingBalance = ... ..interestCharge = ...`
-  mutation after inserting the placeholder) copies the placeholder's
+  mutation after inserting the placeholder) copied the placeholder's
   prorated interest onto the adjacent computed schedule and never
-  recomputes its amortization. G9 pins it: next row shows 83.33 on 12100
-  where 12100 × 5% × 25/30 = 504.17 is due (owner decision).
+  recomputed its amortization: the next row showed 83.33 on 12100 and
+  billed 500.
+- Now (owner decision 2026-09-08): the computed due row gets days left =
+  its own day count − the days the top-up row counted, interest = new
+  balance × rate × days left / 30, and the same amount-due rule as every
+  open-term row (`_openTermAmountDue`, one-month cap on the new balance —
+  D12). G9: 12100 × 5% × 25/30 = 504.17; G10: 15100 × 5% × 23/30 = 578.83.
+- Still open, found while fixing (not part of #117): when the anchor row is
+  a PERSISTED row created after the top-up (every loan once the cycle that
+  holds the top-up is paid), the loop adds the top-up to a stored balance
+  that already includes it (12100 → 14200 on the top-up row and on that
+  paid row, in memory only) and gives the top-up row the days from the
+  top-up to that row's due date instead of the days accrued before it.
 
 ### D11 (Flutter, CANDIDATE) — open-term day math is not DST-safe
 - jiffy 6.4.4 `add(days:)` is a `Duration` add and `diff(unit: Unit.day)`
