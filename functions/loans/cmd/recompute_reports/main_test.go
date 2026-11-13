@@ -143,6 +143,7 @@ func TestCheckOptions(t *testing.T) {
 		{"unknown env", options{company: "C1", env: "production"}, "-env must be"},
 		{"restore that is a path", options{company: "C1", env: "dev", restore: "../report_summary"}, "-restore must be a run id"},
 		{"apply without an operator", options{company: "C1", env: "dev", apply: true}, "-by must name"},
+		{"discard changes without a restore", options{company: "C1", env: "dev", discardSince: true}, "applies to -restore only"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -484,4 +485,126 @@ func TestCompare_ListsTotalsOfBothSidesAndLeavesTheDataListOut(t *testing.T) {
 	if !reflect.DeepEqual(strays, []string{"updated_at"}) {
 		t.Errorf("strays: %v", strays)
 	}
+}
+
+// openTermConfirmed is L1 (10,000) with its planned open-term row confirmed
+// the way the app confirms it (#138): status paid_on_time, amounts untouched,
+// so principal_payment is still the whole loan.
+func openTermConfirmed(principal float64) triggers.RecomputeInput {
+	input := oneLoanAndCapital()
+	paid := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC).UnixMilli()
+	input.Schedules = []map[string]any{
+		{"id": "S1", "loan_id": "L1", "company_id": "C1", "status": "paid_on_time", "is_open_term": true,
+			"principal_payment": principal, "interest_payment": 0.0, "paid_at": paid},
+	}
+	return input
+}
+
+// The reviewer's probe: the recompute books 10,000 principal for the row.
+// The dry run lists the row, -loans flags the loan, and an apply is refused.
+func TestRun_Apply_RefusesAConfirmedOpenTermPlannedRow(t *testing.T) {
+	backend := &fakeBackend{input: openTermConfirmed(10000), summary: pollutedSummary()}
+	out, err := runOnce(t, backend, options{company: "C1", env: "dev", loans: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectOutput(t, out,
+		"open-term planned row confirmed without amounts (#138), counted as returned principal: schedule S1 of loan L1: principal_payment 10000.00, loan amount 10000.00",
+		"L1 approved 10000.00 10000.00 30000.00 10000.00 0.00 0.00 0.00 open-term planned row(s) S1 counted as returned principal (#138)",
+		"an apply would be refused: 1 confirmed open-term row(s) carry the planned principal",
+	)
+
+	_, err = runOnce(t, backend, options{company: "C1", env: "dev", apply: true, by: "tester@host"})
+	for _, want := range []string{"refusing to apply: 1 confirmed open-term row(s)", "schedule S1 of loan L1: principal_payment 10000.00, loan amount 10000.00", "(#138)"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("got %v, want an error containing %q", err, want)
+		}
+	}
+	if len(backend.calls) != 0 || !reflect.DeepEqual(backend.summary, pollutedSummary()) {
+		t.Fatalf("a refused apply wrote: %v", backend.calls)
+	}
+}
+
+// An open-term row with a real partial payment, or a row that is not open
+// term, is a payment like any other.
+func TestRun_Apply_AllowsOpenTermRowsBelowTheLoanAmount(t *testing.T) {
+	notOpenTerm := openTermConfirmed(10000)
+	delete(notOpenTerm.Schedules[0], "is_open_term")
+	for name, input := range map[string]triggers.RecomputeInput{
+		"open term, partial payment":  openTermConfirmed(9999.99),
+		"not open term, whole amount": notOpenTerm,
+	} {
+		t.Run(name, func(t *testing.T) {
+			backend := &fakeBackend{input: input, summary: pollutedSummary()}
+			if out, err := runOnce(t, backend, options{company: "C1", env: "dev", apply: true, by: "tester@host"}); err != nil || strings.Contains(out, "#138") {
+				t.Fatalf("err %v\n%s", err, out)
+			}
+		})
+	}
+}
+
+// The reviewer's three restore probes. Each is refused and writes nothing.
+func TestRun_Restore_Refuses(t *testing.T) {
+	restore := options{company: "C1", env: "dev", apply: true, restore: firstRunId, by: "tester@host"}
+	unchanged := func(t *testing.T, backend *fakeBackend, live map[string]any, records int) {
+		t.Helper()
+		if !reflect.DeepEqual(backend.summary, live) || len(backend.records) != records {
+			t.Fatalf("a refused restore wrote: %v", backend.calls)
+		}
+	}
+
+	t.Run("the record has no previous node", func(t *testing.T) {
+		backend := &fakeBackend{summary: pollutedSummary(), records: map[string]map[string]any{
+			firstRunId: {"applied": true, "after": withoutData(pollutedSummary()), "data_items": map[string]any{"after": 4}},
+		}}
+		_, err := runOnce(t, backend, restore)
+		if err == nil || !strings.Contains(err.Error(), "run "+firstRunId+" saved no previous node, so a restore would delete the live summary") {
+			t.Fatalf("got %v", err)
+		}
+		unchanged(t, backend, pollutedSummary(), 1)
+	})
+
+	t.Run("the record is not marked applied", func(t *testing.T) {
+		backend := &fakeBackend{summary: pollutedSummary(), records: map[string]map[string]any{
+			firstRunId: {"applied": false, "previous": map[string]any{"sales": map[string]any{"total_amount_released": 1.0}},
+				"after": withoutData(pollutedSummary()), "data_items": map[string]any{"after": 4}},
+		}}
+		_, err := runOnce(t, backend, restore)
+		if err == nil || !strings.Contains(err.Error(), "run "+firstRunId+" is not marked applied (applied: false)") {
+			t.Fatalf("got %v", err)
+		}
+		unchanged(t, backend, pollutedSummary(), 1)
+	})
+
+	t.Run("an amount was booked after the run", func(t *testing.T) {
+		backend := &fakeBackend{input: oneLoanAndCapital(), summary: pollutedSummary()}
+		if _, err := runOnce(t, backend, options{company: "C1", env: "dev", apply: true, by: "tester@host"}); err != nil {
+			t.Fatal(err)
+		}
+		// A trigger books 777 of capital after the apply.
+		live := normalize(backend.summary)
+		live["capital_usage"].(map[string]any)["total_capital"] = 50777.0
+		live["data"].(map[string]any)["late"] = map[string]any{"data_type": "add_capital", "amount": 777.0}
+		backend.summary, backend.version = live, backend.version+1
+
+		out, err := runOnce(t, backend, restore)
+		if err == nil || !strings.Contains(err.Error(), "the live summary changed after run "+firstRunId+" (2 difference(s) listed above); a restore would drop what was booked since. Pass -discard-changes-since-run to accept that loss") {
+			t.Fatalf("got %v\n%s", err, out)
+		}
+		expectOutput(t, out,
+			"changed since run "+firstRunId+": capital_usage/total_capital written 50000.00, live 50777.00",
+			"changed since run "+firstRunId+": data items written 2, live 3",
+		)
+		unchanged(t, backend, live, 1)
+
+		// The operator accepts the loss explicitly.
+		restore := restore
+		restore.discardSince = true
+		if _, err := runOnce(t, backend, restore); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(backend.summary, pollutedSummary()) {
+			t.Fatalf("live after the restore: %v", backend.summary)
+		}
+	})
 }

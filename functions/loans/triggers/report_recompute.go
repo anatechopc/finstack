@@ -41,6 +41,12 @@ type RecomputeResult struct {
 	// Mismatched names the rows whose company_id is empty or another
 	// company's. They are counted.
 	Mismatched []string
+	// OpenTermPlanned names the confirmed open-term rows whose
+	// principal_payment is at or above the loan's amount: the planned row the
+	// app persists at approval with the whole amount as principal, confirmed
+	// without its amounts being written (#138). They are counted as returned
+	// principal, so the tool refuses to apply while any exists.
+	OpenTermPlanned []string
 	// Loans is one line per loan document: what was booked for it.
 	Loans []LoanLine
 }
@@ -90,6 +96,14 @@ func RecomputeReport(in RecomputeInput) RecomputeResult {
 	// loader reads them: the bad_debt and completed branches sum them.
 	rowsByLoan := map[string][]ScheduleAmounts{}
 	bookedByLoan := map[string][]ScheduleAmounts{} // the rows booked as collections
+	loanAmounts := map[string]float64{}
+	for _, fields := range in.Loans {
+		id, _ := fields["id"].(string)
+		if amount, ok := numberValue(fields["amount"]); ok && id != "" {
+			loanAmounts[id] = amount
+		}
+	}
+	openTermByLoan := map[string][]string{} // row ids, for the loan lines
 	for _, fields := range in.Schedules {
 		if fields["deleted_at"] != nil {
 			continue
@@ -108,6 +122,10 @@ func RecomputeReport(in RecomputeInput) RecomputeResult {
 			continue
 		}
 		rowsByLoan[loanId] = append(rowsByLoan[loanId], amounts)
+		if loanAmount, ok := loanAmounts[loanId]; ok && fields["is_open_term"] == true && amounts.Principal >= loanAmount {
+			res.OpenTermPlanned = append(res.OpenTermPlanned, fmt.Sprintf("schedule %s of loan %s: principal_payment %.2f, loan amount %.2f", id, loanId, amounts.Principal, loanAmount))
+			openTermByLoan[loanId] = append(openTermByLoan[loanId], id)
+		}
 		// The same fields the schedule trigger requires.
 		_, hasInterest := numberValue(fields["interest_payment"])
 		_, hasPrincipal := numberValue(fields["principal_payment"])
@@ -217,7 +235,16 @@ func RecomputeReport(in RecomputeInput) RecomputeResult {
 	}
 	for _, fields := range in.Loans {
 		if fields["deleted_at"] == nil {
-			res.Loans = append(res.Loans, bookLoan(fields))
+			line := bookLoan(fields)
+			if rows := openTermByLoan[line.Id]; len(rows) > 0 {
+				sort.Strings(rows)
+				flag := "open-term planned row(s) " + strings.Join(rows, ", ") + " counted as returned principal (#138)"
+				if line.Note != "" {
+					flag = line.Note + "; " + flag
+				}
+				line.Note = flag
+			}
+			res.Loans = append(res.Loans, line)
 		}
 	}
 
@@ -248,6 +275,7 @@ func RecomputeReport(in RecomputeInput) RecomputeResult {
 	sort.Strings(res.Dropped)
 	sort.Strings(res.Pending)
 	sort.Strings(res.Mismatched)
+	sort.Strings(res.OpenTermPlanned)
 	sort.Slice(res.Loans, func(i, j int) bool { return res.Loans[i].Id < res.Loans[j].Id })
 	usedKeys := map[string]bool{}
 	for _, b := range bookings {

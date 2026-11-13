@@ -349,6 +349,101 @@ func TestEmulator_Apply_IsRefusedWhenATriggerWritesDuringTheRun(t *testing.T) {
 	}
 }
 
+// #138: an open-term loan's planned row confirmed with its amounts untouched
+// would book the whole loan as returned principal. The apply is refused and
+// nothing changes.
+func TestEmulator_Apply_IsRefusedForAConfirmedOpenTermPlannedRow(t *testing.T) {
+	company := newEmulatorCompany(t, "dev")
+	l1 := company.id + "-L1"
+	company.writeDocs("loans", []map[string]any{
+		{"id": l1, "company_id": company.id, "status": "paid_on_time", "amount": 10000.0, "created_at": day(9, 2), "updated_at": day(9, 9)},
+	})
+	company.writeDocs("loan_schedules", []map[string]any{
+		{"id": company.id + "-S1", "company_id": company.id, "loan_id": l1, "status": "paid_on_time", "is_open_term": true,
+			"principal_payment": 10000.0, "interest_payment": 0.0, "paid_at": day(9, 9), "created_at": day(9, 2)},
+	})
+	company.writeNode(map[string]any{"loans": map[string]any{l1 + ":product_type": "business"}, "report_summary": pollutedLive()})
+	seeded := company.node("")
+
+	out, err := company.run(options{loans: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectOutput(t, out,
+		"counted as returned principal: schedule "+company.id+"-S1 of loan "+l1+": principal_payment 10000.00, loan amount 10000.00",
+		"open-term planned row(s) "+company.id+"-S1 counted as returned principal (#138)",
+	)
+	out, err = company.run(options{apply: true}, nil)
+	if err == nil || !strings.Contains(err.Error(), "1 confirmed open-term row(s) carry the planned principal") || !strings.Contains(err.Error(), "(#138)") {
+		t.Fatalf("got %v, want the apply refused\n%s", err, out)
+	}
+	if after := company.node(""); !reflect.DeepEqual(after, seeded) {
+		t.Fatalf("a refused apply changed the company node:\n got %v\nwant %v", after, seeded)
+	}
+}
+
+// The review's restore probes against the real adapters: a record without
+// previous, a record not marked applied, and an amount booked after the apply
+// are each refused with nothing changed; the explicit flag restores anyway.
+func TestEmulator_Restore_IsRefusedUnlessTheRunCanBeUndoneCleanly(t *testing.T) {
+	company := newEmulatorCompany(t, "dev")
+	company.seedStandard()
+	ctx := context.Background()
+
+	for runId, record := range map[string]map[string]any{
+		"20200101T000000Z": {"applied": true, "by": "probe", "after": map[string]any{"sales": map[string]any{"total_amount_released": 50000.0}}},
+		"20200102T000000Z": {"applied": false, "by": "probe", "previous": map[string]any{"sales": map[string]any{"total_amount_released": 1.0}}},
+	} {
+		if err := company.database.NewRef(company.base+"/report_recomputes/"+runId).Set(ctx, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seeded := company.node("")
+	for runId, want := range map[string]string{
+		"20200101T000000Z": "run 20200101T000000Z saved no previous node, so a restore would delete the live summary",
+		"20200102T000000Z": "run 20200102T000000Z is not marked applied (applied: false)",
+	} {
+		out, err := company.run(options{apply: true, restore: runId}, nil)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("restore %s: got %v, want %q\n%s", runId, err, want, out)
+		}
+		if after := company.node(""); !reflect.DeepEqual(after, seeded) {
+			t.Fatalf("a refused restore of %s changed the company node", runId)
+		}
+	}
+
+	// Apply, then a trigger books 777 of capital through the real report store.
+	if out, err := company.run(options{apply: true}, nil); err != nil {
+		t.Fatalf("apply: %v\n%s", err, out)
+	}
+	const applyRun = "20261113T000300Z" // the third run
+	eventTime := time.Date(2026, 11, 13, 1, 0, 0, 0, time.UTC)
+	plan := triggers.PlanCapitalReport(triggers.CapitalReportInput{Amount: 777, CapitalId: "late", Now: eventTime})
+	if err := triggers.NewRTDBReportStore(company.database).Apply(ctx, company.base, "late-event", eventTime, plan); err != nil {
+		t.Fatal(err)
+	}
+	booked := company.node("")
+
+	out, err := company.run(options{apply: true, restore: applyRun}, nil)
+	if err == nil || !strings.Contains(err.Error(), "the live summary changed after run "+applyRun) || !strings.Contains(err.Error(), "-discard-changes-since-run") {
+		t.Fatalf("got %v, want the restore refused\n%s", err, out)
+	}
+	expectOutput(t, out,
+		"changed since run "+applyRun+": capital_usage/total_capital written 71434.86, live 72211.86",
+		"changed since run "+applyRun+": data items written 9, live 10",
+	)
+	if after := company.node(""); !reflect.DeepEqual(after, booked) {
+		t.Fatal("a refused restore changed the company node")
+	}
+
+	if out, err = company.run(options{apply: true, restore: applyRun, discardSince: true}, nil); err != nil {
+		t.Fatalf("restore with -discard-changes-since-run: %v\n%s", err, out)
+	}
+	if got := company.node("/report_summary"); !reflect.DeepEqual(got, seeded["report_summary"]) {
+		t.Fatalf("report_summary after the restore:\n got %v\nwant %v", got, seeded["report_summary"])
+	}
+}
+
 func keysOf(node map[string]any) []string {
 	keys := make([]string, 0, len(node))
 	for key := range node {

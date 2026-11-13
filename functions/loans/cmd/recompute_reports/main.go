@@ -16,7 +16,13 @@
 //	go run ./cmd/recompute_reports -env prod -company <id> -apply -confirm-prod <id>
 //
 // -restore <runId> compares the node saved by that run with the live one;
-// with -apply it writes the saved node back, under the same safeguards.
+// with -apply it writes the saved node back, under the same safeguards. A
+// restore is refused when that run was not applied or saved no node, and when
+// the live node changed after that run unless -discard-changes-since-run is
+// given.
+//
+// An apply is refused while a confirmed open-term row still carries the
+// planned principal (the whole loan amount; app defect #138).
 //
 // Credentials are Application Default Credentials
 // (`gcloud auth application-default login`). With BOTH emulator variables set
@@ -61,6 +67,9 @@ type options struct {
 	by          string
 	loans       bool   // print one line per loan
 	restore     string // run id whose saved node is written back
+	// discardSince lets a restore go ahead although the live node changed
+	// after that run: what was booked since is lost.
+	discardSince bool
 }
 
 // deps are the side effects of one run. main wires Firestore and the Realtime
@@ -89,6 +98,7 @@ func main() {
 	flag.StringVar(&opts.by, "by", operator(), "who runs this; recorded with the run")
 	flag.BoolVar(&opts.loans, "loans", false, "also print one line per loan: id, status and amounts")
 	flag.StringVar(&opts.restore, "restore", "", "run id: use the node saved by that run instead of a recompute")
+	flag.BoolVar(&opts.discardSince, "discard-changes-since-run", false, "with -restore: restore although the live summary changed after that run, losing what was booked since")
 	flag.Parse()
 
 	ctx := context.Background()
@@ -128,6 +138,9 @@ func checkOptions(opts options) error {
 	if strings.ContainsAny(opts.restore, notAKey) {
 		return fmt.Errorf("-restore must be a run id such as 20261113T024613Z, got %q", opts.restore)
 	}
+	if opts.discardSince && opts.restore == "" {
+		return errors.New("-discard-changes-since-run applies to -restore only")
+	}
 	if opts.apply && opts.env == "prod" && opts.confirmProd != opts.company {
 		return fmt.Errorf("refusing to write to production: -apply -env prod also needs -confirm-prod %s", opts.company)
 	}
@@ -161,11 +174,39 @@ func run(ctx context.Context, opts options, d deps, out io.Writer) error {
 		if saved == nil {
 			return fmt.Errorf("no run %s is recorded for company %s", opts.restore, opts.company)
 		}
-		// No "previous" means the node did not exist before that run.
-		after, _ = saved["previous"].(map[string]any)
+		saved = normalize(saved) // numbers as the database returns them
 		label = "saved"
 		record["restores"] = opts.restore
 		fmt.Fprintf(out, "restore: the summary as it was before run %s (by %v)\n\n", opts.restore, saved["by"])
+		if saved["applied"] != true {
+			refusals = append(refusals, fmt.Sprintf("run %s is not marked applied (applied: %v), so the summary it saved was never replaced", opts.restore, saved["applied"]))
+		}
+		var hasPrevious bool
+		if after, hasPrevious = saved["previous"].(map[string]any); !hasPrevious {
+			refusals = append(refusals, fmt.Sprintf("run %s saved no previous node, so a restore would delete the live summary", opts.restore))
+		}
+		// What was booked after the run: the live node against the totals and
+		// the number of data items the run wrote.
+		recorded, _ := saved["after"].(map[string]any)
+		changes := 0
+		rows, _ := compare(recorded, before)
+		for _, row := range rows {
+			if row.differs() {
+				changes++
+				fmt.Fprintf(out, "changed since run %s: %s written %.2f, live %.2f\n", opts.restore, row.path, row.target, row.live)
+			}
+		}
+		counts, _ := saved["data_items"].(map[string]any)
+		if items, ok := counts["after"].(float64); ok && int(items) != len(dataOf(before)) {
+			changes++
+			fmt.Fprintf(out, "changed since run %s: data items written %d, live %d\n", opts.restore, int(items), len(dataOf(before)))
+		}
+		if changes > 0 {
+			fmt.Fprintln(out)
+			if !opts.discardSince {
+				refusals = append(refusals, fmt.Sprintf("the live summary changed after run %s (%d difference(s) listed above); a restore would drop what was booked since. Pass -discard-changes-since-run to accept that loss", opts.restore, changes))
+			}
+		}
 	} else {
 		input, err := d.source(ctx)
 		if err != nil {
@@ -185,6 +226,9 @@ func run(ctx context.Context, opts options, d deps, out io.Writer) error {
 		}
 		if dropped := len(result.Dropped); dropped > 0 {
 			refusals = append(refusals, fmt.Sprintf("%d document(s) were dropped (listed above), so the recompute is incomplete", dropped))
+		}
+		if planned := result.OpenTermPlanned; len(planned) > 0 {
+			refusals = append(refusals, fmt.Sprintf("%d confirmed open-term row(s) carry the planned principal and would be counted as the whole loan returned (%s); the app writes no amounts when it confirms such a row (#138)", len(planned), strings.Join(planned, "; ")))
 		}
 		if retryable > 0 {
 			refusals = append(refusals, fmt.Sprintf("%d event(s) were claimed by a trigger and not applied in the last %d days; a redelivery after this write would count its document twice", retryable, retryDays))
@@ -269,6 +313,9 @@ func printSource(out io.Writer, input triggers.RecomputeInput, result triggers.R
 	}
 	for _, note := range result.Mismatched {
 		fmt.Fprintln(out, "  counted, but its company_id is not this company:", note)
+	}
+	for _, note := range result.OpenTermPlanned {
+		fmt.Fprintln(out, "  open-term planned row confirmed without amounts (#138), counted as returned principal:", note)
 	}
 }
 
