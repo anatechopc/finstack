@@ -25,9 +25,11 @@ const (
 type ruleKind int
 
 const (
-	// keepAuthUsers keeps a user document whose id is a Firebase Auth uid.
-	keepAuthUsers ruleKind = iota
-	// keepReferenced keeps a company that a kept user's company_id names.
+	// keepUsers keeps a user document whose id is a Firebase Auth uid, and a
+	// user document without an Auth account whose company_id names a kept company.
+	keepUsers ruleKind = iota
+	// keepReferenced keeps a company that an Auth-registered user's company_id
+	// names. A user without an Auth account never makes a company kept.
 	keepReferenced
 	// keepOwned keeps a document whose owner field names a kept user or company.
 	keepOwned
@@ -46,8 +48,8 @@ type rule struct {
 // A live dev_ collection that is NOT in this table is kept in full and reported
 // as unclassified. Subcollection documents follow their top-level document.
 var rules = []rule{
-	{"users", keepAuthUsers, nil, "keep when the document id is a Firebase Auth uid (the owner's constraint; users/{uid} is how sign-in finds the profile); delete the rest"},
-	{"companies", keepReferenced, nil, "keep when a kept user's company_id names it; delete the rest"},
+	{"users", keepUsers, nil, "keep when the document id is a Firebase Auth uid (the owner's constraint), or when company_id names a kept company (its clients without a sign-in account); delete the rest"},
+	{"companies", keepReferenced, nil, "keep when the company_id of a user registered in Firebase Auth names it; delete the rest"},
 
 	{"address", keepOwned, []string{"data_id"}, "address of a user or company: keep when data_id is a kept user or kept company"},
 	{"bank_details", keepOwned, []string{"dataId", "data_id"}, "payout account of a user or company: keep when dataId is a kept user or kept company"},
@@ -72,10 +74,23 @@ var rules = []rule{
 	{"password_setup_tokens", deleteAll, nil, "one-time verification records for set-password links"},
 }
 
-// reportNodes are the per-company Realtime Database nodes the report triggers
-// own. They are deleted for every company; a deleted company loses its whole
-// node; every other node under dev/ is kept.
+// Realtime Database policy, per node dev/companies/{id}:
+//   - the company document is deleted: the whole node is deleted;
+//   - otherwise the report nodes are deleted (the triggers rebuild them from
+//     new data), and for a kept company so is loansNode, whose loan-to-product
+//     pairs only refer to loans that are being deleted;
+//   - every other node under dev/ is kept and listed.
 var reportNodes = map[string]bool{"report_summary": true, "report_events": true, "report_recomputes": true}
+
+const loansNode = "loans"
+
+// Rule texts that summary.txt counts by.
+const (
+	ruleUserInAuth  = "user: uid is in Firebase Auth"
+	ruleUserClient  = "user: no Auth account, belongs to a kept company"
+	ruleUserDeleted = "user: no Auth account and no kept company"
+	ruleNoOwner     = "owned: no owner field, kept in doubt"
+)
 
 func ruleFor(collection string) (rule, bool) {
 	for _, r := range rules {
@@ -91,7 +106,7 @@ func ruleFor(collection string) (rule, bool) {
 func selectFields(collection string) []string {
 	r, ok := ruleFor(collection)
 	switch {
-	case ok && r.kind == keepAuthUsers:
+	case ok && r.kind == keepUsers:
 		return []string{"id", "company_id", "email_address"}
 	case ok && r.kind == keepOwned:
 		return r.owners
@@ -141,8 +156,15 @@ func classify(docs []doc, authUsers map[string]string) classification {
 		return byID || byField
 	}
 
-	// Pass 1: kept users, then the companies they reference.
+	// Pass 1a: users registered in Auth are kept, and only they make a company kept.
 	top := map[string]doc{}
+	var users []doc
+	keepUser := func(d doc) {
+		c.keptUsers[strings.Split(d.path, "/")[1]] = true
+		if id := d.fields["id"]; id != "" {
+			c.keptUsers[id] = true
+		}
+	}
 	for _, d := range docs {
 		segs := strings.Split(d.path, "/")
 		if len(segs) != 2 {
@@ -152,15 +174,22 @@ func classify(docs []doc, authUsers map[string]string) classification {
 		if segs[0] != collectionPrefix+"users" {
 			continue
 		}
+		users = append(users, d)
 		if inAuth(segs[1], d.fields) {
-			c.keptUsers[segs[1]] = true
-			if id := d.fields["id"]; id != "" {
-				c.keptUsers[id] = true
-			}
+			keepUser(d)
 			if company := d.fields["company_id"]; company != "" {
 				c.keptCompanies[company] = true
 			}
-		} else if authEmails[strings.ToLower(d.fields["email_address"])] {
+		}
+	}
+	// Pass 1b: a user without an Auth account is kept when it belongs to a
+	// kept company, so that what it owns (address, settings) is kept with it.
+	for _, d := range users {
+		switch {
+		case inAuth(strings.Split(d.path, "/")[1], d.fields):
+		case c.keptCompanies[d.fields["company_id"]]:
+			keepUser(d)
+		case authEmails[strings.ToLower(d.fields["email_address"])]:
 			c.emailOverlap++
 		}
 	}
@@ -171,16 +200,19 @@ func classify(docs []doc, authUsers map[string]string) classification {
 			return keep, "unclassified: not in the rule table, kept in full"
 		}
 		switch r.kind {
-		case keepAuthUsers:
+		case keepUsers:
 			if inAuth(id, fields) {
-				return keep, "user: uid is in Firebase Auth"
+				return keep, ruleUserInAuth
 			}
-			return del, "user: uid is not in Firebase Auth"
+			if c.keptCompanies[fields["company_id"]] {
+				return keep, ruleUserClient
+			}
+			return del, ruleUserDeleted
 		case keepReferenced:
 			if c.keptCompanies[id] {
-				return keep, "company: a kept user references it"
+				return keep, "company: a user registered in Firebase Auth references it"
 			}
-			return del, "company: no kept user references it"
+			return del, "company: no user registered in Firebase Auth references it"
 		case keepOwned:
 			found := false
 			for _, field := range r.owners {
@@ -194,7 +226,7 @@ func classify(docs []doc, authUsers map[string]string) classification {
 				}
 			}
 			if !found {
-				return keep, "owned: no owner field, kept in doubt"
+				return keep, ruleNoOwner
 			}
 			return del, "owned: the owner is not kept"
 		}
@@ -219,14 +251,14 @@ func classify(docs []doc, authUsers map[string]string) classification {
 
 // classifyRTDB turns the shape of dev/ into plan lines. topKeys are the
 // children of dev/; companies maps each id under dev/companies to its children.
-func classifyRTDB(topKeys []string, companies map[string][]string, deletedCompanies map[string]bool) []line {
+func classifyRTDB(topKeys []string, companies map[string][]string, keptCompanies, deletedCompanies map[string]bool) []line {
 	var lines []line
 	add := func(path, decision, why string) {
 		lines = append(lines, line{Kind: "rtdb", Path: path, Decision: decision, Rule: why})
 	}
 	for _, key := range topKeys {
 		if key != "companies" {
-			add(rtdbRoot+"/"+key, keep, "rtdb: not a company report node")
+			add(rtdbRoot+"/"+key, keep, "rtdb: not a company node")
 		}
 	}
 	for id, children := range companies {
@@ -236,13 +268,16 @@ func classifyRTDB(topKeys []string, companies map[string][]string, deletedCompan
 			continue
 		}
 		if len(children) == 0 {
-			add(node, keep, "rtdb: not a report node")
+			add(node, keep, "rtdb: not a report or loans node")
 		}
 		for _, child := range children {
-			if reportNodes[child] {
+			switch {
+			case reportNodes[child]:
 				add(node+"/"+child, del, "rtdb: report node, rebuilt by the triggers from new data")
-			} else {
-				add(node+"/"+child, keep, "rtdb: not a report node")
+			case child == loansNode && keptCompanies[id]:
+				add(node+"/"+child, del, "rtdb: loan-to-product pairs of a kept company, all for deleted loans")
+			default:
+				add(node+"/"+child, keep, "rtdb: not a report or loans node")
 			}
 		}
 	}
@@ -312,17 +347,18 @@ func checkRTDBPath(path string) error {
 	return nil
 }
 
-// checkRTDBDeletePath accepts only the two shapes the planner produces:
-// dev/companies/{id} and dev/companies/{id}/{report node}. A hand-edited plan
-// cannot delete dev/, dev/companies or any other node.
+// checkRTDBDeletePath accepts only the shapes the planner produces:
+// dev/companies/{id}, dev/companies/{id}/{report node} and
+// dev/companies/{id}/loans. A hand-edited plan cannot delete dev/,
+// dev/companies or any other node.
 func checkRTDBDeletePath(path string) error {
 	if err := checkRTDBPath(path); err != nil {
 		return err
 	}
 	segs := strings.Split(path, "/")
-	ok := segs[1] == "companies" && (len(segs) == 3 || len(segs) == 4 && reportNodes[segs[3]])
+	ok := segs[1] == "companies" && (len(segs) == 3 || len(segs) == 4 && (reportNodes[segs[3]] || segs[3] == loansNode))
 	if !ok {
-		return fmt.Errorf("rtdb path %q is not a company node or a company report node", path)
+		return fmt.Errorf("rtdb path %q is not a company node, a company report node or a company loans node", path)
 	}
 	return nil
 }

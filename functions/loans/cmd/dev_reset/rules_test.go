@@ -22,30 +22,40 @@ func decisions(lines []line) map[string]string {
 func TestClassify(t *testing.T) {
 	auth := map[string]string{"U1": "one@example.com", "U3": "", "U5": "five@example.com", "ANON": ""}
 	docs := []doc{
-		// users: kept by document id, kept by id field, deleted otherwise
+		// users registered in Auth: kept by document id or by id field
 		{path: "dev_users/U1", fields: map[string]string{"id": "U1", "company_id": "C1"}},
-		{path: "dev_users/U2", fields: map[string]string{"id": "U2", "company_id": "C2", "email_address": "Five@Example.com"}},
 		{path: "dev_users/U3"},
 		{path: "dev_users/legacy", fields: map[string]string{"id": "U5", "company_id": "C5"}},
+		// users without an Auth account: kept only with a kept company. C2 is
+		// referenced by two of them and by no Auth user, so C2 is not kept.
+		{path: "dev_users/CL1", fields: map[string]string{"id": "CL1", "company_id": "C1"}},
+		{path: "dev_users/U2", fields: map[string]string{"id": "U2", "company_id": "C2", "email_address": "Five@Example.com"}},
+		{path: "dev_users/CL2", fields: map[string]string{"id": "CL2", "company_id": "C2"}},
+		{path: "dev_users/LONE", fields: map[string]string{"id": "LONE"}},
 		{path: "dev_users/U1/devices/D1"},
 		{path: "dev_users/U2/devices/D2"},
+		{path: "dev_users/CL1/devices/D5"},
 		{path: "dev_users/GONE/devices/D3"}, // parent document does not exist, uid not in Auth
 		{path: "dev_users/ANON/devices/D4"}, // parent document does not exist, uid in Auth
 		// companies
 		{path: "dev_companies/C1"},
 		{path: "dev_companies/C2"},
 		{path: "dev_companies/C5"},
-		// owner-scoped configuration
+		// owner-scoped configuration follows its owner
 		{path: "dev_address/A1", fields: map[string]string{"data_id": "U1"}},
 		{path: "dev_address/A2", fields: map[string]string{"data_id": "C1"}},
 		{path: "dev_address/A3", fields: map[string]string{"data_id": "U2"}},
 		{path: "dev_address/A4", fields: map[string]string{"data_id": "C2"}},
 		{path: "dev_address/A5"},
+		{path: "dev_address/A6", fields: map[string]string{"data_id": "CL1"}},
+		{path: "dev_address/A7", fields: map[string]string{"data_id": "CL2"}},
+		{path: "dev_address/A8", fields: map[string]string{"data_id": "LONE"}},
 		{path: "dev_bank_details/B1", fields: map[string]string{"dataId": "C1"}},
 		{path: "dev_bank_details/B2", fields: map[string]string{"data_id": "U5"}},
 		{path: "dev_bank_details/B3", fields: map[string]string{"dataId": "C2"}},
 		{path: "dev_settings/S1", fields: map[string]string{"user_id": "U1"}},
 		{path: "dev_settings/S2", fields: map[string]string{"user_id": "U2"}},
+		{path: "dev_settings/S3", fields: map[string]string{"user_id": "CL1"}},
 		{path: "dev_bills/BL1", fields: map[string]string{"client_id": "C1"}},
 		{path: "dev_bills/BL2", fields: map[string]string{"client_id": "C2"}},
 		// loans domain: all deleted, whoever owns it
@@ -58,13 +68,15 @@ func TestClassify(t *testing.T) {
 		{path: "dev_mystery/X1/children/X2"},
 	}
 	want := map[string]string{
-		"dev_users/U1": keep, "dev_users/U2": del, "dev_users/U3": keep, "dev_users/legacy": keep,
-		"dev_users/U1/devices/D1": keep, "dev_users/U2/devices/D2": del,
+		"dev_users/U1": keep, "dev_users/U3": keep, "dev_users/legacy": keep,
+		"dev_users/CL1": keep, "dev_users/U2": del, "dev_users/CL2": del, "dev_users/LONE": del,
+		"dev_users/U1/devices/D1": keep, "dev_users/U2/devices/D2": del, "dev_users/CL1/devices/D5": keep,
 		"dev_users/GONE/devices/D3": del, "dev_users/ANON/devices/D4": keep,
 		"dev_companies/C1": keep, "dev_companies/C2": del, "dev_companies/C5": keep,
 		"dev_address/A1": keep, "dev_address/A2": keep, "dev_address/A3": del, "dev_address/A4": del, "dev_address/A5": keep,
+		"dev_address/A6": keep, "dev_address/A7": del, "dev_address/A8": del,
 		"dev_bank_details/B1": keep, "dev_bank_details/B2": keep, "dev_bank_details/B3": del,
-		"dev_settings/S1": keep, "dev_settings/S2": del,
+		"dev_settings/S1": keep, "dev_settings/S2": del, "dev_settings/S3": keep,
 		"dev_bills/BL1": keep, "dev_bills/BL2": del,
 		"dev_loans/L1": del, "dev_chat_rooms/R1": del, "dev_chat_rooms/R1/messages/M1": del, "dev_chat_rooms/R2/messages/M2": del,
 		"dev_mystery/X1": keep, "dev_mystery/X1/children/X2": keep,
@@ -82,6 +94,22 @@ func TestClassify(t *testing.T) {
 	}
 	if !c.deletedCompanies["C2"] || len(c.deletedCompanies) != 1 {
 		t.Errorf("deleted companies = %v, want only C2", c.deletedCompanies)
+	}
+	// Only Auth-registered users make a company kept.
+	if !c.keptCompanies["C1"] || !c.keptCompanies["C5"] || len(c.keptCompanies) != 2 {
+		t.Errorf("kept companies = %v, want C1 and C5", c.keptCompanies)
+	}
+	ruleOf := map[string]string{}
+	for _, l := range c.lines {
+		ruleOf[l.Path] = l.Rule
+	}
+	for path, want := range map[string]string{
+		"dev_users/U1": ruleUserInAuth, "dev_users/legacy": ruleUserInAuth, "dev_users/CL1": ruleUserClient,
+		"dev_users/CL2": ruleUserDeleted, "dev_users/LONE": ruleUserDeleted, "dev_address/A5": ruleNoOwner,
+	} {
+		if ruleOf[path] != want {
+			t.Errorf("%s: rule %q, want %q", path, ruleOf[path], want)
+		}
 	}
 	if c.emailOverlap != 1 {
 		t.Errorf("email overlap = %d, want 1 (U2 carries the email of Auth user U5)", c.emailOverlap)
@@ -108,17 +136,19 @@ func TestClassifyRTDB(t *testing.T) {
 	lines := classifyRTDB(
 		[]string{"companies", "typing"},
 		map[string][]string{
-			"C1":     {"authentication", "loans", "report_events", "report_recomputes", "report_summary"},
+			"C1":     {"authentication", "loans", "report_events", "report_recomputes", "report_summary", "something_else"},
 			"C2":     {"loans", "report_summary"},
-			"ORPHAN": {"loans", "report_summary"}, // no company document at all
+			"ORPHAN": {"loans", "report_summary"}, // no company document at all: neither kept nor deleted
 			"LEAF":   nil,
 		},
+		map[string]bool{"C1": true},
 		map[string]bool{"C2": true},
 	)
 	want := map[string]string{
 		"dev/typing":                          keep,
 		"dev/companies/C1/authentication":     keep,
-		"dev/companies/C1/loans":              keep,
+		"dev/companies/C1/something_else":     keep,
+		"dev/companies/C1/loans":              del,
 		"dev/companies/C1/report_events":      del,
 		"dev/companies/C1/report_recomputes":  del,
 		"dev/companies/C1/report_summary":     del,
@@ -152,6 +182,7 @@ func TestPathValidation(t *testing.T) {
 		{Kind: "rtdb", Path: "dev/companies/C1/report_summary", Decision: del},
 		{Kind: "rtdb", Path: "dev/companies/C1/report_events", Decision: del},
 		{Kind: "rtdb", Path: "dev/companies/C1/report_recomputes", Decision: del},
+		{Kind: "rtdb", Path: "dev/companies/C1/loans", Decision: del},
 		{Kind: "rtdb", Path: "dev/typing", Decision: keep},
 	}
 	for _, l := range accept {
@@ -190,7 +221,11 @@ func TestPathValidation(t *testing.T) {
 		{Kind: "rtdb", Path: "dev/companies", Decision: del},
 		{Kind: "rtdb", Path: "dev/companies/", Decision: del},
 		{Kind: "rtdb", Path: "dev/typing", Decision: del},
-		{Kind: "rtdb", Path: "dev/companies/C1/loans", Decision: del},
+		{Kind: "rtdb", Path: "dev/companies/C1/authentication", Decision: del},
+		{Kind: "rtdb", Path: "dev/companies/C1/something_else", Decision: del},
+		{Kind: "rtdb", Path: "dev/companies/C1/loans/L1:product_type", Decision: del},
+		{Kind: "rtdb", Path: "stg/companies/C1/loans", Decision: del},
+		{Kind: "rtdb", Path: "companies/C1/loans", Decision: del},
 		{Kind: "rtdb", Path: "dev/companies/C1/report_summary/data", Decision: del},
 		{Kind: "rtdb", Path: "dev/companies/../../stg", Decision: del},
 		{Kind: "rtdb", Path: "otp/hash", Decision: del},

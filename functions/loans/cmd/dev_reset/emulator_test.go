@@ -62,12 +62,17 @@ func emulatorTarget(t *testing.T) target {
 // Firestore seed: path -> fields. deleted lists exactly the paths the plan
 // must mark delete; every other seeded path must survive apply.
 var firestoreSeed = map[string]map[string]any{
-	// dev: users
-	"dev_users/U1":            {"id": "U1", "company_id": "C1", "first_name": "kept"},
-	"dev_users/U2":            {"id": "U2", "company_id": "C2"},
-	"dev_users/U3":            {"id": "U3"},
-	"dev_users/U1/devices/D1": {"token": "t1"},
-	"dev_users/U2/devices/D2": {"token": "t2"},
+	// dev: users. U1 and U3 are in Auth. CL1 and CL2 are not: CL1 belongs to
+	// the kept company C1 and stays, CL2 belongs to C2, which no Auth user
+	// references, and goes with it.
+	"dev_users/U1":             {"id": "U1", "company_id": "C1", "first_name": "kept"},
+	"dev_users/U2":             {"id": "U2", "company_id": "C2"},
+	"dev_users/U3":             {"id": "U3"},
+	"dev_users/CL1":            {"id": "CL1", "company_id": "C1"},
+	"dev_users/CL2":            {"id": "CL2", "company_id": "C2"},
+	"dev_users/U1/devices/D1":  {"token": "t1"},
+	"dev_users/U2/devices/D2":  {"token": "t2"},
+	"dev_users/CL1/devices/D3": {"token": "t3"},
 	// dev: companies and owner-scoped configuration
 	"dev_companies/C1":    {"id": "C1"},
 	"dev_companies/C2":    {"id": "C2"},
@@ -76,6 +81,8 @@ var firestoreSeed = map[string]map[string]any{
 	"dev_address/A3":      {"data_id": "U2", "data_type": "user"},
 	"dev_address/A4":      {"data_id": "C2", "data_type": "provider"},
 	"dev_address/A5":      {"line1": "no owner"},
+	"dev_address/A6":      {"data_id": "CL1", "data_type": "user"},
+	"dev_address/A7":      {"data_id": "CL2", "data_type": "user"},
 	"dev_bank_details/B1": {"dataId": "C1"},
 	"dev_bank_details/B2": {"dataId": "C2"},
 	"dev_settings/S1":     {"user_id": "U1"},
@@ -99,6 +106,7 @@ var firestoreSeed = map[string]map[string]any{
 	// staging: same ids as dev on purpose
 	"stg_users/U1":                  {"id": "U1", "company_id": "C1"},
 	"stg_users/U2":                  {"id": "U2", "company_id": "C2"},
+	"stg_users/CL2":                 {"id": "CL2", "company_id": "C2"},
 	"stg_users/U2/devices/D2":       {"token": "t2"},
 	"stg_companies/C2":              {"id": "C2"},
 	"stg_loans/L1":                  {"user_id": "U1"},
@@ -115,9 +123,9 @@ var firestoreSeed = map[string]map[string]any{
 }
 
 var firestoreDeleted = []string{
-	"dev_users/U2", "dev_users/U2/devices/D2",
+	"dev_users/U2", "dev_users/U2/devices/D2", "dev_users/CL2",
 	"dev_companies/C2",
-	"dev_address/A3", "dev_address/A4", "dev_bank_details/B2", "dev_settings/S2",
+	"dev_address/A3", "dev_address/A4", "dev_address/A7", "dev_bank_details/B2", "dev_settings/S2",
 	"dev_loans/L1", "dev_loan_schedules/LS1", "dev_payments/P1", "dev_products/PR1", "dev_product_views/PV1",
 	"dev_notifications/N1", "dev_chat_rooms/R1", "dev_chat_rooms/R1/messages/M1", "dev_chat_rooms/R2/messages/M2",
 	"dev_password_setup_tokens/T1", "dev_user_loan_views/V1", "dev_additional_loan_amounts/X1",
@@ -127,40 +135,44 @@ const rtdbSeed = `{
   "dev": {
     "companies": {
       "C1": {"report_summary": {"total": 1}, "report_events": {"e1": {"applied": true}}, "report_recomputes": {"r1": 1},
-             "loans": {"L1:product_type": "business"}, "authentication": {"force_logout": false}},
+             "loans": {"L1:product_type": "business"}, "authentication": {"force_logout": false}, "something_else": true},
       "C2": {"report_summary": {"total": 2}, "loans": {"L2:product_type": "personal"}},
       "C9": {"report_summary": {"total": 9}, "loans": {"L9:product_type": "personal"}}
     },
     "typing": {"R1": {"U1": 1}}
   },
   "stg": {
-    "companies": {"C1": {"report_summary": {"total": 5}, "report_events": {"e1": {"applied": true}}}, "C2": {"report_summary": {"total": 6}}},
+    "companies": {"C1": {"report_summary": {"total": 5}, "report_events": {"e1": {"applied": true}}, "loans": {"L1:product_type": "business"}},
+                  "C2": {"report_summary": {"total": 6}}},
     "typing": {"R1": {"U1": 1}}
   },
-  "companies": {"C1": {"report_summary": {"total": 7}}},
+  "companies": {"C1": {"report_summary": {"total": 7}, "loans": {"L1:product_type": "business"}}},
   "otp": {"h1": {"mobile": "x"}}
 }`
 
-// What the Realtime Database must hold after apply: C1 loses its three report
-// nodes, C2 (deleted company) goes, C9 (no company document) loses only its
-// report node, everything outside dev/companies is untouched.
+// What the Realtime Database must hold after apply: C1 (kept company) loses
+// its three report nodes and its loans node, C2 (deleted company) goes, C9 (no
+// company document, so neither kept nor deleted) loses only its report node,
+// everything outside dev/companies is untouched.
 const rtdbAfter = `{
   "dev": {
     "companies": {
-      "C1": {"loans": {"L1:product_type": "business"}, "authentication": {"force_logout": false}},
+      "C1": {"authentication": {"force_logout": false}, "something_else": true},
       "C9": {"loans": {"L9:product_type": "personal"}}
     },
     "typing": {"R1": {"U1": 1}}
   },
   "stg": {
-    "companies": {"C1": {"report_summary": {"total": 5}, "report_events": {"e1": {"applied": true}}}, "C2": {"report_summary": {"total": 6}}},
+    "companies": {"C1": {"report_summary": {"total": 5}, "report_events": {"e1": {"applied": true}}, "loans": {"L1:product_type": "business"}},
+                  "C2": {"report_summary": {"total": 6}}},
     "typing": {"R1": {"U1": 1}}
   },
-  "companies": {"C1": {"report_summary": {"total": 7}}},
+  "companies": {"C1": {"report_summary": {"total": 7}, "loans": {"L1:product_type": "business"}}},
   "otp": {"h1": {"mobile": "x"}}
 }`
 
 var rtdbDeleted = []string{
+	"dev/companies/C1/loans",
 	"dev/companies/C1/report_events", "dev/companies/C1/report_recomputes", "dev/companies/C1/report_summary",
 	"dev/companies/C2", "dev/companies/C9/report_summary",
 }
@@ -279,7 +291,12 @@ func TestEmulator_PlanThenApply_DeletesExactlyThePlannedDevPaths(t *testing.T) {
 		}
 	}
 	summary := planOut.String()
-	for _, want := range []string{"dev_mystery", "UNCLASSIFIED", "kept user ids: U1, U3", "kept company ids: C1", "dev/companies/C2 ", "children,"} {
+	for _, want := range []string{
+		"dev_mystery", "UNCLASSIFIED", "kept company ids: C1", "dev/companies/C2 ", "dev/companies/C1/loans ", "children,",
+		"user documents kept: 3 (2 registered in Firebase Auth, 1 with no Auth account but in a kept company), deleted: 2",
+		"kept user ids, registered in Firebase Auth: U1, U3",
+		"kept user ids, no Auth account, of a kept company: CL1",
+	} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("summary.txt does not mention %q", want)
 		}

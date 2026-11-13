@@ -96,7 +96,7 @@ func read(ctx context.Context, t target) (snapshot, error) {
 
 func (s snapshot) plan() (classification, []line) {
 	c := classify(s.docs, s.authUsers)
-	return c, append(c.lines, classifyRTDB(s.rtdbTop, s.companies, c.deletedCompanies)...)
+	return c, append(c.lines, classifyRTDB(s.rtdbTop, s.companies, c.keptCompanies, c.deletedCompanies)...)
 }
 
 // shallowKeys returns the child keys of a Realtime Database node without
@@ -455,7 +455,7 @@ func summarize(title, project string, at time.Time, s snapshot, c classification
 	tallies := map[string]*tally{}
 	exportIDs := map[string]bool{}
 	noOwner := map[string]int{}
-	var keptUserDocs, keptCompanyDocs, nodesDeleted, nodesKept []string
+	var authUserDocs, clientUserDocs, keptCompanyDocs, nodesDeleted, nodesKept []string
 	deletedUsers, deletedCompanyDocs := 0, 0
 	for _, l := range lines {
 		if l.Kind == "rtdb" {
@@ -480,15 +480,17 @@ func summarize(title, project string, at time.Time, s snapshot, c classification
 		} else {
 			tallies[p].del++
 		}
-		if strings.HasPrefix(l.Rule, "owned: no owner field") {
+		if l.Rule == ruleNoOwner {
 			noOwner[p]++
 		}
 		if len(segs) != 2 {
 			continue
 		}
 		switch {
+		case segs[0] == collectionPrefix+"users" && l.Rule == ruleUserInAuth:
+			authUserDocs = append(authUserDocs, segs[1])
 		case segs[0] == collectionPrefix+"users" && l.Decision == keep:
-			keptUserDocs = append(keptUserDocs, segs[1])
+			clientUserDocs = append(clientUserDocs, segs[1])
 		case segs[0] == collectionPrefix+"users":
 			deletedUsers++
 		case segs[0] == collectionPrefix+"companies" && l.Decision == keep:
@@ -545,13 +547,15 @@ func summarize(title, project string, at time.Time, s snapshot, c classification
 	for _, p := range sortedKeys(noOwner) {
 		fmt.Fprintf(&b, "  %s: %d documents carry no owner field and are kept in doubt\n", p, noOwner[p])
 	}
-	fmt.Fprintf(&b, "\n  user documents kept: %d, deleted: %d\n", len(keptUserDocs), deletedUsers)
-	fmt.Fprintf(&b, "  Auth users with no %susers document: %d\n", collectionPrefix, len(s.authUsers)-len(keptUserDocs))
+	fmt.Fprintf(&b, "\n  user documents kept: %d (%d registered in Firebase Auth, %d with no Auth account but in a kept company), deleted: %d\n",
+		len(authUserDocs)+len(clientUserDocs), len(authUserDocs), len(clientUserDocs), deletedUsers)
+	fmt.Fprintf(&b, "  Auth users with no %susers document: %d\n", collectionPrefix, len(s.authUsers)-len(authUserDocs))
 	fmt.Fprintf(&b, "  deleted user documents whose email address belongs to a registered Auth user under another uid: %d\n", c.emailOverlap)
-	fmt.Fprintf(&b, "  kept user ids: %s\n", list(keptUserDocs))
-	fmt.Fprintf(&b, "\n  company documents kept: %d, deleted: %d\n", len(keptCompanyDocs), deletedCompanyDocs)
+	fmt.Fprintf(&b, "  kept user ids, registered in Firebase Auth: %s\n", list(authUserDocs))
+	fmt.Fprintf(&b, "  kept user ids, no Auth account, of a kept company: %s\n", list(clientUserDocs))
+	fmt.Fprintf(&b, "\n  company documents kept: %d, deleted: %d (a company is kept when a user registered in Firebase Auth references it)\n", len(keptCompanyDocs), deletedCompanyDocs)
 	fmt.Fprintf(&b, "  kept company ids: %s\n", list(keptCompanyDocs))
-	fmt.Fprintf(&b, "  company ids that kept users reference but that have no company document: %s\n", list(danglingCompanies))
+	fmt.Fprintf(&b, "  company ids that Auth-registered users reference but that have no company document: %s\n", list(danglingCompanies))
 
 	fmt.Fprintf(&b, "\nREALTIME DATABASE (%s/)\n  nodes to delete: %d\n", rtdbRoot, len(nodesDeleted))
 	for _, p := range nodesDeleted {
