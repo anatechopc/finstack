@@ -11,8 +11,14 @@ import (
 // company: raw documents, exactly as read. Every rule (required fields,
 // statuses, dates) lives in RecomputeReport so it is testable without I/O.
 type RecomputeInput struct {
-	Loans     []map[string]any // {prefix}loans where company_id == company
-	Schedules []map[string]any // {prefix}loan_schedules where company_id == company
+	// Company is the company id. A row whose company_id is empty or another
+	// company's still belongs to this company's loan: it is counted and
+	// reported in Mismatched. Empty skips that check.
+	Company string
+	Loans   []map[string]any // {prefix}loans where company_id == company
+	// Schedules are the rows of those loans, read by loan_id as the trigger's
+	// schedule loader reads them.
+	Schedules []map[string]any
 	Capital   []map[string]any // {prefix}capital where provider_id == company
 	// ProductTypes maps a loan id to its product type, from the Realtime
 	// Database nodes {company}/loans/{loanId}:product_type the triggers read.
@@ -27,15 +33,43 @@ type RecomputeResult struct {
 	// Released, Paid and Capital count the documents that were booked.
 	Released, Paid, Capital int
 	// Dropped names every document left out and why (owner rule: malformed
-	// documents are logged and dropped).
+	// documents are logged and dropped). The summary is incomplete while any
+	// exists, so the tool refuses to apply it.
 	Dropped []string
+	// Pending names the payment_submitted rows: unconfirmed, not counted.
+	Pending []string
+	// Mismatched names the rows whose company_id is empty or another
+	// company's. They are counted.
+	Mismatched []string
+	// Loans is one line per loan document: what was booked for it.
+	Loans []LoanLine
+}
+
+// LoanLine is what recompute booked for one loan. Ids and amounts only.
+type LoanLine struct {
+	Id, Status string
+	Amount     float64 // the loan's amount field
+	Released   float64 // booked as total_amount_released
+	// PaidPrincipal and Interest sum the loan's confirmed rows that were
+	// booked as collections.
+	PaidPrincipal, Interest float64
+	Remainder               float64 // booked at settlement (completed)
+	BadDebt                 float64 // booked as bad debt
+	Note                    string  // why nothing was released, or why the loan was dropped
 }
 
 // RecomputeReport rebuilds the summary from the final documents by feeding
-// them to the same planning functions the triggers use (PlanLoanReport,
-// PlanScheduleReport, PlanCapitalReport), so the two agree by construction.
+// them to the planning functions the triggers use (PlanLoanReport,
+// PlanScheduleReport, PlanCapitalReport), so a formula has one implementation.
 // What the triggers take from the event time, recompute takes from a document
-// date: see docs/superpowers/specs/2026-11-13-report-recompute-tool.md.
+// date, and a document's final state stands in for its history: the cases
+// where that gives another number than the triggers booked are listed in
+// docs/superpowers/specs/2026-11-13-report-recompute-tool.md §4.
+//
+// One deliberate difference from the trigger planner: a payment_submitted row
+// is a borrower's claim that no teller has confirmed. The triggers book it
+// when it is created and count it as returned principal; recompute counts
+// neither until the row is paid_on_time or paid_late.
 //
 // The result depends only on the set of documents, not on their order.
 func RecomputeReport(in RecomputeInput) RecomputeResult {
@@ -46,24 +80,34 @@ func RecomputeReport(in RecomputeInput) RecomputeResult {
 		plan ReportPlan
 	}
 	var bookings []booking
-	drop := func(format string, args ...any) {
-		res.Dropped = append(res.Dropped, fmt.Sprintf(format, args...))
+	drop := func(format string, args ...any) string {
+		note := fmt.Sprintf(format, args...)
+		res.Dropped = append(res.Dropped, note)
+		return note
 	}
 
-	// Every row of a loan, read the way the trigger's schedule loader reads
-	// it: the bad_debt and completed branches sum the paid ones.
+	// The confirmed rows of each loan, read the way the trigger's schedule
+	// loader reads them: the bad_debt and completed branches sum them.
 	rowsByLoan := map[string][]ScheduleAmounts{}
+	bookedByLoan := map[string][]ScheduleAmounts{} // the rows booked as collections
 	for _, fields := range in.Schedules {
 		if fields["deleted_at"] != nil {
 			continue
 		}
+		id := docId(fields)
 		loanId, _ := fields["loan_id"].(string)
 		amounts := scheduleAmountsOf(fields)
-		rowsByLoan[loanId] = append(rowsByLoan[loanId], amounts)
-		if !isCollectionStatus(amounts.Status) {
+		if owner, _ := fields["company_id"].(string); in.Company != "" && owner != in.Company {
+			res.Mismatched = append(res.Mismatched, fmt.Sprintf("schedule %s of loan %s: company_id %q", id, loanId, owner))
+		}
+		if amounts.Status == "payment_submitted" {
+			res.Pending = append(res.Pending, fmt.Sprintf("schedule %s of loan %s: principal %.2f, interest %.2f", id, loanId, amounts.Principal, amounts.Interest))
 			continue
 		}
-		id := docId(fields)
+		if !isConfirmedPayment(amounts.Status) {
+			continue
+		}
+		rowsByLoan[loanId] = append(rowsByLoan[loanId], amounts)
 		// The same fields the schedule trigger requires.
 		_, hasInterest := numberValue(fields["interest_payment"])
 		_, hasPrincipal := numberValue(fields["principal_payment"])
@@ -77,7 +121,7 @@ func RecomputeReport(in RecomputeInput) RecomputeResult {
 			continue
 		}
 		// When the money was received, else when the row was marked paid, else
-		// when it was created (a submission not yet confirmed).
+		// when it was created.
 		at, ok := firstTime(fields, "collected_at", "paid_at", "created_at")
 		if !ok {
 			drop("schedule %s: no collected_at, paid_at or created_at", id)
@@ -89,53 +133,62 @@ func RecomputeReport(in RecomputeInput) RecomputeResult {
 		})
 		bookings = append(bookings, booking{at, "schedule/" + id, plan})
 		res.Paid++
+		bookedByLoan[loanId] = append(bookedByLoan[loanId], amounts)
 	}
-	// A loan's rows are summed in a fixed order so the sum does not depend on
+	// A loan's rows are summed in a fixed order so the sums do not depend on
 	// the order Firestore returned them in.
-	for _, rows := range rowsByLoan {
-		sort.Slice(rows, func(i, j int) bool {
-			a, b := rows[i], rows[j]
-			if a.Principal != b.Principal {
-				return a.Principal < b.Principal
-			}
-			if a.Extra != b.Extra {
-				return a.Extra < b.Extra
-			}
-			return a.Status < b.Status
-		})
+	for _, byLoan := range []map[string][]ScheduleAmounts{rowsByLoan, bookedByLoan} {
+		for _, rows := range byLoan {
+			sort.Slice(rows, func(i, j int) bool {
+				a, b := rows[i], rows[j]
+				if a.Principal != b.Principal {
+					return a.Principal < b.Principal
+				}
+				if a.Extra != b.Extra {
+					return a.Extra < b.Extra
+				}
+				if a.Interest != b.Interest {
+					return a.Interest < b.Interest
+				}
+				return a.Status < b.Status
+			})
+		}
 	}
 
-	for _, fields := range in.Loans {
-		if fields["deleted_at"] != nil {
-			continue
-		}
+	bookLoan := func(fields map[string]any) LoanLine {
 		id, _ := fields["id"].(string)
 		status, _ := fields["status"].(string)
 		amount, hasAmount := numberValue(fields["amount"])
+		line := LoanLine{Id: docId(fields), Status: status, Amount: amount}
+		for _, row := range bookedByLoan[id] {
+			line.PaidPrincipal += row.Principal
+			line.Interest += row.Interest
+		}
 		// The same fields the loan trigger requires.
 		if id == "" || status == "" || !hasAmount {
-			drop("loan %s: no id, status or amount", docId(fields))
-			continue
+			line.Note = "dropped: " + drop("loan %s: no id, status or amount", line.Id)
+			return line
 		}
 		released, known := loanWasReleased(status)
 		if !known {
-			drop("loan %s: unknown status %q", id, status)
-			continue
+			line.Note = "dropped: " + drop("loan %s: unknown status %q", id, status)
+			return line
 		}
 		if !released {
-			continue
+			line.Note = "not released"
+			return line
 		}
 		productType := in.ProductTypes[id]
 		if productType == "" {
-			drop("loan %s: no product type", id)
-			continue
+			line.Note = "dropped: " + drop("loan %s: no product type", id)
+			return line
 		}
 		created, hasCreated := firstTime(fields, "created_at")
 		updated, hasUpdated := firstTime(fields, "updated_at")
 		terminal := status == "bad_debt" || status == "completed"
 		if !hasCreated || (terminal && !hasUpdated) {
-			drop("loan %s: no created_at or updated_at", id)
-			continue
+			line.Note = "dropped: " + drop("loan %s: no created_at or updated_at", id)
+			return line
 		}
 
 		input := LoanReportInput{
@@ -145,6 +198,7 @@ func RecomputeReport(in RecomputeInput) RecomputeResult {
 		plan, _ := PlanLoanReport(input)
 		bookings = append(bookings, booking{created, "loan/" + id + "/release", plan})
 		res.Released++
+		line.Released = amount
 
 		if terminal {
 			input.Status, input.OldStatus, input.Now = status, "approved", updated
@@ -154,6 +208,16 @@ func RecomputeReport(in RecomputeInput) RecomputeResult {
 			input.Schedules = rowsByLoan[id]
 			plan, _ = PlanLoanReport(input)
 			bookings = append(bookings, booking{updated, "loan/" + id + "/" + status, plan})
+			// The plan's own numbers: completed returns the remainder to
+			// capital, bad_debt books the debt under capital_usage.
+			line.Remainder = plan.Increments["capital_usage/total_capital"]
+			line.BadDebt = plan.Increments["capital_usage/total_bad_debts"]
+		}
+		return line
+	}
+	for _, fields := range in.Loans {
+		if fields["deleted_at"] == nil {
+			res.Loans = append(res.Loans, bookLoan(fields))
 		}
 	}
 
@@ -182,6 +246,9 @@ func RecomputeReport(in RecomputeInput) RecomputeResult {
 		return bookings[i].id < bookings[j].id
 	})
 	sort.Strings(res.Dropped)
+	sort.Strings(res.Pending)
+	sort.Strings(res.Mismatched)
+	sort.Slice(res.Loans, func(i, j int) bool { return res.Loans[i].Id < res.Loans[j].Id })
 	usedKeys := map[string]bool{}
 	for _, b := range bookings {
 		for _, path := range sortedPaths(b.plan.Increments) {
@@ -240,6 +307,13 @@ func loanWasReleased(status string) (released, known bool) {
 		return true, true
 	}
 	return false, false
+}
+
+// isConfirmedPayment reports whether a row's money was confirmed received.
+// Narrower than the trigger's isCollectionStatus, which also takes
+// payment_submitted.
+func isConfirmedPayment(status string) bool {
+	return status == "paid_on_time" || status == "paid_late"
 }
 
 // scheduleAmountsOf reads what the loan-level branches need from a

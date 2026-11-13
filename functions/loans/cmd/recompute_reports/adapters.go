@@ -78,19 +78,20 @@ func connect(ctx context.Context, opts options, out io.Writer) (deps, func(), er
 		source:  firestoreSource(store, database, prefix, base, opts.company),
 		replace: databaseReplace(database, base),
 		mark:    databaseMark(database, base),
+		record:  databaseRecord(database, base),
 		now:     time.Now,
 	}, func() { store.Close() }, nil
 }
 
-// firestoreSource reads the company's loans, schedules and capital, and the
-// product-type nodes the triggers read.
+// firestoreSource reads the company's loans and capital, each loan's rows,
+// and the product-type nodes the triggers read.
 func firestoreSource(store *firestore.Client, database *db.Client, prefix, base, company string) func(context.Context) (triggers.RecomputeInput, error) {
-	// ponytail: one unpaged stream per collection; page by document id (see
+	// ponytail: one unpaged stream per query; page by document id (see
 	// cmd/backfill_search_tokens eachDocument) when a company outgrows it.
-	all := func(ctx context.Context, collection, field string) ([]map[string]any, error) {
-		docs, err := store.Collection(prefix+collection).Where(field, "==", company).Documents(ctx).GetAll()
+	all := func(ctx context.Context, collection, field, value string) ([]map[string]any, error) {
+		docs, err := store.Collection(prefix+collection).Where(field, "==", value).Documents(ctx).GetAll()
 		if err != nil {
-			return nil, fmt.Errorf("%s%s where %s == %s: %w", prefix, collection, field, company, err)
+			return nil, fmt.Errorf("%s%s where %s == %s: %w", prefix, collection, field, value, err)
 		}
 		out := make([]map[string]any, 0, len(docs))
 		for _, doc := range docs {
@@ -99,15 +100,27 @@ func firestoreSource(store *firestore.Client, database *db.Client, prefix, base,
 		return out, nil
 	}
 	return func(ctx context.Context) (triggers.RecomputeInput, error) {
-		var in triggers.RecomputeInput
+		in := triggers.RecomputeInput{Company: company}
 		var err error
-		if in.Loans, err = all(ctx, "loans", "company_id"); err != nil {
+		if in.Loans, err = all(ctx, "loans", "company_id", company); err != nil {
 			return in, err
 		}
-		if in.Schedules, err = all(ctx, "loan_schedules", "company_id"); err != nil {
-			return in, err
+		// Rows by loan_id, the query of the trigger's schedule loader
+		// (firestoreScheduleLoader), not by the row's own company_id.
+		// ponytail: one query per loan; batch with an `in` filter (30 ids per
+		// query) when a company has thousands of loans.
+		for _, loan := range in.Loans {
+			loanId, _ := loan["id"].(string)
+			if loanId == "" {
+				continue
+			}
+			rows, err := all(ctx, "loan_schedules", "loan_id", loanId)
+			if err != nil {
+				return in, err
+			}
+			in.Schedules = append(in.Schedules, rows...)
 		}
-		if in.Capital, err = all(ctx, "capital", "provider_id"); err != nil {
+		if in.Capital, err = all(ctx, "capital", "provider_id", company); err != nil {
 			return in, err
 		}
 		var nodes map[string]any
@@ -151,10 +164,19 @@ func databaseReplace(database *db.Client, base string) func(context.Context, str
 	}
 }
 
-// databaseMark records a run beside report_summary, like report_events, so
-// the app, which streams report_summary in full, never downloads it.
+// databaseMark merges fields into a run record. Records live beside
+// report_summary, like report_events, so the app, which streams
+// report_summary in full, never downloads them.
 func databaseMark(database *db.Client, base string) func(context.Context, string, map[string]any) error {
-	return func(ctx context.Context, runId string, marker map[string]any) error {
-		return database.NewRef(base+"/report_recomputes/"+runId).Set(ctx, marker)
+	return func(ctx context.Context, runId string, fields map[string]any) error {
+		return database.NewRef(base+"/report_recomputes/"+runId).Update(ctx, fields)
+	}
+}
+
+func databaseRecord(database *db.Client, base string) func(context.Context, string) (map[string]any, error) {
+	return func(ctx context.Context, runId string) (map[string]any, error) {
+		var record map[string]any
+		err := database.NewRef(base+"/report_recomputes/"+runId).Get(ctx, &record)
+		return record, err
 	}
 }

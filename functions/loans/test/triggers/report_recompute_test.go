@@ -20,9 +20,10 @@ func at(month time.Month, day, hour int) time.Time {
 func millis(t time.Time) int64 { return t.UnixMilli() }
 
 // recomputeFixture is one company as Firestore holds it: an active loan with
-// one payment, a settled loan, a bad debt, two loans that were never
-// released, and one capital addition. Amounts mix doubles and integers, and
-// dates mix milliseconds and timestamps, as the real collections do.
+// one payment, a settled loan, a bad debt with an unconfirmed submission, two
+// loans that were never released, and one capital addition. Amounts mix
+// doubles and integers, and dates mix milliseconds and timestamps, as the
+// real collections do.
 func recomputeFixture() triggers.RecomputeInput {
 	return triggers.RecomputeInput{
 		ProductTypes: map[string]string{"L1": "business", "L2": "business", "L3": "personal", "L4": "business", "L5": "business"},
@@ -51,7 +52,7 @@ func recomputeFixture() triggers.RecomputeInput {
 				"paid_at": millis(at(9, 20, 8)), "created_at": millis(at(9, 20, 8))},
 			{"id": "S4", "loan_id": "L2", "status": "paid_late", "principal_payment": int64(2000), "interest_payment": int64(300),
 				"paid_at": at(9, 25, 8), "created_at": millis(at(9, 25, 8))},
-			// A borrower submission not yet confirmed: only created_at.
+			// A borrower submission no teller has confirmed: not counted.
 			{"id": "S5", "loan_id": "L3", "status": "payment_submitted", "principal_payment": 1000.0, "interest_payment": 100.0, "created_at": millis(at(9, 15, 9))},
 			{"id": "S6", "loan_id": "L3", "status": "not_paid", "principal_payment": 2500.0, "interest_payment": 300.0, "created_at": millis(at(9, 15, 9))},
 		},
@@ -78,55 +79,55 @@ func total(t *testing.T, node map[string]any, path string) float64 {
 // Every total, derived by hand from the fixture:
 //
 //	released    L1 10000 + L2 20000 + L3 8000                          = 38000
-//	paid rows   S2 3000+500, S3 5000+400, S4 2000+300, S5 1000+100
-//	            principal 11000, interest 1300, collections 12300
+//	paid rows   S2 3000+500, S3 5000+400, S4 2000+300 (S5 is unconfirmed)
+//	            principal 10000, interest 1200, collections 11200
 //	settlement  L2: 20000 + 500 - 200 - 100 - (5000+1000) - 2000        = 12200
-//	bad debt    L3: 8000 - 1000 (S5 only; S6 is not paid)               = 7000
-//	collections 12300 + 12200 = 24500; principal 11000 + 12200 = 23200
-//	capital     100000 + 11000 (principal returned) + 12200 (settled)   = 123200
+//	bad debt    L3: 8000 - 0 (S5 unconfirmed, S6 not paid)              = 8000
+//	collections 11200 + 12200 = 23400; principal 10000 + 12200 = 22200
+//	capital     100000 + 10000 (principal returned) + 12200 (settled)   = 122200
 func TestRecomputeReport_RebuildsEveryTotalFromTheDocuments(t *testing.T) {
 	result := triggers.RecomputeReport(recomputeFixture())
 	if len(result.Dropped) != 0 {
 		t.Fatalf("dropped: %v", result.Dropped)
 	}
-	if result.Released != 3 || result.Paid != 4 || result.Capital != 1 {
-		t.Fatalf("booked %d loans, %d rows, %d capital; want 3, 4, 1", result.Released, result.Paid, result.Capital)
+	if result.Released != 3 || result.Paid != 3 || result.Capital != 1 {
+		t.Fatalf("booked %d loans, %d rows, %d capital; want 3, 3, 1", result.Released, result.Paid, result.Capital)
+	}
+	if want := []string{"schedule S5 of loan L3: principal 1000.00, interest 100.00"}; !reflect.DeepEqual(result.Pending, want) {
+		t.Errorf("pending submissions: got %q, want %q", result.Pending, want)
 	}
 
 	node := result.Plan.SummaryNode()
 	want := map[string]float64{
 		"sales/total_amount_released":    38000,
-		"sales/total_collections":        24500,
-		"sales/total_interest_payments":  1300,
-		"sales/total_principal_payments": 23200,
+		"sales/total_collections":        23400,
+		"sales/total_interest_payments":  1200,
+		"sales/total_principal_payments": 22200,
 
 		"products/business/total_amount_released":    30000,
 		"products/business/total_collections":        23400, // 3500 + 5400 + 2300 + 12200
 		"products/business/total_interest_payments":  1200,
 		"products/business/total_principal_payments": 22200, // 3000 + 5000 + 2000 + 12200
 		"products/personal/total_amount_released":    8000,
-		"products/personal/total_collections":        1100,
-		"products/personal/total_interest_payments":  100,
-		"products/personal/total_principal_payments": 1000,
-		"products/personal/total_bad_debts":          7000,
+		"products/personal/total_bad_debts":          8000,
 
-		"capital_usage/total_capital":   123200,
-		"capital_usage/total_bad_debts": 7000,
+		"capital_usage/total_capital":   122200,
+		"capital_usage/total_bad_debts": 8000,
 
 		"total_summary/year:2026/total_amount_released":    38000,
-		"total_summary/year:2026/total_collections":        24500,
-		"total_summary/year:2026/total_interest_payments":  1300,
-		"total_summary/year:2026/total_principal_payments": 23200,
-		"total_summary/year:2026/total_bad_debts":          7000,
+		"total_summary/year:2026/total_collections":        23400,
+		"total_summary/year:2026/total_interest_payments":  1200,
+		"total_summary/year:2026/total_principal_payments": 22200,
+		"total_summary/year:2026/total_bad_debts":          8000,
 		// Releases bucket on the loan's created_at, paid rows on their own date.
 		"total_summary/year:2026:month:9/total_amount_released":    38000,
-		"total_summary/year:2026:month:9/total_collections":        12300,
-		"total_summary/year:2026:month:9/total_interest_payments":  1300,
-		"total_summary/year:2026:month:9/total_principal_payments": 11000,
+		"total_summary/year:2026:month:9/total_collections":        11200,
+		"total_summary/year:2026:month:9/total_interest_payments":  1200,
+		"total_summary/year:2026:month:9/total_principal_payments": 10000,
 		// Settlement and bad debt bucket on the loan's updated_at.
 		"total_summary/year:2026:month:10/total_collections":        12200,
 		"total_summary/year:2026:month:10/total_principal_payments": 12200,
-		"total_summary/year:2026:month:10/total_bad_debts":          7000,
+		"total_summary/year:2026:month:10/total_bad_debts":          8000,
 		// S2 buckets on collected_at (September 9), not on paid_at (the 10th).
 		"total_summary/year:2026:month:9:week:37:day:9/total_collections":        3500,
 		"total_summary/year:2026:month:9:week:37:day:9/total_interest_payments":  500,
@@ -137,24 +138,68 @@ func TestRecomputeReport_RebuildsEveryTotalFromTheDocuments(t *testing.T) {
 			t.Errorf("%s: got %v, want %v", path, got, value)
 		}
 	}
-	for _, absent := range []string{"sales/total_bad_debts", "total_summary/year:2026:month:9/total_bad_debts", "total_summary/year:2026:month:9:week:37:day:10"} {
+	for _, absent := range []string{
+		"sales/total_bad_debts",
+		"total_summary/year:2026:month:9/total_bad_debts",
+		"total_summary/year:2026:month:9:week:37:day:10/total_collections",
+		"products/personal/total_collections", // the only personal row is unconfirmed
+	} {
 		if _, ok := result.Plan.Increments[absent]; ok {
 			t.Errorf("%s must not exist", absent)
 		}
 	}
 
 	// One release per released loan, one add_capital, a refresh_capital and a
-	// collection per paid row and per settlement, one bad_debt.
+	// collection per confirmed row and per settlement, one bad_debt.
 	types := map[string]int{}
 	for _, item := range result.Plan.Items {
 		types[item.Item["data_type"].(string)]++
 	}
-	wantTypes := map[string]int{"release": 3, "add_capital": 1, "refresh_capital": 5, "collection": 5, "bad_debt": 1}
+	wantTypes := map[string]int{"release": 3, "add_capital": 1, "refresh_capital": 4, "collection": 4, "bad_debt": 1}
 	if !reflect.DeepEqual(types, wantTypes) {
 		t.Errorf("data items by type: got %v, want %v", types, wantTypes)
 	}
-	if got := len(node["data"].(map[string]any)); got != 15 {
-		t.Errorf("data node holds %d items, want 15", got)
+	if got := len(node["data"].(map[string]any)); got != 13 {
+		t.Errorf("data node holds %d items, want 13", got)
+	}
+
+	// One line per loan, by id: what was booked for it.
+	wantLoans := []triggers.LoanLine{
+		{Id: "L1", Status: "paid_on_time", Amount: 10000, Released: 10000, PaidPrincipal: 3000, Interest: 500},
+		{Id: "L2", Status: "completed", Amount: 20000, Released: 20000, PaidPrincipal: 7000, Interest: 700, Remainder: 12200},
+		{Id: "L3", Status: "bad_debt", Amount: 8000, Released: 8000, BadDebt: 8000},
+		{Id: "L4", Status: "pending", Amount: 5000, Note: "not released"},
+		{Id: "L5", Status: "declined", Amount: 7000, Note: "not released"},
+	}
+	if !reflect.DeepEqual(result.Loans, wantLoans) {
+		t.Errorf("loan lines:\n got %+v\nwant %+v", result.Loans, wantLoans)
+	}
+}
+
+// A loan leaves approved for the status of its latest schedule, so every
+// LoanStatus value (packages/loans/loan_repository/.../loan_status.dart)
+// except pending and declined belongs to a loan that was released.
+func TestRecomputeReport_ALoanIsReleasedInEveryStatusButPendingAndDeclined(t *testing.T) {
+	released := map[string]bool{
+		"pending": false, "declined": false,
+		"approved": true, "payment_submitted": true, "paid_on_time": true, "paid_late": true,
+		"not_paid": true, "not_paid_overdue": true, "completed": true, "bad_debt": true,
+	}
+	for status, want := range released {
+		t.Run(status, func(t *testing.T) {
+			result := triggers.RecomputeReport(triggers.RecomputeInput{
+				Loans: []map[string]any{{"id": "L1", "status": status, "amount": 1000.0,
+					"created_at": millis(testNow), "updated_at": millis(testNow)}},
+				ProductTypes: map[string]string{"L1": "business"},
+			})
+			if len(result.Dropped) != 0 {
+				t.Fatalf("dropped: %v", result.Dropped)
+			}
+			got, booked := result.Plan.Increments["sales/total_amount_released"]
+			if booked != want || (want && got != 1000) || (result.Released == 1) != want {
+				t.Fatalf("released %v (booked %v, count %d); want released=%v", got, booked, result.Released, want)
+			}
+		})
 	}
 }
 
@@ -232,6 +277,40 @@ func TestRecomputeReport_DropsMalformedDocumentsAndSkipsDeletedOnes(t *testing.T
 	if !result.Plan.IsEmpty() {
 		t.Errorf("nothing may be booked, got %v and %d items", result.Plan.Increments, len(result.Plan.Items))
 	}
+	// Every loan document that is not soft-deleted has a line saying why.
+	notes := map[string]string{}
+	for _, loan := range result.Loans {
+		notes[loan.Id] = loan.Note
+	}
+	if len(result.Loans) != 5 || notes["L-no-type"] != "dropped: loan L-no-type: no product type" {
+		t.Errorf("loan lines: %+v", result.Loans)
+	}
+}
+
+// Rows are read by loan, as the trigger's loader reads them, so a row can
+// carry no company_id or another company's. It is counted (the loan is this
+// company's) and reported.
+func TestRecomputeReport_ReportsRowsWhoseCompanyIsNotTheLoans(t *testing.T) {
+	row := func(id string, company any) map[string]any {
+		fields := map[string]any{"id": id, "loan_id": "L1", "status": "paid_on_time", "principal_payment": 100.0,
+			"interest_payment": 10.0, "paid_at": millis(testNow)}
+		if company != nil {
+			fields["company_id"] = company
+		}
+		return fields
+	}
+	result := triggers.RecomputeReport(triggers.RecomputeInput{
+		Company:      "C1",
+		Schedules:    []map[string]any{row("S-own", "C1"), row("S-none", nil), row("S-other", "C2")},
+		ProductTypes: map[string]string{"L1": "business"},
+	})
+	want := []string{`schedule S-none of loan L1: company_id ""`, `schedule S-other of loan L1: company_id "C2"`}
+	if !reflect.DeepEqual(result.Mismatched, want) {
+		t.Errorf("mismatched: got %q, want %q", result.Mismatched, want)
+	}
+	if result.Paid != 3 || result.Plan.Increments["sales/total_collections"] != 330 || len(result.Dropped) != 0 {
+		t.Errorf("all three rows count: paid %d, collections %v, dropped %v", result.Paid, result.Plan.Increments["sales/total_collections"], result.Dropped)
+	}
 }
 
 // Idempotency of the core: the summary is a function of the set of documents.
@@ -259,18 +338,19 @@ func TestRecomputeReport_SameDocumentsInAnyOrderGiveTheSameSummary(t *testing.T)
 	slices.Reverse(reversed.Schedules)
 	slices.Reverse(reversed.Capital)
 
-	first := triggers.RecomputeReport(forward).Plan.SummaryNode()
-	again := triggers.RecomputeReport(forward).Plan.SummaryNode()
-	other := triggers.RecomputeReport(reversed).Plan.SummaryNode()
-	if !reflect.DeepEqual(first, again) {
+	first, again, other := triggers.RecomputeReport(forward), triggers.RecomputeReport(forward), triggers.RecomputeReport(reversed)
+	if !reflect.DeepEqual(first.Plan.SummaryNode(), again.Plan.SummaryNode()) {
 		t.Fatal("recomputing the same input twice gave two summaries")
 	}
-	if !reflect.DeepEqual(first, other) {
+	if !reflect.DeepEqual(first.Plan.SummaryNode(), other.Plan.SummaryNode()) {
 		t.Fatal("the summary depends on the order of the documents")
+	}
+	if !reflect.DeepEqual(first.Loans, other.Loans) || !reflect.DeepEqual(first.Pending, other.Pending) {
+		t.Fatal("the loan lines or the pending list depend on the order of the documents")
 	}
 
 	// K1, K2 and K3 share 2026-09-01 02:00:00.000: three items, three keys.
-	data := first["data"].(map[string]any)
+	data := first.Plan.SummaryNode()["data"].(map[string]any)
 	for _, key := range []string{"2026:9:week:36:1T2:0:0:0", "2026:9:week:36:1T2:0:0:0:2", "2026:9:week:36:1T2:0:0:0:3"} {
 		if _, ok := data[key]; !ok {
 			t.Errorf("no data item under %q", key)
@@ -402,9 +482,10 @@ func (h *history) live() (map[string]float64, map[string]map[string]any) {
 	return totals, items
 }
 
-// recomputed is the summary rebuilt from the documents the history left.
-func (h *history) recomputed() (map[string]float64, map[string]map[string]any) {
-	in := triggers.RecomputeInput{Capital: h.capital, ProductTypes: h.store.ProductTypes}
+// result is the recompute of the documents the history left.
+func (h *history) result() triggers.RecomputeResult {
+	h.t.Helper()
+	in := triggers.RecomputeInput{Company: "C1", Capital: h.capital, ProductTypes: h.store.ProductTypes}
 	for _, doc := range h.loans {
 		in.Loans = append(in.Loans, doc)
 	}
@@ -412,9 +493,16 @@ func (h *history) recomputed() (map[string]float64, map[string]map[string]any) {
 		in.Schedules = append(in.Schedules, doc)
 	}
 	result := triggers.RecomputeReport(in)
-	if len(result.Dropped) != 0 {
-		h.t.Fatalf("dropped: %v", result.Dropped)
+	if len(result.Dropped) != 0 || len(result.Mismatched) != 0 {
+		h.t.Fatalf("dropped %v, mismatched %v", result.Dropped, result.Mismatched)
 	}
+	return result
+}
+
+// recomputed is that recompute as totals and data items by relative path.
+func (h *history) recomputed() (map[string]float64, map[string]map[string]any) {
+	h.t.Helper()
+	result := h.result()
 	items := map[string]map[string]any{}
 	for _, item := range result.Plan.Items {
 		items[item.Key] = item.Item
@@ -428,8 +516,9 @@ func (h *history) recomputed() (map[string]float64, map[string]map[string]any) {
 // and every branch: capital, release, planned row, paid rows, the loan
 // following its schedule's status (no report transition), settlement, bad
 // debt, and a loan never approved. Each loan is approved in the instant it is
-// created and each row is created in the state it ends in; the tests below
-// name what happens when a history does not have that shape.
+// created, each row is created as a confirmed payment, and no loan leaves a
+// final status; the tests below name what happens when a history does not
+// have that shape.
 func TestRecompute_EqualsReplayingTheHistoryThroughTheTriggers(t *testing.T) {
 	h := newHistory(t)
 	h.createCapital(at(9, 1, 2), "K1", 50000)
@@ -445,8 +534,8 @@ func TestRecompute_EqualsReplayingTheHistoryThroughTheTriggers(t *testing.T) {
 	h.writeLoan(at(10, 5, 5), "L2", "completed", 20000, 500, 200, 100) // 20200 - 6000 = 14200
 
 	h.approveLoan(at(9, 4, 6), "L3", 8000)
-	h.createSchedule(at(9, 15, 9), "S4", "L3", "payment_submitted", 1000, 0, 100)
-	h.writeLoan(at(9, 15, 10), "L3", "payment_submitted", 8000)
+	h.createSchedule(at(9, 15, 9), "S4", "L3", "paid_on_time", 1000, 0, 100)
+	h.writeLoan(at(9, 15, 10), "L3", "paid_on_time", 8000)
 	h.writeLoan(at(10, 6, 7), "L3", "bad_debt", 8000) // 8000 - 1000 = 7000
 
 	h.writeLoan(at(9, 5, 1), "L4", "pending", 5000) // never approved
@@ -483,9 +572,10 @@ func TestRecompute_EqualsReplayingTheHistoryThroughTheTriggers(t *testing.T) {
 	}
 }
 
-// The legitimate differences between the triggers and recompute, each named.
+// Every history in which the triggers and recompute give different numbers,
+// each named. Spec §4 says which side is right for each.
 func TestRecompute_DiffersFromTheTriggers_OnlyInTheNamedWays(t *testing.T) {
-	const released, collections = "sales/total_amount_released", "sales/total_collections"
+	const released, collections, badDebts = "sales/total_amount_released", "sales/total_collections", "capital_usage/total_bad_debts"
 
 	t.Run("approval after application: the release moves to the day the loan was created", func(t *testing.T) {
 		h := newHistory(t)
@@ -509,11 +599,49 @@ func TestRecompute_DiffersFromTheTriggers_OnlyInTheNamedWays(t *testing.T) {
 		}
 	})
 
-	t.Run("a row updated into a paid status: the create-only trigger never books it, recompute does", func(t *testing.T) {
+	t.Run("a payment_submitted row: the trigger books it at creation and as returned principal, recompute waits for the confirmation", func(t *testing.T) {
+		h := newHistory(t)
+		h.approveLoan(at(9, 2, 3), "L1", 10000)
+		h.createSchedule(at(9, 9, 10), "S2", "L1", "payment_submitted", 3000, 0, 500)
+		h.writeLoan(at(9, 20, 3), "L1", "completed", 10000)
+		live, _ := h.live()
+		result := h.result()
+		// Triggers: 3500 for the submission, then a remainder of 10000 - 3000.
+		if live[collections] != 10500 || live["capital_usage/total_capital"] != 10000 {
+			t.Fatalf("triggers: collections %v, capital %v; want 10500 and 10000", live[collections], live["capital_usage/total_capital"])
+		}
+		// Recompute: no confirmed cash, so the whole 10000 is the remainder.
+		if got := result.Plan.Increments[collections]; got != 10000 {
+			t.Fatalf("recompute: collections %v, want 10000", got)
+		}
+		if want := []string{"schedule S2 of loan L1: principal 3000.00, interest 500.00"}; !reflect.DeepEqual(result.Pending, want) {
+			t.Fatalf("pending: got %q, want %q", result.Pending, want)
+		}
+	})
+
+	t.Run("Pay now on the planned row: it carries the whole principal and is unconfirmed, so neither side counts it", func(t *testing.T) {
+		h := newHistory(t)
+		h.approveLoan(at(9, 2, 3), "L1", 10000)
+		h.createSchedule(at(9, 2, 4), "S1", "L1", "approved", 10000, 0, 0) // open-term: principal_payment = amount
+		h.updateSchedule(at(9, 9, 10), "S1", "payment_submitted")          // the borrower's update changes the status only
+		live, _ := h.live()
+		result := h.result()
+		_, liveBooked := live[collections]
+		_, booked := result.Plan.Increments[collections]
+		if liveBooked || booked || result.Paid != 0 {
+			t.Fatalf("triggers booked %v, recompute booked %v (%d rows); want nothing on either side", live[collections], result.Plan.Increments[collections], result.Paid)
+		}
+		if want := []string{"schedule S1 of loan L1: principal 10000.00, interest 0.00"}; !reflect.DeepEqual(result.Pending, want) {
+			t.Fatalf("pending: got %q, want %q", result.Pending, want)
+		}
+	})
+
+	t.Run("a planned row confirmed later by update: the create-only trigger never books it, recompute does", func(t *testing.T) {
 		h := newHistory(t)
 		h.approveLoan(at(9, 2, 3), "L1", 10000)
 		h.createSchedule(at(9, 2, 4), "S1", "L1", "approved", 3000, 0, 500) // planned row persisted at approval
-		h.updateSchedule(at(9, 9, 10), "S1", "paid_on_time")                // paid later, by update
+		h.updateSchedule(at(9, 8, 10), "S1", "payment_submitted")           // Pay now
+		h.updateSchedule(at(9, 9, 10), "S1", "paid_on_time")                // confirmed
 		live, _ := h.live()
 		totals, _ := h.recomputed()
 		if _, booked := live[collections]; booked {
@@ -530,12 +658,12 @@ func TestRecompute_DiffersFromTheTriggers_OnlyInTheNamedWays(t *testing.T) {
 		h.createSchedule(at(9, 9, 10), "S2", "L1", "payment_submitted", 3000, 0, 500)
 		h.updateSchedule(at(9, 10, 10), "S2", "not_paid") // rejected: the row is not a payment any more
 		live, _ := h.live()
-		totals, _ := h.recomputed()
+		result := h.result()
 		if live[collections] != 3500 {
 			t.Fatalf("triggers: got %v, want 3500", live[collections])
 		}
-		if _, booked := totals[collections]; booked {
-			t.Fatalf("recompute counted a rejected submission: %v", totals[collections])
+		if _, booked := result.Plan.Increments[collections]; booked || len(result.Pending) != 0 {
+			t.Fatalf("recompute counted or listed a rejected submission: %v, %v", result.Plan.Increments[collections], result.Pending)
 		}
 	})
 
@@ -548,6 +676,44 @@ func TestRecompute_DiffersFromTheTriggers_OnlyInTheNamedWays(t *testing.T) {
 		totals, _ := h.recomputed()
 		if live[released] != 20000 || totals[released] != 10000 {
 			t.Fatalf("triggers %v, recompute %v; want 20000 and 10000", live[released], totals[released])
+		}
+	})
+
+	t.Run("a bad debt followed by a payment: the trigger keeps the write-off, recompute sees a loan that is not a bad debt", func(t *testing.T) {
+		h := newHistory(t)
+		h.approveLoan(at(9, 2, 3), "L1", 10000)
+		h.writeLoan(at(9, 10, 3), "L1", "bad_debt", 10000)
+		h.createSchedule(at(9, 20, 3), "S2", "L1", "paid_on_time", 2000, 0, 100)
+		h.writeLoan(at(9, 20, 4), "L1", "paid_on_time", 10000) // the app moves the loan to its schedule's status
+		live, _ := h.live()
+		totals, _ := h.recomputed()
+		if _, booked := totals[badDebts]; live[badDebts] != 10000 || booked {
+			t.Fatalf("triggers %v, recompute %v; want 10000 and nothing", live[badDebts], totals[badDebts])
+		}
+	})
+
+	t.Run("a loan completed twice: the trigger books the remainder twice, recompute once", func(t *testing.T) {
+		h := newHistory(t)
+		h.approveLoan(at(9, 2, 3), "L1", 10000)
+		h.writeLoan(at(9, 10, 3), "L1", "completed", 10000)
+		h.writeLoan(at(9, 11, 3), "L1", "not_paid", 10000)
+		h.writeLoan(at(9, 12, 3), "L1", "completed", 10000)
+		live, _ := h.live()
+		totals, _ := h.recomputed()
+		if live[collections] != 20000 || totals[collections] != 10000 {
+			t.Fatalf("triggers %v, recompute %v; want 20000 and 10000", live[collections], totals[collections])
+		}
+	})
+
+	t.Run("a row paid after settlement: the trigger adds it to a remainder already booked in full, recompute does not exceed the loan", func(t *testing.T) {
+		h := newHistory(t)
+		h.approveLoan(at(9, 2, 3), "L1", 10000)
+		h.writeLoan(at(9, 10, 3), "L1", "completed", 10000) // nothing paid yet: remainder 10000
+		h.createSchedule(at(9, 20, 3), "S2", "L1", "paid_on_time", 4000, 0, 0)
+		live, _ := h.live()
+		totals, _ := h.recomputed()
+		if live[collections] != 14000 || totals[collections] != 10000 {
+			t.Fatalf("triggers %v, recompute %v; want 14000 and 10000 (remainder 6000 + row 4000)", live[collections], totals[collections])
 		}
 	})
 
