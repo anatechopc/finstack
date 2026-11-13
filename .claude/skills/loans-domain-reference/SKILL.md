@@ -143,6 +143,12 @@ double-counted principal. That was the first real production bug
 (finstack#4, fixed by PR finstack#33) — full narrative in `finstack-failure-archaeology`.
 If you touch `calculateOpenTerm`, do not remove or reorder this sort.
 
+**Interest around a top-up (owner decision, finstack#117, 2026-11-13):** the
+top-up row keeps the interest accrued on the OLD balance since the previous due
+date; the computed due row charges the NEW balance for the days left in the
+cycle, and its amount due follows (golden G9: 83.33 then 504.17). Walkthrough
+and edge cases: [references/schedule-math.md](references/schedule-math.md) §3.
+
 ## 7. Capital vs cash pool (two different pots)
 
 | | `capital` | `cash_pool` |

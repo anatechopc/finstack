@@ -38,16 +38,58 @@ import 'package:loooans_helpers/data_helpers.dart';
 //       charges created 5 days ago:
 //             placeholder OB = 10000 + 2000 + 100 = 12100, exactly once
 //             (finstack#33 root cause 2 double-counted it);
-//             placeholder interest = 10000 * 0.05 * 5/30 = 83.33;
-//             the adjacent computed schedule is mutated in place to OB 12100
-//             and to the same 83.33 interest — current behaviour, pinned;
-//             finstack#117 (owner decision) changes it to 12100*0.05*25/30
-//             = 504.17 and flips this test.
+//             placeholder interest = 10000 * 0.05 * 5/30 = 83.33 (the old
+//             balance up to the top-up; unchanged by finstack#117);
+//             the adjacent computed schedule (30 days, due in 20) is updated
+//             in place (finstack#117, owner decision 2026-09-08): OB 12100;
+//             days left = 30 - 5 = 25; interest = 12100 * 0.05 * 25/30 =
+//             605 * 0.8333 = 504.17; one month on the new balance = 605, so
+//             amortization = min(min(605, 12100 + 504.17), 504.17) = 504.17.
+//             Cycle: 83.33 + 504.17 = 587.50 over 5 + 25 = 30 days. Before
+//             finstack#117 the row copied the placeholder's 83.33 and kept
+//             the old month, 500.
 //   G10 second additional loan 3000 created 3 days ago, supplied NEWEST-FIRST:
 //             processed by createdAt ascending, so A1 OB 12100, then
 //             A2 OB = 12100 + 3000 = 15100 with interest 12100*0.05*2/30 =
-//             40.33, and the computed schedule ends at 15100. Before
-//             finstack#33 the reverse iteration produced 15100/15100/13000.
+//             40.33 (unchanged), and the computed schedule ends at 15100
+//             with days left = 25 - 2 = 23: interest = 15100 * 0.05 * 23/30
+//             = 755 * 0.7667 = 578.83; one month = 755, so amortization =
+//             578.83. Cycle: 83.33 + 40.33 + 578.83 = 702.50 over
+//             5 + 2 + 23 = 30 days. Before finstack#33 the reverse iteration
+//             produced 15100/15100/13000.
+//   G9b-G9e fixed dates through the `now` seam (finstack#117): loan of
+//       2026-07-02, paid row due Aug 1 (OB 10000), one top-up of 2000 + 100
+//       charges, so the new balance is 12100 and one month on it is 605.
+//       The dates are in the past of any test run, which is what places a
+//       top-up before the computed row (that row's createdAt is the wall
+//       clock, see above).
+//   G9b top-up Aug 6 at 14:30, now Aug 15 (due Aug 31, 30 days): the
+//             top-up row counts whole days since Aug 1 00:00 = 5 -> 83.33;
+//             days left = 30 - 5 = 25 -> 504.17, amortization 504.17. The
+//             split is by the top-up row's own day count, so 5 + 25 = 30
+//             whatever the time of day (the whole days from Aug 6 14:30 to
+//             Aug 31 would be 24 -> 484.00 and lose a day).
+//   G9c top-up on the due date, now Aug 31 noon (due Aug 31, 30 days, 500):
+//             stamped Aug 31 00:00:00, the same instant as the due date:
+//             the same-instant branch replaces the due row with the top-up
+//             row, which copies its 30 days and 500 (the whole cycle on the
+//             old balance) and its amortization 500; no due row is listed.
+//             Unchanged by finstack#117.
+//             stamped Aug 31 10:15: inserted; the top-up row counts 30 whole
+//             days -> 10000 * 0.05 * 30/30 = 500; days left = 30 - 30 = 0 ->
+//             interest 12100 * 0.05 * 0/30 = 0, amortization
+//             min(min(605, 12100), 0) = 0. Both ways the cycle's 500 is on
+//             the top-up row and nothing is charged on the new balance.
+//   G9d overdue row, now Sep 8 noon (due date snaps to Sep 8, 38 days as in
+//       G4c), top-up Aug 3 at 16:45: the top-up row counts 2 days ->
+//             10000 * 0.05 * 2/30 = 33.33; days left = 38 - 2 = 36 ->
+//             12100 * 0.05 * 36/30 = 605 * 1.2 = 726.00; amortization =
+//             min(min(605, 12826), 726) = 605: capped at one month of
+//             interest on the NEW balance — the finstack#120 cap, unchanged.
+//   G9e top-up stamped Sep 5 while now is Aug 15 (a clock ahead of this
+//       one; due Aug 31, 30 days): the top-up row counts 35 days ->
+//             583.33; days left = 30 - 35 floors at 0 -> interest 0,
+//             amortization 0. Never negative.
 //   G4c overdue clamp (now = 2026-09-08 noon): paid row due Aug 1, OB 10000;
 //             next = Aug 31 <= now, so the due date snaps to Sep 8; 38 days
 //             since the paid row, mult 38/30, interest 633.33; amortization
@@ -270,11 +312,17 @@ void main() {
         closeTo(12100, 0.01),
         reason: 'the adjacent computed schedule is updated in place',
       );
+      expect(next.interestDayMultiplier, closeTo(25 / 30, 1e-9));
       expect(
         next.interestCharge,
-        closeTo(83.33, 0.01),
-        reason: 'current behaviour: copied from the placeholder instead of '
-            '12100 * 5% * 25/30 = 504.17 — flips with finstack#117',
+        closeTo(504.17, 0.01),
+        reason: 'finstack#117: the new balance for the 25 days left, '
+            '12100 * 5% * 25/30, not the 83.33 of the placeholder',
+      );
+      expect(
+        next.amortization,
+        closeTo(504.17, 0.01),
+        reason: 'the amount due follows the interest (was the old month, 500)',
       );
     });
 
@@ -287,10 +335,152 @@ void main() {
         [NO_ID, 'sched-1', 'al-1', 'al-2', NO_ID],
       );
       expect(s[2].outstandingBalance, closeTo(12100, 0.01));
+      expect(s[2].interestCharge, closeTo(83.33, 0.01));
       expect(s[3].outstandingBalance, closeTo(15100, 0.01));
       expect(s[3].interestDayMultiplier, closeTo(2 / 30, 1e-9));
       expect(s[3].interestCharge, closeTo(40.33, 0.01));
       expect(s[4].outstandingBalance, closeTo(15100, 0.01));
+      expect(s[4].interestDayMultiplier, closeTo(23 / 30, 1e-9));
+      expect(
+        s[4].interestCharge,
+        closeTo(578.83, 0.01),
+        reason: 'finstack#117: 15100 * 5% * 23/30 for the 23 days left',
+      );
+      expect(s[4].amortization, closeTo(578.83, 0.01));
+    });
+  });
+
+  group('G9b-G9e top-up timing on the due row (finstack#117)', () {
+    List<LoanSchedule> run({
+      required DateTime now,
+      required DateTime topUpAt,
+    }) {
+      final loan = Loan()
+        ..id = 'loan-1'
+        ..createdAt = DateTime(2026, 7, 2)
+        ..additionalChargeUpfrontCollection = 0
+        ..additionalLoanAmounts = [
+          additionalLoan(
+            id: 'al-1',
+            createdAt: topUpAt,
+            amount: 2000,
+            charges: 100,
+          ),
+        ];
+
+      return LoanCalculationService.calculateOpenTerm(
+        amount: 10000,
+        date: loan.createdAt,
+        interestRate: 5,
+        term: '1m',
+        companyId: 'co-1',
+        paidSchedules: [
+          paidSchedule(
+            id: 'sched-1',
+            createdAt: DateTime(2026, 7, 2),
+            dueAt: DateTime(2026, 8),
+            outstandingBalance: 10000,
+          ),
+        ],
+        loan: loan,
+        now: now,
+      ).schedules;
+    }
+
+    test('G9b a top-up with a time of day splits the cycle 5 + 25', () {
+      final s = run(
+        now: DateTime(2026, 8, 15, 9),
+        topUpAt: DateTime(2026, 8, 6, 14, 30),
+      );
+
+      expect(s.map((e) => e.id).toList(), [NO_ID, 'sched-1', 'al-1', NO_ID]);
+      expect(s[2].interestDayMultiplier, closeTo(5 / 30, 1e-9));
+      expect(s[2].interestCharge, closeTo(83.33, 0.01));
+      expect(DateUtils.dateOnly(s[3].dueAt), DateTime(2026, 8, 31));
+      expect(s[3].outstandingBalance, closeTo(12100, 0.01));
+      expect(
+        s[3].interestDayMultiplier,
+        closeTo(25 / 30, 1e-9),
+        reason: 'days left come from the day count of the top-up row, not '
+            'from the whole days between the top-up time and the due date (24)',
+      );
+      expect(s[3].interestCharge, closeTo(504.17, 0.01));
+      expect(s[3].amortization, closeTo(504.17, 0.01));
+    });
+
+    test('G9c a top-up on the due date leaves nothing to charge on the new '
+        'balance', () {
+      final sameInstant = run(
+        now: DateTime(2026, 8, 31, 12),
+        topUpAt: DateTime(2026, 8, 31),
+      );
+
+      expect(
+        sameInstant.map((e) => e.id).toList(),
+        [NO_ID, 'sched-1', 'al-1'],
+        reason: 'same-instant branch: the top-up row replaces the due row',
+      );
+      expect(sameInstant[2].isPlaceholder, isTrue);
+      expect(sameInstant[2].outstandingBalance, closeTo(12100, 0.01));
+      expect(sameInstant[2].interestDayMultiplier, closeTo(1, 1e-9));
+      expect(sameInstant[2].interestCharge, closeTo(500, 0.01));
+      expect(sameInstant[2].amortization, closeTo(500, 0.01));
+
+      final laterThatDay = run(
+        now: DateTime(2026, 8, 31, 12),
+        topUpAt: DateTime(2026, 8, 31, 10, 15),
+      );
+
+      expect(
+        laterThatDay.map((e) => e.id).toList(),
+        [NO_ID, 'sched-1', 'al-1', NO_ID],
+      );
+      expect(laterThatDay[2].interestDayMultiplier, closeTo(1, 1e-9));
+      expect(laterThatDay[2].interestCharge, closeTo(500, 0.01));
+      expect(DateUtils.dateOnly(laterThatDay[3].dueAt), DateTime(2026, 8, 31));
+      expect(laterThatDay[3].outstandingBalance, closeTo(12100, 0.01));
+      expect(laterThatDay[3].interestDayMultiplier, 0);
+      expect(laterThatDay[3].interestCharge, 0);
+      expect(
+        laterThatDay[3].amortization,
+        0,
+        reason: 'no days left: the 500 of the cycle is on the top-up row',
+      );
+    });
+
+    test('G9d an overdue row stays capped at one month, on the new balance',
+        () {
+      final s = run(
+        now: DateTime(2026, 9, 8, 12),
+        topUpAt: DateTime(2026, 8, 3, 16, 45),
+      );
+
+      expect(s[2].interestDayMultiplier, closeTo(2 / 30, 1e-9));
+      expect(s[2].interestCharge, closeTo(33.33, 0.01));
+      expect(DateUtils.dateOnly(s[3].dueAt), DateTime(2026, 9, 8));
+      expect(s[3].interestDayMultiplier, closeTo(36 / 30, 1e-9));
+      expect(s[3].interestCharge, closeTo(726, 0.01));
+      expect(
+        s[3].amortization,
+        closeTo(605, 0.01),
+        reason: 'one month of interest on 12100 although 726 is charged — '
+            'the G4c cap, flips with finstack#120',
+      );
+    });
+
+    test('G9e a top-up stamped after the due date never charges below zero',
+        () {
+      final s = run(
+        now: DateTime(2026, 8, 15, 9),
+        topUpAt: DateTime(2026, 9, 5),
+      );
+
+      expect(s[2].interestCharge, closeTo(583.33, 0.01));
+      expect(DateUtils.dateOnly(s[3].dueAt), DateTime(2026, 8, 31));
+      expect(s[3].outstandingBalance, closeTo(12100, 0.01));
+      expect(s[3].interestDayMultiplier, 0);
+      expect(s[3].interestCharge, 0);
+      expect(s[3].amortization, 0);
     });
   });
 
