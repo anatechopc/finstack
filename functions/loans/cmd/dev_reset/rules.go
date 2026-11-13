@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -90,6 +92,10 @@ const (
 	ruleUserClient  = "user: no Auth account, belongs to a kept company"
 	ruleUserDeleted = "user: no Auth account and no kept company"
 	ruleNoOwner     = "owned: no owner field, kept in doubt"
+
+	ruleUserInDoubt     = "user: id or company_id is present but not a string, kept in doubt"
+	ruleCompanyInDoubt  = "company: kept in doubt, the company_id of a user registered in Firebase Auth is not a string"
+	ruleOwnerUnreadable = "owned: the owner field is present but not a string, kept in doubt"
 )
 
 func ruleFor(collection string) (rule, bool) {
@@ -120,6 +126,15 @@ func selectFields(collection string) []string {
 type doc struct {
 	path   string
 	fields map[string]string
+	// bad names the selected fields that are present but not a string (a
+	// number, a map, a reference). The rules cannot read such a field, so they
+	// keep the document and what depends on it rather than treat it as absent.
+	bad []string
+}
+
+// badRefs returns the unreadable fields that hold a reference or an owner.
+func (d doc) badRefs() []string {
+	return slices.DeleteFunc(slices.Clone(d.bad), func(f string) bool { return f == "email_address" })
 }
 
 // line is one row of plan.jsonl.
@@ -138,6 +153,13 @@ type classification struct {
 	// emailOverlap counts deleted user documents whose email address is the
 	// email of a registered Auth user under another uid. A count, never a value.
 	emailOverlap int
+	// unreadable lists "path (field)" for every top-level document whose
+	// reference or owner field is present but not a string.
+	unreadable []string
+	// companiesInDoubt is set when a user registered in Auth has an unreadable
+	// company_id. Which company it names is unknown, so no company can be shown
+	// to be unreferenced and every company document is kept.
+	companiesInDoubt bool
 }
 
 // classify applies the rule table. authUsers maps every Firebase Auth uid to
@@ -158,7 +180,8 @@ func classify(docs []doc, authUsers map[string]string) classification {
 
 	// Pass 1a: users registered in Auth are kept, and only they make a company kept.
 	top := map[string]doc{}
-	var users []doc
+	referenced := map[string]bool{}
+	var users, companyIDs []string
 	keepUser := func(d doc) {
 		c.keptUsers[strings.Split(d.path, "/")[1]] = true
 		if id := d.fields["id"]; id != "" {
@@ -171,52 +194,77 @@ func classify(docs []doc, authUsers map[string]string) classification {
 			continue
 		}
 		top[d.path] = d
-		if segs[0] != collectionPrefix+"users" {
-			continue
+		if bad := d.badRefs(); len(bad) > 0 {
+			c.unreadable = append(c.unreadable, d.path+" ("+strings.Join(bad, ", ")+")")
 		}
-		users = append(users, d)
-		if inAuth(segs[1], d.fields) {
-			keepUser(d)
-			if company := d.fields["company_id"]; company != "" {
-				c.keptCompanies[company] = true
+		switch segs[0] {
+		case collectionPrefix + "companies":
+			companyIDs = append(companyIDs, segs[1])
+		case collectionPrefix + "users":
+			users = append(users, d.path)
+			if inAuth(segs[1], d.fields) {
+				keepUser(d)
+				if company := d.fields["company_id"]; company != "" {
+					referenced[company] = true
+				}
+				if slices.Contains(d.bad, "company_id") {
+					c.companiesInDoubt = true
+				}
 			}
 		}
 	}
+	for id := range referenced {
+		c.keptCompanies[id] = true
+	}
+	if c.companiesInDoubt {
+		for _, id := range companyIDs {
+			c.keptCompanies[id] = true
+		}
+	}
 	// Pass 1b: a user without an Auth account is kept when it belongs to a
-	// kept company, so that what it owns (address, settings) is kept with it.
-	for _, d := range users {
+	// kept company, or when its id or company_id cannot be read, so that what
+	// it owns (address, settings) is kept with it.
+	for _, path := range users {
+		d := top[path]
 		switch {
-		case inAuth(strings.Split(d.path, "/")[1], d.fields):
-		case c.keptCompanies[d.fields["company_id"]]:
+		case inAuth(strings.Split(path, "/")[1], d.fields):
+		case c.keptCompanies[d.fields["company_id"]], len(d.badRefs()) > 0:
 			keepUser(d)
 		case authEmails[strings.ToLower(d.fields["email_address"])]:
 			c.emailOverlap++
 		}
 	}
 
-	decide := func(collection, id string, fields map[string]string) (string, string) {
+	// d is the top-level document; it is the zero doc when that document does
+	// not exist and only its subcollections do, and the id alone decides.
+	decide := func(collection, id string, d doc) (string, string) {
 		r, ok := ruleFor(collection)
 		if !ok {
 			return keep, "unclassified: not in the rule table, kept in full"
 		}
 		switch r.kind {
 		case keepUsers:
-			if inAuth(id, fields) {
+			switch {
+			case inAuth(id, d.fields):
 				return keep, ruleUserInAuth
-			}
-			if c.keptCompanies[fields["company_id"]] {
+			case c.keptCompanies[d.fields["company_id"]]:
 				return keep, ruleUserClient
+			case len(d.badRefs()) > 0:
+				return keep, ruleUserInDoubt
 			}
 			return del, ruleUserDeleted
 		case keepReferenced:
-			if c.keptCompanies[id] {
+			switch {
+			case referenced[id]:
 				return keep, "company: a user registered in Firebase Auth references it"
+			case c.companiesInDoubt:
+				return keep, ruleCompanyInDoubt
 			}
 			return del, "company: no user registered in Firebase Auth references it"
 		case keepOwned:
 			found := false
 			for _, field := range r.owners {
-				owner := fields[field]
+				owner := d.fields[field]
 				if owner == "" {
 					continue
 				}
@@ -225,7 +273,10 @@ func classify(docs []doc, authUsers map[string]string) classification {
 					return keep, "owned: the owner is kept"
 				}
 			}
-			if !found {
+			switch {
+			case len(d.badRefs()) > 0:
+				return keep, ruleOwnerUnreadable
+			case !found:
 				return keep, ruleNoOwner
 			}
 			return del, "owned: the owner is not kept"
@@ -233,19 +284,18 @@ func classify(docs []doc, authUsers map[string]string) classification {
 		return del, "loans-domain or derived data"
 	}
 
-	// Pass 2: every document takes the decision of its top-level document. A
-	// top-level document that does not exist (only its subcollections do) is
-	// decided by its id alone.
+	// Pass 2: every document takes the decision of its top-level document.
 	for _, d := range docs {
 		segs := strings.Split(d.path, "/")
 		collection := strings.TrimPrefix(segs[0], collectionPrefix)
-		decision, why := decide(collection, segs[1], top[segs[0]+"/"+segs[1]].fields)
+		decision, why := decide(collection, segs[1], top[segs[0]+"/"+segs[1]])
 		if len(segs) == 2 && collection == "companies" && decision == del {
 			c.deletedCompanies[segs[1]] = true
 		}
 		c.lines = append(c.lines, line{Kind: "firestore", Path: d.path, Decision: decision, Rule: why})
 	}
 	sort.Slice(c.lines, func(i, j int) bool { return c.lines[i].Path < c.lines[j].Path })
+	sort.Strings(c.unreadable)
 	return c
 }
 
@@ -310,10 +360,17 @@ func checkADCProject(credentialsProject string, getenv func(string) string) erro
 	return nil
 }
 
+// safeSegment is the only shape of collection id, document id or Realtime
+// Database key the tool handles. Firestore auto ids, Auth uids and the
+// collection names all fit. Anything else (a dot, a percent sign, a question
+// mark, a space) could change which URL a delete reaches, so a path with such
+// a segment is refused: by -plan, which then writes no plan, and by -apply.
+var safeSegment = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
 func checkSegments(segs []string) error {
 	for _, s := range segs {
-		if s == "" || s == "." || s == ".." {
-			return fmt.Errorf("empty or relative path segment")
+		if !safeSegment.MatchString(s) {
+			return fmt.Errorf("segment %q is empty or has a character outside A-Z a-z 0-9 _ -", s)
 		}
 	}
 	return nil
@@ -335,11 +392,12 @@ func checkFirestorePath(path string) error {
 	return nil
 }
 
-// checkRTDBPath accepts only a path below dev/.
+// checkRTDBPath accepts only the shapes the planner lists: dev/{key},
+// dev/companies/{id} and dev/companies/{id}/{child}.
 func checkRTDBPath(path string) error {
 	segs := strings.Split(path, "/")
-	if len(segs) < 2 || segs[0] != rtdbRoot {
-		return fmt.Errorf("rtdb path %q is not below %s/", path, rtdbRoot)
+	if len(segs) < 2 || len(segs) > 4 || segs[0] != rtdbRoot || len(segs) > 2 && segs[1] != "companies" {
+		return fmt.Errorf("rtdb path %q is not %s/{key}, %s/companies/{id} or %s/companies/{id}/{child}", path, rtdbRoot, rtdbRoot, rtdbRoot)
 	}
 	if err := checkSegments(segs); err != nil {
 		return fmt.Errorf("rtdb path %q: %w", path, err)
@@ -347,20 +405,31 @@ func checkRTDBPath(path string) error {
 	return nil
 }
 
-// checkRTDBDeletePath accepts only the shapes the planner produces:
-// dev/companies/{id}, dev/companies/{id}/{report node} and
-// dev/companies/{id}/loans. A hand-edited plan cannot delete dev/,
-// dev/companies or any other node.
+// checkRTDBDeletePath accepts only dev/companies/{id}, dev/companies/{id}/
+// {report node} and dev/companies/{id}/loans, with the fixed segments matched
+// exactly. A hand-edited plan cannot delete dev/, dev/companies or any other
+// node.
 func checkRTDBDeletePath(path string) error {
 	if err := checkRTDBPath(path); err != nil {
 		return err
 	}
 	segs := strings.Split(path, "/")
-	ok := segs[1] == "companies" && (len(segs) == 3 || len(segs) == 4 && (reportNodes[segs[3]] || segs[3] == loansNode))
+	ok := len(segs) == 3 || len(segs) == 4 && (reportNodes[segs[3]] || segs[3] == loansNode)
 	if !ok {
 		return fmt.Errorf("rtdb path %q is not a company node, a company report node or a company loans node", path)
 	}
 	return nil
+}
+
+// checkLines returns the lines that checkLine refuses, as text.
+func checkLines(lines []line) []string {
+	var refused []string
+	for _, l := range lines {
+		if err := checkLine(l); err != nil {
+			refused = append(refused, err.Error())
+		}
+	}
+	return refused
 }
 
 func checkLine(l line) error {

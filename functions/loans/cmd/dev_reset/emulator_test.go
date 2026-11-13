@@ -193,7 +193,7 @@ func canonical(t *testing.T, v any) string {
 	return string(out)
 }
 
-func seedEmulators(t *testing.T, tg target) {
+func seedEmulators(t *testing.T, tg target, firestoreSeed map[string]map[string]any, rtdbSeed string) {
 	t.Helper()
 	ctx := context.Background()
 	wipe, err := http.NewRequest(http.MethodDelete,
@@ -222,7 +222,7 @@ func seedEmulators(t *testing.T, tg target) {
 
 // assertState reads every seeded document one by one (not through the tool's
 // walker) and the whole Realtime Database, and compares with what must exist.
-func assertState(t *testing.T, tg target, gone map[string]bool, wantTree string) {
+func assertState(t *testing.T, tg target, firestoreSeed map[string]map[string]any, gone map[string]bool, wantTree string) {
 	t.Helper()
 	ctx := context.Background()
 	for path := range firestoreSeed {
@@ -247,22 +247,37 @@ func TestEmulator_PlanThenApply_DeletesExactlyThePlannedDevPaths(t *testing.T) {
 	tg := emulatorTarget(t)
 	ctx := context.Background()
 	now := time.Now()
-	seedEmulators(t, tg)
-	assertState(t, tg, nil, rtdbSeed)
+	seedEmulators(t, tg, firestoreSeed, rtdbSeed)
+	assertState(t, tg, firestoreSeed, nil, rtdbSeed)
 
-	// Plan: read-only.
+	// Review finding 2: while dev holds an id the tool does not handle, no plan is written.
 	dir := t.TempDir() + "/plan"
 	var planOut bytes.Buffer
+	unsafe := tg.fs.Collection("dev_loans").Doc("L 2")
+	if _, err := unsafe.Set(ctx, map[string]any{"x": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runPlan(ctx, tg, dir, now, &planOut); err == nil || !strings.Contains(err.Error(), "L 2") {
+		t.Fatalf("plan with an unsafe document id: want a refusal naming it, got %v", err)
+	}
+	if _, err := os.Stat(dir + "/" + planFile); err == nil {
+		t.Fatal("a plan was written although dev holds an unsafe id")
+	}
+	if _, err := unsafe.Delete(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Plan: read-only.
 	if err := runPlan(ctx, tg, dir, now, &planOut); err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 	t.Logf("summary.txt:\n%s", planOut.String())
-	assertState(t, tg, nil, rtdbSeed)
+	assertState(t, tg, firestoreSeed, nil, rtdbSeed)
 	if err := runPlan(ctx, tg, dir, now, &planOut); err == nil {
 		t.Error("a second plan into the same directory was accepted")
 	}
 
-	lines, err := readPlan(dir, emulatorProject, now)
+	h, lines, err := readPlan(dir, emulatorProject, now)
 	if err != nil {
 		t.Fatalf("read the plan back: %v", err)
 	}
@@ -293,9 +308,10 @@ func TestEmulator_PlanThenApply_DeletesExactlyThePlannedDevPaths(t *testing.T) {
 	summary := planOut.String()
 	for _, want := range []string{
 		"dev_mystery", "UNCLASSIFIED", "kept company ids: C1", "dev/companies/C2 ", "dev/companies/C1/loans ", "children,",
-		"user documents kept: 3 (2 registered in Firebase Auth, 1 with no Auth account but in a kept company), deleted: 2",
+		"user documents kept: 3 (2 registered in Firebase Auth, 1 with no Auth account but in a kept company, 0 kept in doubt), deleted: 2",
 		"kept user ids, registered in Firebase Auth: U1, U3",
 		"kept user ids, no Auth account, of a kept company: CL1",
+		planKey + ": " + h.CreatedAt.Format(time.RFC3339),
 	} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("summary.txt does not mention %q", want)
@@ -318,30 +334,129 @@ func TestEmulator_PlanThenApply_DeletesExactlyThePlannedDevPaths(t *testing.T) {
 	}
 	writeBackup(t, dir, "SUCCESSFUL")
 
-	// Apply is refused when a user planned for deletion has registered since.
+	// Apply is refused when a user planned for deletion has registered since:
+	// the plan's delete lines are classified again from live data.
 	registered := tg
 	registered.authUsers = func(context.Context) (map[string]string, error) {
 		return map[string]string{"U1": "", "U3": "", "ANON": "", "U2": ""}, nil
 	}
-	if err := runApply(ctx, registered, dir, "dev", now, &applyOut); err == nil || !strings.Contains(err.Error(), "dev_users/U2") {
-		t.Fatalf("apply with U2 now in Auth: want a refusal, got %v", err)
+	applyOut.Reset()
+	if err := runApply(ctx, registered, dir, "dev", now, &applyOut); err == nil || !strings.Contains(applyOut.String(), "NOT DELETE ANY MORE dev_users/U2\n") {
+		t.Fatalf("apply with U2 now in Auth: want a refusal naming it, got %v\n%s", err, applyOut.String())
 	}
-	assertState(t, tg, nil, rtdbSeed)
+	assertState(t, tg, firestoreSeed, nil, rtdbSeed)
+
+	// Review finding 3: a plan in which two kept lines were flipped to delete
+	// (an unclassified document and a kept client) is refused as a whole.
+	flipped := t.TempDir()
+	edited := make([]line, len(lines))
+	copy(edited, lines)
+	for i, l := range edited {
+		if l.Path == "dev_mystery/M1" || l.Path == "dev_users/CL1" {
+			edited[i].Decision = del
+		}
+	}
+	writePlan(t, flipped, h, edited)
+	writeBackup(t, flipped, "SUCCESSFUL")
+	applyOut.Reset()
+	err = runApply(ctx, tg, flipped, "dev", now, &applyOut)
+	if err == nil || !strings.Contains(applyOut.String(), "NOT DELETE ANY MORE dev_mystery/M1\n") || !strings.Contains(applyOut.String(), "NOT DELETE ANY MORE dev_users/CL1\n") {
+		t.Fatalf("apply of a plan with flipped lines: want a refusal naming both, got %v\n%s", err, applyOut.String())
+	}
+	assertState(t, tg, firestoreSeed, nil, rtdbSeed)
+
+	// Review finding 1, first half: an earlier apply of this plan stopped
+	// midway (one document already gone, the started marker written). The same
+	// plan may run again and finishes the list.
+	hash, err := planHash(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeMarker(dir, startedFile, hash, now, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tg.fs.Doc("dev_payments/P1").Delete(ctx); err != nil {
+		t.Fatal(err)
+	}
 
 	// Apply.
+	applyOut.Reset()
 	if err := runApply(ctx, tg, dir, "dev", now, &applyOut); err != nil {
 		t.Fatalf("apply: %v\n%s", err, applyOut.String())
 	}
 	t.Logf("apply output:\n%s", applyOut.String())
+	if !strings.Contains(applyOut.String(), "deleting 20 Firestore documents and 6 Realtime Database nodes") || !strings.Contains(applyOut.String(), "(1 planned paths are already gone)") {
+		t.Errorf("apply did not report 20 documents, 6 nodes and 1 path already gone")
+	}
 	gone := map[string]bool{}
 	for _, p := range firestoreDeleted {
 		gone[p] = true
 	}
-	assertState(t, tg, gone, rtdbAfter)
-
-	// A second apply of the same plan deletes nothing more.
-	if err := runApply(ctx, tg, dir, "dev", now, &applyOut); err != nil {
-		t.Fatalf("second apply: %v", err)
+	assertState(t, tg, firestoreSeed, gone, rtdbAfter)
+	if _, err := os.Stat(dir + "/" + appliedFile); err != nil {
+		t.Errorf("no %s after a clean apply: %v", appliedFile, err)
 	}
-	assertState(t, tg, gone, rtdbAfter)
+
+	// Review finding 1, second half: the directory is spent. Fresh data that
+	// has the paths of the old plan (a new loan with the old id, the report
+	// node the triggers rebuilt) survives a second apply, which is refused.
+	if _, err := tg.fs.Doc("dev_loans/L1").Set(ctx, map[string]any{"user_id": "U1", "fresh": true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tg.rtdb.NewRef("dev/companies/C1/report_summary").Set(ctx, map[string]any{"total": 100}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runApply(ctx, tg, dir, "dev", now, &applyOut); err == nil || !strings.Contains(err.Error(), appliedFile) {
+		t.Fatalf("second apply of an applied directory: want a refusal, got %v", err)
+	}
+	delete(gone, "dev_loans/L1")
+	rebuilt := strings.Replace(rtdbAfter, `"C1": {"authentication"`, `"C1": {"report_summary": {"total": 100}, "authentication"`, 1)
+	assertState(t, tg, firestoreSeed, gone, rebuilt)
+}
+
+// Review finding 4, end to end: the company_id of a user registered in Auth
+// is a number. Read as "no company" it would leave C1 unreferenced, and C1,
+// its address, its bank details, its client and its Realtime Database node
+// would be planned for deletion. They must all stay, and the plan must say why.
+func TestEmulator_UnreadableCompanyReference_KeepsTheCompany(t *testing.T) {
+	tg := emulatorTarget(t)
+	ctx := context.Background()
+	seed := map[string]map[string]any{
+		"dev_users/U1":        {"id": "U1", "company_id": 123},
+		"dev_users/CL1":       {"id": "CL1", "company_id": "C1"},
+		"dev_companies/C1":    {"id": "C1"},
+		"dev_address/A1":      {"data_id": "C1"},
+		"dev_address/A2":      {"data_id": 77},
+		"dev_bank_details/B1": {"dataId": "C1"},
+		"dev_settings/S1":     {"user_id": nil},
+		"dev_loans/L1":        {"company_id": "C1"},
+	}
+	tree := `{"dev": {"companies": {"C1": {"report_summary": {"total": 1}, "loans": {"L1:product_type": "x"}, "something_else": true}}}}`
+	seedEmulators(t, tg, seed, tree)
+
+	dir := t.TempDir() + "/plan"
+	var out bytes.Buffer
+	if err := runPlan(ctx, tg, dir, time.Now(), &out); err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	_, lines, err := readPlan(dir, emulatorProject, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deletes []string
+	for _, l := range lines {
+		if l.Decision == del {
+			deletes = append(deletes, l.Path)
+		}
+	}
+	// Only the loan and the kept company's report and loans nodes go.
+	if got, want := strings.Join(deletes, " "), "dev_loans/L1 dev/companies/C1/loans dev/companies/C1/report_summary"; got != want {
+		t.Errorf("planned deletes:\n got %s\nwant %s", got, want)
+	}
+	for _, want := range []string{"dev_address/A2 (data_id), dev_users/U1 (company_id)", "EVERY company document is kept", "kept company ids: C1"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("summary.txt does not mention %q\n%s", want, out.String())
+		}
+	}
+	assertState(t, tg, seed, nil, tree)
 }

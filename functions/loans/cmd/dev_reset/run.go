@@ -3,12 +3,14 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -26,6 +28,9 @@ const (
 	planFile    = "plan.jsonl"
 	summaryFile = "summary.txt"
 	backupFile  = "backup.txt"
+	startedFile = "apply-started.txt"
+	appliedFile = "applied.txt"
+	planKey     = "plan_created_at" // the line of backup.txt that names its plan
 	maxPlanAge  = 2 * time.Hour
 )
 
@@ -75,6 +80,12 @@ func read(ctx context.Context, t target) (snapshot, error) {
 	if s.authUsers, err = t.authUsers(ctx); err != nil {
 		return s, fmt.Errorf("list Firebase Auth users: %w", err)
 	}
+	// An empty list with no error would classify every user as unregistered.
+	// The dev project has hundreds of Auth users, so zero means a wrong or
+	// broken listing, not an empty pool.
+	if len(s.authUsers) == 0 {
+		return s, errors.New("refusing: Firebase Auth returned zero users; every user document would be planned for deletion")
+	}
 	if s.docs, err = walkFirestore(ctx, t.fs); err != nil {
 		return s, err
 	}
@@ -87,6 +98,12 @@ func read(ctx context.Context, t target) (snapshot, error) {
 	}
 	s.companies = map[string][]string{}
 	for _, id := range ids {
+		// A key outside the safe characters is never put into a request path.
+		// It stays in the snapshot, and checkLine then refuses the plan.
+		if !safeSegment.MatchString(id) {
+			s.companies[id] = nil
+			continue
+		}
 		if s.companies[id], err = shallowKeys(ctx, t.rtdb, rtdbRoot+"/companies/"+id); err != nil {
 			return s, err
 		}
@@ -204,19 +221,31 @@ func listCollection(ctx context.Context, col *firestore.CollectionRef, fields []
 		if err != nil {
 			return nil, nil, err
 		}
-		d := doc{path: relPath(snap.Ref.Path)}
-		for _, f := range fields {
-			if v, ok := snap.Data()[f].(string); ok && v != "" {
+		docs = append(docs, newDoc(relPath(snap.Ref.Path), snap.Data(), fields))
+	}
+	refs, err := col.DocumentRefs(ctx).GetAll()
+	return docs, refs, err
+}
+
+// newDoc keeps only the named fields of a document's data: a string value as
+// it is, null or a missing field as absent, anything else as unreadable.
+func newDoc(path string, data map[string]any, fields []string) doc {
+	d := doc{path: path}
+	for _, f := range fields {
+		switch v := data[f].(type) {
+		case nil:
+		case string:
+			if v != "" {
 				if d.fields == nil {
 					d.fields = map[string]string{}
 				}
 				d.fields[f] = v
 			}
+		default:
+			d.bad = append(d.bad, f)
 		}
-		docs = append(docs, d)
 	}
-	refs, err := col.DocumentRefs(ctx).GetAll()
-	return docs, refs, err
+	return d
 }
 
 // runPlan reads dev and writes plan.jsonl and summary.txt. It writes nothing
@@ -234,6 +263,11 @@ func runPlan(ctx context.Context, t target, dir string, now time.Time, out io.Wr
 		return err
 	}
 	c, lines := s.plan()
+	// A plan that -apply would refuse is not written at all.
+	if refused := checkLines(lines); len(refused) > 0 {
+		return fmt.Errorf("refusing to plan: dev holds %d paths this tool does not handle; rename or remove them by hand first:\n  %s",
+			len(refused), strings.Join(refused[:min(len(refused), 20)], "\n  "))
+	}
 
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -242,9 +276,11 @@ func runPlan(ctx context.Context, t target, dir string, now time.Time, out io.Wr
 	if err != nil {
 		return err
 	}
+	// Whole seconds, so that the time can be copied into backup.txt by hand.
+	h := header{Plan: planName, Project: t.project, CreatedAt: now.UTC().Truncate(time.Second), Lines: len(lines)}
 	buf := bufio.NewWriter(f)
 	enc := json.NewEncoder(buf)
-	if err := enc.Encode(header{Plan: planName, Project: t.project, CreatedAt: now.UTC(), Lines: len(lines)}); err != nil {
+	if err := enc.Encode(h); err != nil {
 		return err
 	}
 	for _, l := range lines {
@@ -256,7 +292,8 @@ func runPlan(ctx context.Context, t target, dir string, now time.Time, out io.Wr
 		return err
 	}
 
-	summary := summarize("dev reset PLAN. Nothing has been deleted.", t.project, now, s, c, lines)
+	summary := summarize("dev reset PLAN. Nothing has been deleted.", t.project, h.CreatedAt, s, c, lines) +
+		fmt.Sprintf("\nBACKUP.TXT must name this plan with the line\n  %s: %s\n", planKey, h.CreatedAt.Format(time.RFC3339))
 	if err := os.WriteFile(filepath.Join(dir, summaryFile), []byte(summary), 0o600); err != nil {
 		return err
 	}
@@ -266,23 +303,23 @@ func runPlan(ctx context.Context, t target, dir string, now time.Time, out io.Wr
 
 // readPlan loads plan.jsonl and re-validates all of it: the header, the age,
 // and every line. One bad line refuses the whole plan.
-func readPlan(dir, project string, now time.Time) ([]line, error) {
+func readPlan(dir, project string, now time.Time) (header, []line, error) {
+	var h header
 	f, err := os.Open(filepath.Join(dir, planFile))
 	if err != nil {
-		return nil, err
+		return h, nil, err
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 
-	var h header
 	if !sc.Scan() || json.Unmarshal(sc.Bytes(), &h) != nil || h.Plan != planName {
-		return nil, fmt.Errorf("%s does not start with a %s header", planFile, planName)
+		return h, nil, fmt.Errorf("%s does not start with a %s header", planFile, planName)
 	}
 	if h.Project != project {
-		return nil, fmt.Errorf("refusing: the plan was made from project %q, the target is %q", h.Project, project)
+		return h, nil, fmt.Errorf("refusing: the plan was made from project %q, the target is %q", h.Project, project)
 	}
 	if age := now.Sub(h.CreatedAt); age < 0 || age > maxPlanAge {
-		return nil, fmt.Errorf("refusing: the plan was made at %s; a plan is valid for %s, make a new one", h.CreatedAt.Format(time.RFC3339), maxPlanAge)
+		return h, nil, fmt.Errorf("refusing: the plan was made at %s; a plan is valid for %s, make a new one", h.CreatedAt.Format(time.RFC3339), maxPlanAge)
 	}
 
 	var lines []line
@@ -290,29 +327,36 @@ func readPlan(dir, project string, now time.Time) ([]line, error) {
 	for n := 2; sc.Scan(); n++ {
 		var l line
 		if err := json.Unmarshal(sc.Bytes(), &l); err != nil {
-			return nil, fmt.Errorf("%s line %d: %w", planFile, n, err)
+			return h, nil, fmt.Errorf("%s line %d: %w", planFile, n, err)
 		}
 		if err := checkLine(l); err != nil {
-			return nil, fmt.Errorf("refusing: %s line %d: %w", planFile, n, err)
+			return h, nil, fmt.Errorf("refusing: %s line %d: %w", planFile, n, err)
 		}
 		if seen[l.Kind+" "+l.Path] {
-			return nil, fmt.Errorf("refusing: %s line %d repeats %s", planFile, n, l.Path)
+			return h, nil, fmt.Errorf("refusing: %s line %d repeats %s", planFile, n, l.Path)
 		}
 		seen[l.Kind+" "+l.Path] = true
 		lines = append(lines, l)
 	}
 	if err := sc.Err(); err != nil {
-		return nil, err
+		return h, nil, err
 	}
 	if len(lines) != h.Lines {
-		return nil, fmt.Errorf("refusing: %s has %d lines, its header says %d", planFile, len(lines), h.Lines)
+		return h, nil, fmt.Errorf("refusing: %s has %d lines, its header says %d", planFile, len(lines), h.Lines)
 	}
-	return lines, nil
+	return h, lines, nil
 }
 
-// checkBackup refuses unless backup.txt names a finished Firestore export of
-// the dev project and an existing, non-empty Realtime Database backup file.
-func checkBackup(dir string) error {
+var (
+	exportPath    = regexp.MustCompile(`^gs://[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]/[^/\s][^\s]*$`)
+	operationName = regexp.MustCompile(`^projects/` + regexp.QuoteMeta(projectID) + `/databases/[^/\s]+/operations/[^/\s]+$`)
+)
+
+// checkBackup refuses unless backup.txt names this plan (by the creation time
+// in its header), a finished Firestore export of the dev project with a bucket
+// and an object prefix, and a Realtime Database backup that is a non-empty
+// file of valid JSON.
+func checkBackup(dir string, h header) error {
 	raw, err := os.ReadFile(filepath.Join(dir, backupFile))
 	if err != nil {
 		return fmt.Errorf("refusing: no %s next to the plan, take the backups first: %w", backupFile, err)
@@ -323,18 +367,102 @@ func checkBackup(dir string) error {
 			kv[strings.TrimSpace(k)] = strings.TrimSpace(v)
 		}
 	}
+	created := h.CreatedAt.UTC().Format(time.RFC3339)
 	switch {
-	case !strings.HasPrefix(kv["firestore_export"], "gs://"):
-		return fmt.Errorf("refusing: %s has no firestore_export: gs://... line", backupFile)
-	case !strings.HasPrefix(kv["firestore_operation"], "projects/"+projectID+"/"):
-		return fmt.Errorf("refusing: %s has no firestore_operation of project %s", backupFile, projectID)
+	case kv[planKey] != created:
+		return fmt.Errorf("refusing: %s does not name this plan; it needs the line %s: %s", backupFile, planKey, created)
+	case !exportPath.MatchString(kv["firestore_export"]):
+		return fmt.Errorf("refusing: %s needs firestore_export: gs://<bucket>/<object prefix>", backupFile)
+	case !operationName.MatchString(kv["firestore_operation"]):
+		return fmt.Errorf("refusing: %s needs firestore_operation: projects/%s/databases/<db>/operations/<id>", backupFile, projectID)
 	case kv["firestore_export_state"] != "SUCCESSFUL":
 		return fmt.Errorf("refusing: %s does not say firestore_export_state: SUCCESSFUL", backupFile)
 	}
-	if st, err := os.Stat(kv["rtdb_backup"]); err != nil || st.Size() == 0 {
-		return fmt.Errorf("refusing: the rtdb_backup file named in %s is missing or empty", backupFile)
+	st, err := os.Stat(kv["rtdb_backup"])
+	if err != nil || !st.Mode().IsRegular() || st.Size() == 0 {
+		return fmt.Errorf("refusing: the rtdb_backup named in %s is not an existing, non-empty file", backupFile)
+	}
+	dump, err := os.ReadFile(kv["rtdb_backup"])
+	if err != nil || !json.Valid(dump) {
+		return fmt.Errorf("refusing: the rtdb_backup named in %s is not valid JSON", backupFile)
 	}
 	return nil
+}
+
+// planHash identifies the plan a marker file belongs to.
+func planHash(dir string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, planFile))
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(raw)), nil
+}
+
+// checkMarkers makes a plan directory single-use for -apply as well. A
+// directory with applied.txt is refused. A directory where an apply started
+// and did not finish may be applied again, but only with the plan that was
+// started: deleting the rest of the same list is safe, a changed list is not.
+func checkMarkers(dir, hash string) error {
+	if _, err := os.Stat(filepath.Join(dir, appliedFile)); err == nil {
+		return fmt.Errorf("refusing: %s exists, this plan was already applied; make a new plan in a new directory", filepath.Join(dir, appliedFile))
+	}
+	started, err := os.ReadFile(filepath.Join(dir, startedFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(started), "plan_sha256: "+hash+"\n") {
+		return fmt.Errorf("refusing: an earlier apply in this directory did not finish and %s has changed since; make a new plan in a new directory", planFile)
+	}
+	return nil
+}
+
+func writeMarker(dir, name, hash string, now time.Time, note string) error {
+	text := fmt.Sprintf("plan_sha256: %s\nat: %s\n%s", hash, now.UTC().Format(time.RFC3339), note)
+	return os.WriteFile(filepath.Join(dir, name), []byte(text), 0o600)
+}
+
+// exists reports whether the thing a plan line names is in the snapshot.
+func (s snapshot) exists(l line) bool {
+	if l.Kind == "firestore" {
+		_, found := slices.BinarySearchFunc(s.docs, l.Path, func(d doc, path string) int { return strings.Compare(d.path, path) })
+		return found
+	}
+	segs := strings.Split(l.Path, "/")
+	switch len(segs) {
+	case 2:
+		return slices.Contains(s.rtdbTop, segs[1])
+	case 3:
+		_, found := s.companies[segs[2]]
+		return found
+	}
+	return slices.Contains(s.companies[segs[2]], segs[3])
+}
+
+// recheck compares the plan's delete lines with a classification of dev as it
+// is now. It returns the lines to delete (still present, still delete), how
+// many are already gone, and the lines that are present but no longer classify
+// as delete. One stale line refuses the whole apply.
+func recheck(planned []line, s snapshot) (todo []line, gone int, stale []string) {
+	_, live := s.plan()
+	decision := map[string]string{}
+	for _, l := range live {
+		decision[l.Kind+" "+l.Path] = l.Decision
+	}
+	for _, l := range planned {
+		switch {
+		case l.Decision != del:
+		case decision[l.Kind+" "+l.Path] == del:
+			todo = append(todo, l)
+		case !s.exists(l):
+			gone++
+		default:
+			stale = append(stale, l.Path)
+		}
+	}
+	return todo, gone, stale
 }
 
 // runApply deletes exactly the paths marked delete in the plan, then reads dev
@@ -346,38 +474,51 @@ func runApply(ctx context.Context, t target, dir, confirm string, now time.Time,
 	if err := t.check(); err != nil {
 		return err
 	}
-	lines, err := readPlan(dir, t.project, now)
+	hash, err := planHash(dir)
 	if err != nil {
 		return err
 	}
-	if err := checkBackup(dir); err != nil {
+	if err := checkMarkers(dir, hash); err != nil {
 		return err
 	}
-	// The owner's constraint, checked against Auth as it is now, not as it was
-	// when the plan was made.
-	authUsers, err := t.authUsers(ctx)
+	h, lines, err := readPlan(dir, t.project, now)
 	if err != nil {
-		return fmt.Errorf("list Firebase Auth users: %w", err)
+		return err
+	}
+	if err := checkBackup(dir, h); err != nil {
+		return err
+	}
+	// The plan says where deleting is allowed; the rules say what may be
+	// deleted. Classify dev again as it is now (Auth included) and refuse the
+	// whole apply when a delete line is present but no longer classifies as
+	// delete: a hand-edited line, a user who registered since, a new reference.
+	before, err := read(ctx, t)
+	if err != nil {
+		return err
+	}
+	todo, gone, stale := recheck(lines, before)
+	if len(stale) > 0 {
+		for _, p := range stale {
+			fmt.Fprintf(out, "NOT DELETE ANY MORE %s\n", p)
+		}
+		return fmt.Errorf("refusing: %d paths are marked delete in the plan but do not classify as delete now (first: %s); nothing was deleted, make a new plan", len(stale), stale[0])
 	}
 	var docPaths, nodePaths []string
-	planned := map[string]bool{}
-	for _, l := range lines {
-		if l.Decision != del {
-			continue
-		}
-		planned[l.Kind+" "+l.Path] = true
+	for _, l := range todo {
 		if l.Kind == "rtdb" {
 			nodePaths = append(nodePaths, l.Path)
-			continue
+		} else {
+			docPaths = append(docPaths, l.Path)
 		}
-		segs := strings.Split(l.Path, "/")
-		if _, registered := authUsers[segs[1]]; registered && segs[0] == collectionPrefix+"users" {
-			return fmt.Errorf("refusing: %s is marked delete but its uid is in Firebase Auth now; make a new plan", l.Path)
-		}
-		docPaths = append(docPaths, l.Path)
+	}
+	// From here on the directory is spent: applied.txt after a clean run,
+	// otherwise this marker, which lets only the same plan be applied again.
+	if err := writeMarker(dir, startedFile, hash, now, ""); err != nil {
+		return err
 	}
 
-	fmt.Fprintf(out, "deleting %d Firestore documents and %d Realtime Database nodes in %s\n", len(docPaths), len(nodePaths), t.project)
+	fmt.Fprintf(out, "deleting %d Firestore documents and %d Realtime Database nodes in %s (%d planned paths are already gone)\n",
+		len(docPaths), len(nodePaths), t.project, gone)
 	failed := 0
 	bw := t.fs.BulkWriter(ctx)
 	jobs := make([]*firestore.BulkWriterJob, len(docPaths))
@@ -410,17 +551,18 @@ func runApply(ctx context.Context, t target, dir, confirm string, now time.Time,
 	}
 	c, remaining := s.plan()
 	left := 0
-	for _, l := range remaining {
-		if planned[l.Kind+" "+l.Path] {
+	for _, l := range todo {
+		if s.exists(l) {
 			left++
 			fmt.Fprintf(out, "STILL PRESENT %s\n", l.Path)
 		}
 	}
 	fmt.Fprint(out, summarize("dev reset APPLIED. What remains in dev:", t.project, now, s, c, remaining))
 	if failed > 0 || left > 0 {
-		return fmt.Errorf("%d deletes failed and %d planned paths are still present", failed, left)
+		return fmt.Errorf("%d deletes failed and %d planned paths are still present; the same plan can be applied again while it is valid", failed, left)
 	}
-	return nil
+	return writeMarker(dir, appliedFile, hash, now,
+		fmt.Sprintf("deleted: %d Firestore documents, %d Realtime Database nodes\n", len(docPaths), len(nodePaths)))
 }
 
 type tally struct{ total, keep, del int }
@@ -455,7 +597,7 @@ func summarize(title, project string, at time.Time, s snapshot, c classification
 	tallies := map[string]*tally{}
 	exportIDs := map[string]bool{}
 	noOwner := map[string]int{}
-	var authUserDocs, clientUserDocs, keptCompanyDocs, nodesDeleted, nodesKept []string
+	var authUserDocs, clientUserDocs, doubtUserDocs, keptCompanyDocs, nodesDeleted, nodesKept []string
 	deletedUsers, deletedCompanyDocs := 0, 0
 	for _, l := range lines {
 		if l.Kind == "rtdb" {
@@ -489,6 +631,8 @@ func summarize(title, project string, at time.Time, s snapshot, c classification
 		switch {
 		case segs[0] == collectionPrefix+"users" && l.Rule == ruleUserInAuth:
 			authUserDocs = append(authUserDocs, segs[1])
+		case segs[0] == collectionPrefix+"users" && l.Rule == ruleUserInDoubt:
+			doubtUserDocs = append(doubtUserDocs, segs[1])
 		case segs[0] == collectionPrefix+"users" && l.Decision == keep:
 			clientUserDocs = append(clientUserDocs, segs[1])
 		case segs[0] == collectionPrefix+"users":
@@ -547,12 +691,17 @@ func summarize(title, project string, at time.Time, s snapshot, c classification
 	for _, p := range sortedKeys(noOwner) {
 		fmt.Fprintf(&b, "  %s: %d documents carry no owner field and are kept in doubt\n", p, noOwner[p])
 	}
-	fmt.Fprintf(&b, "\n  user documents kept: %d (%d registered in Firebase Auth, %d with no Auth account but in a kept company), deleted: %d\n",
-		len(authUserDocs)+len(clientUserDocs), len(authUserDocs), len(clientUserDocs), deletedUsers)
+	fmt.Fprintf(&b, "  documents whose reference or owner field is present but not a string (kept in doubt, with what depends on them): %s\n", list(c.unreadable))
+	if c.companiesInDoubt {
+		b.WriteString("  WARNING: the company_id of a user registered in Firebase Auth is not a string, so EVERY company document is kept, with what depends on it\n")
+	}
+	fmt.Fprintf(&b, "\n  user documents kept: %d (%d registered in Firebase Auth, %d with no Auth account but in a kept company, %d kept in doubt), deleted: %d\n",
+		len(authUserDocs)+len(clientUserDocs)+len(doubtUserDocs), len(authUserDocs), len(clientUserDocs), len(doubtUserDocs), deletedUsers)
 	fmt.Fprintf(&b, "  Auth users with no %susers document: %d\n", collectionPrefix, len(s.authUsers)-len(authUserDocs))
 	fmt.Fprintf(&b, "  deleted user documents whose email address belongs to a registered Auth user under another uid: %d\n", c.emailOverlap)
 	fmt.Fprintf(&b, "  kept user ids, registered in Firebase Auth: %s\n", list(authUserDocs))
 	fmt.Fprintf(&b, "  kept user ids, no Auth account, of a kept company: %s\n", list(clientUserDocs))
+	fmt.Fprintf(&b, "  kept user ids, kept in doubt: %s\n", list(doubtUserDocs))
 	fmt.Fprintf(&b, "\n  company documents kept: %d, deleted: %d (a company is kept when a user registered in Firebase Auth references it)\n", len(keptCompanyDocs), deletedCompanyDocs)
 	fmt.Fprintf(&b, "  kept company ids: %s\n", list(keptCompanyDocs))
 	fmt.Fprintf(&b, "  company ids that Auth-registered users reference but that have no company document: %s\n", list(danglingCompanies))

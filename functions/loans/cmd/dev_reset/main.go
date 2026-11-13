@@ -10,7 +10,9 @@
 //	gcloud firestore export gs://<bucket>/backups/<name> --collection-ids=<ids> --project loooans-dev-stg
 //	firebase database:get /dev --project loooans-dev-stg --output <dir>/rtdb-dev.json
 //
-//	# Write <dir>/backup.txt with these four lines (restore commands may follow):
+//	# Write <dir>/backup.txt with these five lines (restore commands may follow).
+//	# The first one names the plan; summary.txt ends with it, ready to copy.
+//	#   plan_created_at: <time in the plan's header>
 //	#   firestore_export: gs://<bucket>/backups/<name>
 //	#   firestore_operation: projects/loooans-dev-stg/databases/(default)/operations/<id>
 //	#   firestore_export_state: SUCCESSFUL
@@ -18,7 +20,10 @@
 //
 //	go run ./cmd/dev_reset -apply <dir> -confirm dev    # deletes the listed paths, prints what remains
 //
-// A plan is valid for two hours and a plan directory is used once.
+// A plan is valid for two hours. A plan directory is used once: -plan refuses a
+// directory that holds a plan, and -apply refuses one that holds applied.txt.
+// Before it deletes, -apply classifies dev again and refuses the whole plan if
+// a line marked delete no longer classifies as delete.
 //
 // It can only reach project loooans-dev-stg, root collections whose id starts
 // with dev_, and Realtime Database paths under dev/. Those three are constants
