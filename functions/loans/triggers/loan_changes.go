@@ -155,14 +155,7 @@ func firestoreScheduleLoader(client *firestore.Client, collectionPrefix string) 
 		}
 		schedules := make([]ScheduleAmounts, 0, len(docs))
 		for _, doc := range docs {
-			fields := doc.Data()
-			status, _ := fields["status"].(string)
-			schedules = append(schedules, ScheduleAmounts{
-				Status:    status,
-				Principal: numberOf(fields["principal_payment"]),
-				Extra:     numberOf(fields["extra_payment"]),
-				Interest:  numberOf(fields["interest_payment"]),
-			})
+			schedules = append(schedules, scheduleAmountsOf(doc.Data()))
 		}
 		return schedules, nil
 	}

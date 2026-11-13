@@ -4,6 +4,60 @@ Log of work done on the loans Cloud Functions (Go backend).
 
 ---
 
+## Report recompute tool — campaign Phase 4 (2026-11-13)
+
+Branch `feat/report-recompute-tool` → develop (draft PR #132). Spec: `docs/superpowers/specs/2026-11-13-report-recompute-tool.md` (source and formula per total, the date rule per bucket, every case where the triggers and recompute give different numbers and which side is right, apply and rollback, the race with triggers, 13 open decisions, and §8 "Before any apply").
+
+**Status: a dry-run measurement tool. Do NOT run `-apply` in any hosted environment until the spec's §8 is satisfied** (#138 fixed in the app; #133 and #134 resolved or accepted in writing; owner decisions 1, 2, 4, 5, 7, 9, 12). The independent review of head `4c54d8a` found three ways an apply could do harm; all three are fixed on this branch (below). The re-review of `933968d` found two more: confirmed open-term planned rows counted as the whole loan returned, and `-restore` checking only that the run record existed. Both are now refused (below). Decision 12 (not counting `payment_submitted` rows) is OPEN: it reverses the standing rule that listed them among paid rows.
+
+**What was built.** `triggers/report_recompute.go`: `RecomputeReport(RecomputeInput)` is pure. It takes a company's raw loan, schedule and capital documents plus the product-type map and returns the summed `ReportPlan`, one `LoanLine` per loan, and three lists (dropped documents, pending submissions, rows with a foreign `company_id`). The arithmetic of each booking is the trigger's (`PlanLoanReport` / `PlanScheduleReport` / `PlanCapitalReport`, called once per document with a document date in place of the event time); which documents count is decided from their final state. `ReportPlan.SummaryNode()` is the `report_summary` node. `cmd/recompute_reports/` is the CLI: `adapters.go` (Firestore: loans and capital by company, rows by `loan_id` per loan as the trigger's loader reads them; Realtime Database: live node with ETag, claims, conditional write, run records) and `main.go` (flags, refusals, the tables). The trigger's schedule loader shares `scheduleAmountsOf` with recompute; no trigger behaviour changed.
+
+**How to run** (from `functions/loans`, with `gcloud auth application-default login` done):
+
+```bash
+go run ./cmd/recompute_reports -env dev -company <companyId> [-loans]        # dry run: reads only; -loans adds a line per loan
+go run ./cmd/recompute_reports -env dev -company <companyId> -apply          # saves the live node, then replaces report_summary
+go run ./cmd/recompute_reports -env prod -company <id> -apply -confirm-prod <id>
+```
+
+After an apply, wait a minute and dry run again: it must print `live equals the recomputed summary: zero difference`. If not, an event landed in between; apply again. Then add a row to the run log below.
+
+**Rollback.** Every apply first writes `{company}/report_recomputes/{yyyymmddThhmmssZ}` with `previous` = the complete node as it was (`data` list included), then replaces the node, then marks the record `applied: true`. To undo run `<runId>`:
+
+```bash
+go run ./cmd/recompute_reports -env dev -company <id> -restore <runId>          # prints saved vs live, writes nothing
+go run ./cmd/recompute_reports -env dev -company <id> -restore <runId> -apply   # writes the saved node back (recorded, undoable)
+```
+
+A restore puts back the node as it was before that run; increments the triggers added afterwards are not in it. A restore is refused when the run record has no `previous` node or is not marked `applied: true`, and when the live totals or data item count differ from what the run wrote (`after`, `data_items.after`); the differences are printed, and `-discard-changes-since-run` accepts losing what was booked since. Never restore by editing the database by hand.
+
+**Rules built (owner may change them; see the spec §7).** Release buckets on the loan's `created_at` (the loan has no approval date); settlement and bad debt on the loan's `updated_at`; a collection on `collected_at`, else `paid_at`, else `created_at`; all in UTC like the triggers. A loan counts as released in every status except `pending` and `declined`. Only confirmed rows (`paid_on_time`, `paid_late`) count; **a `payment_submitted` row is not counted and is listed as a pending submission** (open owner decision 12; it reverses the standing rule; the trigger planner counts it at creation, and "Pay now" on an open-term planned row would otherwise book the whole principal). Documents with `deleted_at` are left out. Malformed documents and loans without a product-type node are dropped and listed.
+
+**An apply is refused when:** prod lacks `-confirm-prod <company>`; `ENVIRONMENT` is set to another environment; one emulator variable is set without the other; the recompute is empty; any document was dropped; a confirmed open-term row (`paid_on_time`/`paid_late`, `is_open_term` true) has `principal_payment` at or above the loan's `amount` (#138; listed in the dry run, flagged in `-loans`, no override); an event is claimed under `report_events` and not applied in the last 7 days; the previous node cannot be saved; a trigger wrote to the summary during the run (conditional write on the ETag read before Firestore).
+
+**Trigger defects this work found or confirmed (not fixed here).**
+- **D16 = #133.** `loanScheduleChanges` runs on creation only. The planned row an app-managed approval persists is later changed by update: the borrower's "Pay now" sets `payment_submitted`, a confirmation sets `paid_on_time`/`paid_late`, a rejection sets `not_paid`. The trigger never books that confirmed payment and never reverses a rejected submission it booked at creation. Teller flows cannot touch the planned row (they need a self-managed company, which persists none).
+- **#134.** The settlement remainder subtracts `principal_payment + extra_payment`, and teller flows store the extra in both fields, so it is subtracted twice. Recompute calls the same function: an apply would restate this under-count.
+- **#138 (app).** An open-term loan's first row is persisted at approval with `principal_payment = amount`, `interest_payment = 0`; confirming a borrower's submission on it writes no amounts. Recompute would book the whole loan as returned principal, so the tool refuses to apply while such a row exists.
+- **D17.** Two events in the same millisecond share a `data` key; the later item overwrites the earlier.
+- **D18.** The loan document has no `approved_at` / `completed_at`; exact period buckets need those fields.
+- Histories the triggers book and never reverse (spec §4.2): a bad debt followed by a payment, a loan completed twice, a row paid after settlement, a loan re-approved.
+
+**Evidence.** Unit: 8 test functions in `test/triggers/report_recompute_test.go` (31 cases) and 14 in `cmd/recompute_reports/main_test.go` (44 cases; root module 428 cases): hand-derived totals and loan lines, every `LoanStatus` value, replay-versus-recompute equivalence, ten named differences with their numbers, order independence, the saved copy, restore, every refusal, the names each `-env` uses. Emulators (`firebase emulators:start --only database,firestore --project demo-finstack`, then `FIRESTORE_EMULATOR_HOST=localhost:8081 FIREBASE_DATABASE_EMULATOR_HOST='localhost:9000?ns=demo-finstack' go test -tags emulator ./cmd/recompute_reports/ -run Emulator`; **CI does not run these**): under the dev, stg and prod names a dry run leaves the company node untouched, an apply writes exactly the recompute and saves a copy equal to the node as it was, a restore puts it back; the review's probe (one approved loan, no product type, live node present) is refused with nothing changed; a trigger write during the run is detected; a confirmed open-term planned row is refused; restores of a record without `previous`, of a record not applied, and after a trigger booked 777 since the apply are refused with nothing changed (the flag then restores). `go vet ./...` clean in the root and `triggers` modules, with and without `-tags emulator`.
+
+**Run log (every dry-run measurement and every apply goes here).**
+
+| Date | Env | Company | Mode | Result |
+|---|---|---|---|---|
+| 2026-11-13 | dev | `onOytOlQOGAUscnmcIjj` | dry run | 31 loans (25 released), 32 schedules (32 paid), 1 capital, 0 dropped, 0 claims. 20 of 21 all-time totals and 133 of 216 period totals differ; data items 112 recomputed, 86 live. `sales` recomputed / live: released 747,061.00 / 268,560.00; collections 647,318.71 / 332,656.68; interest 30,507.18 / 24,624.42; principal 616,811.53 / 107,116.87. `capital_usage/total_capital` 617,811.53 / 205,816.11. Nothing written. |
+| 2026-11-13 | dev | `onOytOlQOGAUscnmcIjj` | dry run, `-loans`, after the review fixes | Same totals (the company has no pending submission, no dropped document, no foreign-company row). The released gap of −478,501.00 per loan: 9 loans have no release in the live `data` list, 502,101.00 in all (completed: `Eq2wtPKY8CIkeniGG7Ph`, `OW0npjwmw45BGXfV7y1a`, `ZpbohYDuhcZ2hmU6XQYh`, `dN2bZIawOk2O6s8W36g4` at 100,000.00 each and `qb46ixbAqqUqa2QYMoOP` 100.00; paid_on_time: `hXAGdn9QhyQcFgQsSjln` 99,999.00, `An4hZJuFrRMLEJ3juUBa` 12.00; paid_late: `JapcHUYVJ0OTiPDZG0OO` 1,000.00, `A9aR1hLFNx42e5RnsWR3` 990.00). 6 loans are released more than once in live, 13,600.00 over (`QGV9La0z0qV63gUyrUK1` 7,000 for 1,000; `JTJaTFVL3dMcEFiNYCsY` 4,000 for 1,000; `Ci2JwNRqhpOCabZLf29i` 1,500 for 100; `H6LO1lN3fDj1ol4KDr6s` 1,500 for 300; `TWvGZcaGA3y1WwekQXlg` and `eOdjbZR4zAb5bpzht6og` 2,000 for 1,000 each): campaign D1. The live total is 10,000.00 above its own `data` list. −502,101 + 13,600 + 10,000 = −478,501. Why the 9 releases were never booked is not visible in the documents. Nothing written. |
+
+No apply has been run in any environment.
+
+**Still open.** Everything in the spec's §8; the dev apply and the check that the app's reports render; stg and prod measurements and applies.
+
+---
+
 ## Report triggers rebuild — campaign Phase 2/3, option (a) in full (2026-09-09)
 
 Branch `fix/report-triggers-108` → develop. Spec: `docs/superpowers/specs/2026-09-09-report-triggers-rebuild.md`. Closes finstack#108 (D5) and the campaign's D1–D8.

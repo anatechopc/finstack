@@ -13,6 +13,17 @@
 > line-number evidence below describes the code BEFORE that change; keep it
 > as the incident record.
 
+> **Status 2026-11-13 (Phase 4):** the recompute tool is built (branch
+> `feat/report-recompute-tool`, PR #132; core `triggers/report_recompute.go`, CLI
+> `cmd/recompute_reports/`, spec
+> `docs/superpowers/specs/2026-11-13-report-recompute-tool.md`). It rebuilds
+> one company's `report_summary` from Firestore through the same planning
+> functions the triggers use. It is a dry-run measurement tool: no repair has
+> been applied in any environment, and none may be until the spec's §8 is
+> satisfied. Building and reviewing it surfaced **D16 (#133), D17, D18 and
+> D19 (#134)** below. The section "Recompute tool" after them has the
+> commands.
+
 This is Phase 2 working material for the campaign in `../SKILL.md`. Every
 defect below was verified by reading the file at the stated line on
 2026-07-07 (branch `feature/chat-messaging`). Line numbers drift — re-grep
@@ -205,6 +216,105 @@ three writers.
   the prorated charge exceed one month the amount due stays at the month
   (G4c: interestCharge 633.33, amortization 500). Owner decides whether an
   overdue row bills full accrual; flip G4c with the fix.
+
+### D16 (Go, CONFIRMED 2026-11-13 → finstack#133, not fixed) — `loanScheduleChanges` books created rows only
+- The trigger is deployed on `…document.v1.created`, and its planner treats
+  `payment_submitted` as a payment (`isCollectionStatus`).
+- Which rows are changed by update: approval in an **app-managed** company
+  persists the first row as `approved` (`loans_bloc.dart`; open-term:
+  `principal_payment = amount`). Teller flows cannot pay that row: they
+  require a self-managed company (`payment_bloc.dart:127`), which persists
+  no row at approval. The borrower's "Pay now" flow updates it to
+  `payment_submitted` (`payment_submission_bloc.dart`); a confirmation
+  updates it to `paid_on_time` / `paid_late`
+  (`PaymentConfirmationService.confirm`); a rejection reverts it to
+  `not_paid` (`reject`).
+- Consequence: the confirmed payment of a planned row is never booked; a
+  submission booked at creation stays booked when it is rejected.
+- Recompute (PR #132) counts confirmed rows only (`paid_on_time`,
+  `paid_late`) and lists `payment_submitted` rows as pending: counting them
+  would book the whole principal of an open-term loan on "Pay now". So the
+  two sides differ on every `payment_submitted` row the trigger booked at
+  creation until it is confirmed. All cases, with numbers, in
+  `TestRecompute_DiffersFromTheTriggers_OnlyInTheNamedWays` and spec §4.3.
+- Fix direction: deploy on `written` with a status-transition guard like the
+  loan trigger's (book on entering a confirmed status, reverse on leaving
+  it), and decide whether a submission is a collection at all.
+
+### D19 (Go, CONFIRMED 2026-11-13 → finstack#134, not fixed) — settlement subtracts the extra payment twice
+- `PlanLoanReport`'s `completed` branch subtracts
+  `principal_payment + extra_payment` of the paid rows
+  (`collectedPrincipal(…, true)` in `report_core.go`). The teller flows store
+  the extra in both fields (`payment_bloc.dart:213-225`:
+  `principal_payment = payment`, `extra_payment = payment − scheduled
+  principal`), so the remainder of a settled loan with extra payments is too
+  low by the extra.
+- Recompute calls the same function, so it reproduces the under-count: an
+  apply restates it. Fixing the core is a precondition for any apply
+  (spec §8).
+
+### Histories the triggers book and never reverse (2026-11-13, spec §4.2)
+- A loan marked `bad_debt` that later receives a payment (the app moves it
+  to `paid_on_time`): the bad debt stays booked.
+- A loan `completed`, moved out of that status, and `completed` again: the
+  remainder is booked twice.
+- A row paid after settlement: added on top of a remainder already booked
+  in full.
+- These follow from booking per event with no reversal. Recompute reads the
+  final documents and does not have them; each is pinned with numbers in
+  `TestRecompute_DiffersFromTheTriggers_OnlyInTheNamedWays`.
+
+### D17 (Go, CANDIDATE 2026-11-13, not fixed) — data items of two events in the same millisecond share a key
+- `dataItemKey` is built from the handling time to the millisecond. D13 made
+  keys unique within one event; two different events handled in the same
+  millisecond still write the same `data/{key}` and the later item replaces
+  the earlier. Totals are unaffected (increments). Recompute suffixes `:2`,
+  `:3` across the whole summary.
+
+### D18 (schema, OPEN 2026-11-13) — the loan document records no approval or completion date
+- Loans carry `created_at` and `updated_at` only. The triggers bucket a
+  release, settlement or bad debt on the time they handled the event, which
+  no document records, so recompute cannot reproduce those buckets exactly:
+  it uses `created_at` for the release and `updated_at` for settlement and
+  bad debt (spec §4, owner decisions 1 and 2). Exact buckets need
+  `approved_at` / `completed_at` / `bad_debt_at` written by the app (schema
+  change, both sides).
+
+## Recompute tool (Phase 4, 2026-11-13)
+
+**Dry runs only until spec §8 "Before any apply" is satisfied.**
+
+```bash
+cd functions/loans
+# dry run: reads Firestore and the live node, prints recomputed vs live, writes nothing;
+# -loans adds one line per loan (ids, statuses, amounts)
+go run ./cmd/recompute_reports -env dev -company <companyId> -loans
+# apply: saves the complete live node under report_recomputes/{runId}, then one conditional write
+go run ./cmd/recompute_reports -env dev -company <companyId> -apply
+# production needs the company id twice
+go run ./cmd/recompute_reports -env prod -company <id> -apply -confirm-prod <id>
+# rollback: compare the node a run saved with live, then write it back
+go run ./cmd/recompute_reports -env dev -company <companyId> -restore <runId>
+go run ./cmd/recompute_reports -env dev -company <companyId> -restore <runId> -apply
+
+# proofs against the emulators (Firestore needs Java)
+cd apps/loans && firebase emulators:start --only database,firestore --project demo-finstack
+cd functions/loans && FIRESTORE_EMULATOR_HOST=localhost:8081 \
+  FIREBASE_DATABASE_EMULATOR_HOST='localhost:9000?ns=demo-finstack' \
+  go test -tags emulator ./cmd/recompute_reports/ -run Emulator -v
+```
+
+- Source and formula per total, bucket dates, the race with triggers and the
+  operator procedure: the spec. Per-run evidence: the run log in
+  `functions/loans/MEMORY.md`.
+- With both emulator variables set the CLI talks to the emulators only
+  (project `demo-finstack`); with one of them set it refuses to run.
+- An apply is refused when the recompute is empty, when any document was
+  dropped (they are listed), while an event is claimed and not applied under
+  `report_events` (younger than 7 days), when the previous node cannot be
+  saved, and when a trigger wrote to the summary during the run.
+- The emulator tests are not run by CI (it starts no emulators); run them
+  by hand before changing the adapters.
 
 ## Untested-code reality
 
