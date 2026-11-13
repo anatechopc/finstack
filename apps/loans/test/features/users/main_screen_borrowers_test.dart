@@ -57,6 +57,7 @@ void main() {
   );
 
   setUp(() {
+    SettingsService.resetForTest();
     SettingsService.initialize();
     SettingsService.instance.setClassicUIForTest(enabled: true);
 

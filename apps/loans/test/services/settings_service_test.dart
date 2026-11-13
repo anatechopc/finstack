@@ -5,7 +5,10 @@ import 'package:loooans/services/settings_service.dart';
 import 'package:settings_repository/settings_repository.dart';
 
 void main() {
-  setUp(SettingsService.initialize);
+  setUp(() {
+    SettingsService.resetForTest();
+    SettingsService.initialize();
+  });
 
   group('SettingsService.listen', () {
     test('a subscriber from before the session loads still gets the settings',

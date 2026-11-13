@@ -103,7 +103,12 @@ class _PendingSubmissionCardState extends State<_PendingSubmissionCard> {
     final penalty = submission.schedules.fold<double>(
       0,
       (sum, s) =>
-          sum + previewPenalty(schedule: s, loan: submission.loan).total,
+          sum +
+          previewPenalty(
+            schedule: s,
+            loan: submission.loan,
+            asOf: submission.payments.first.createdAt,
+          ).total,
     );
 
     return Container(

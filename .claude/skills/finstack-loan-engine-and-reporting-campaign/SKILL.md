@@ -39,13 +39,13 @@ entry gate and a falsifiable exit; do not skip gates.
 | Math core (Flutter, static methods) | `apps/loans/lib/services/loan_calculation_service.dart` |
 | Amortization formula | `apps/loans/lib/utils/extensions.dart` (`calculateMonthlyPayment`) |
 | Charges math | `apps/loans/lib/services/charge_calculator.dart` |
-| Early settlement (inline formula, no seam) | `apps/loans/lib/features/loans/bloc/loan_settlement_bloc.dart` |
+| Early settlement (`calculateSettlementBalance`, extracted 2026-09-08; the bloc delegates) | `apps/loans/lib/services/loan_calculation_service.dart` |
 | Math call sites | `loans_functions.dart`, `payment_center_bloc.dart`, `reports_bloc_extension_soa.dart`, (`additional_loan_bloc.dart` historically) |
 | Report writers (Go) | `functions/loans/triggers/loan_changes.go`, `loan_schedule_changes.go`, `capital_created.go` |
 | Report reader (Flutter) | `packages/loans/reports_repository/.../reports_realtime_database_service.dart` + `apps/loans/lib/features/reports/` |
-| Existing math test (1 test) | `apps/loans/test/services/loan_calculation_service_test.dart` |
+| Golden suite G1–G10 (Phase 1 DONE 2026-09-08) | `apps/loans/test/services/loan_calculation_{service,open_term,settlement}_test.dart`, `charge_calculator_test.dart` |
 | Campaign references | `references/golden-scenarios.md`, `references/aggregation-triggers.md` |
-| Race proof tool (emulator-only) | `scripts/race_demo/` |
+| Race proof tool (emulator-only) | `functions/loans/cmd/race_demo/` + `functions/loans/test/triggers/report_store_emulator_test.go` (`go test -tags emulator`) |
 
 Standing constraints (see finstack-change-control for the full set): never
 touch prod data by hand; schema changes ship both sides, backend first;
@@ -98,6 +98,16 @@ description), no unexplained failures.
 
 ## PHASE 1 — Golden scenario suite for the math core
 
+**Status: DONE 2026-09-08** (finstack#112, branch `feat/golden-suite-112`):
+Suite in `apps/loans/test/services/` (derivations as file-top comments);
+mutation check verified (`/ 30` → `/ 31` at BOTH sites fails every
+open-term scenario). G7 pins the CURRENT settlement formula (8800) —
+finstack#116 owns the redesign and the flip; G9 pins the current top-up
+interest — finstack#117 flips it. G11 parked (see references/golden-scenarios.md);
+the two clock-dependent branches are covered through the S2 `now` seam
+(G4c/G5d, folded into #115). The suite assumes a zone without DST
+(D11); CI pins `TZ=UTC`.
+
 Full scenario table, fixture recipes, and the worked-derivation template are
 in **`references/golden-scenarios.md`**. Summary:
 
@@ -107,8 +117,9 @@ in **`references/golden-scenarios.md`**. Summary:
   + the `double.infinity` sentinel.
 - G5/G5b: `'D1,D2'` salary-day term parsing (comma grammar, day ordering).
 - G6: proration across a month boundary (1 month = 30 days convention).
-- G7: early settlement remaining balance (requires extracting the formula
-  from `LoanSettlementBloc` to a pure helper first — behavior-preserving).
+- G7: early settlement remaining balance (formula extracted to
+  `LoanCalculationService.calculateSettlementBalance` on 2026-09-08; pins
+  the current, wrong formula — finstack#116).
 - G8: charges trio (`additionalCharges` / `deductions` / upfront) through
   `ChargeCalculator`.
 - G9/G10 (+G11): the three root causes of **finstack#33** (consecutive
@@ -129,7 +140,15 @@ only separable because each got its own oracle.
 
 ## PHASE 2 — Reporting defect catalog + proofs
 
-The verified defect catalog (D1-D9, with file/line evidence and fix
+**Status: DONE 2026-09-09** (branch `fix/report-triggers-108`, spec
+`docs/superpowers/specs/2026-09-09-report-triggers-rebuild.md`). Proofs
+recorded in `functions/loans/MEMORY.md`: emulator race 2/50 racy vs 50/50
+atomic; concurrent claims 1 winner of 10; double delivery through the real
+store books once. D1–D8 fixed in the same change (plus D13 item overwrite,
+D14 delete events, D15 prod schedule collection name); D9–D12 are Flutter
+(finstack#116/#117/#120).
+
+The verified defect catalog (D1-D12, with file/line evidence and fix
 directions) is **`references/aggregation-triggers.md`**. Headlines:
 
 | ID | Defect | Where |
@@ -142,14 +161,19 @@ directions) is **`references/aggregation-triggers.md`**. Headlines:
 | D6 | `TODO(deibeeed) complete this for report` — completed branch unfinished/unvalidated | `loan_changes.go:171` |
 | D7 | `%$w` format typos (unwrapped errors) | `loan_changes.go` ~144/~183 |
 | D8 | 2 `go vet` lock-copy warnings (protobuf by value) | `loan_changes.go` ~317/~334 |
-| D9 | CANDIDATE: settlement balance sums only last schedule (`=` vs `+=`) | `loan_settlement_bloc.dart` ~104 |
+| D9 | CONFIRMED → finstack#116: early-settlement formula wrong four ways (assigns not accumulates; credits unconfirmed rows; open-term credits the charge not the cash; top-ups ignored) — needs a formula decision | `loan_calculation_service.dart` `calculateSettlementBalance` |
+| D10 | CONFIRMED → finstack#117: after a top-up the next open-term row inherits the placeholder's prorated interest instead of charging the new balance | `loan_calculation_service.dart` (`calculateOpenTerm`, adjacent-row mutation) |
+| D11 | CANDIDATE (no current users affected): open-term day math is not DST-safe — Duration day adds and floored day diffs | `loan_calculation_service.dart` (jiffy `add(days:)` / `diff(Unit.day)`) |
+| D12 | CONFIRMED → finstack#120: an overdue open-term row's amount due is capped at one month of interest while `interestCharge` keeps accruing (G4c: 500 vs 633.33) | `loan_calculation_service.dart` (`calculateOpenTermSchedules`, the `amortization` min chain) |
 
 Required proofs in this phase (before choosing a solution):
 
-1. **Race proof (D2):** run `scripts/race_demo/` against the RTDB emulator —
-   exact commands in the reference. Verified run 2026-07-07: racy mode
-   landed 2/50 increments; transaction mode 50/50. The tool refuses to run
-   without `FIREBASE_DATABASE_EMULATOR_HOST` set (never-touch-prod).
+1. **Race proof (D2):** run `functions/loans/cmd/race_demo` (shipped path:
+   server-value increments) or the skill-local `scripts/race_demo/`
+   (transaction variant) against the RTDB emulator — exact commands in the
+   reference. Verified 2026-07-07 and 2026-09-09: racy mode landed 2/50
+   increments; the fixed path 50/50. Both refuse to run without
+   `FIREBASE_DATABASE_EMULATOR_HOST` set (never-touch-prod).
 2. **Idempotency demonstration (D1):** deliver the same `approved` loan
    event twice through the extracted core (or emulator) and show
    `total_amount_released` doubles. This becomes the regression test.
@@ -161,6 +185,14 @@ Required proofs in this phase (before choosing a solution):
 explicitly marked not-reproducible-with-reason in your notes.
 
 ## PHASE 3 — Solution menu (ranked) and decision gate
+
+**Decision 2026-09-09 (owner): (a) in full now, recompute tool as the next
+PR** — i.e. (c) delivered in two steps. Writers are adapter + core
+(`triggers/report_core.go`, `report_handlers.go`, `report_store.go`): a
+status-transition guard plus an event-id claim (idempotency), one atomic
+multi-path update with server-value increments (concurrency), errors
+returned and `--retry` enabled on the three triggers. `completed` books the
+remaining principal (owner decision). Recorded in `functions/loans/MEMORY.md`.
 
 **(a) Fix-in-place** — keep the trigger-fan-in design; make it correct.
 Idempotency guard via `data.GetOldValue()` status comparison; `Ref.Transaction`
@@ -255,8 +287,9 @@ recompute tool is built once and reused.
 - `cd functions/loans && CGO_ENABLED=0 go test ./...` is green and includes
   core tests for all three report writers, among them a double-delivery test
   asserting totals unchanged on redelivery.
-- `scripts/race_demo` `-txn` mode (or the CI equivalent emulator test) exits
-  0; the racy mode is retired to documentation.
+- `functions/loans/cmd/race_demo` lands n/n in atomic mode and the
+  `go test -tags emulator ./test/triggers/` proofs pass (done 2026-09-09;
+  the skill-local `scripts/race_demo -txn` remains as the original demo).
 - `cd functions/loans/triggers && CGO_ENABLED=0 go vet ./...` prints nothing.
 - `grep -rn '%\$w' functions/loans/` returns nothing; `grep -n 'TODO(deibeeed)'
   functions/loans/triggers/loan_changes.go` returns nothing (D5/D6 resolved,
@@ -287,11 +320,12 @@ cd functions/loans && CGO_ENABLED=0 go test ./...                          # all
 cd functions/loans/triggers && CGO_ENABLED=0 go vet ./...                  # 2 warnings @2026-07-07
 
 # Defects still present?
-grep -n 'dataErrors =' functions/loans/triggers/loan_changes.go            # D3 (many hits)
-grep -n '%\$w' functions/loans/triggers/loan_changes.go                    # D7 (2 hits)
-grep -n 'TODO(deibeeed)' functions/loans/triggers/loan_changes.go          # D6 (1 hit)
+grep -n 'dataErrors =' functions/loans/triggers/loan_changes.go            # D3 (0 hits since 2026-09-09)
+grep -n '%\$w' functions/loans/triggers/loan_changes.go                    # D7 (0 hits since 2026-09-09)
+grep -n 'TODO(deibeeed)' functions/loans/triggers/loan_changes.go          # D6 (0 hits since 2026-09-09)
+grep -n 'ClaimEvent' functions/loans/triggers/report_handlers.go           # idempotency guard present (1+ hits)
 grep -n 'document.v1.written' .github/scripts/deploy_functions.sh          # D1 precondition (loanChanges + messageWritten)
-grep -n 'totalLoanPayment =' apps/loans/lib/features/loans/bloc/loan_settlement_bloc.dart  # D9
+grep -n 'totalLoanPayment = (schedule' apps/loans/lib/services/loan_calculation_service.dart  # D9: 1 hit until finstack#116 lands
 
 # Math-core test inventory
 ls apps/loans/test/services/

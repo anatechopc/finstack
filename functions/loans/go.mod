@@ -26,7 +26,7 @@ require (
 	cloud.google.com/go/storage v1.30.1 // indirect
 	com.loooans.app/test/fakes v0.0.0
 	com.loooans.app/types v0.0.0-00010101000000-000000000000
-	firebase.google.com/go/v4 v4.13.0 // indirect
+	firebase.google.com/go/v4 v4.13.0
 	github.com/MicahParks/keyfunc v1.9.0 // indirect
 	github.com/cloudevents/sdk-go/v2 v2.15.2 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect

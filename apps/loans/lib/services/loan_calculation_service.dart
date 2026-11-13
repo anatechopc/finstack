@@ -38,6 +38,42 @@ class LoanCalculationService {
     return outstandingBalance * monthlyInterestRate;
   }
 
+  /// Early-settlement balance for a loan family (parent + special loans) as
+  /// the settlement dialog computes it today: the net amount released per
+  /// loan minus what [schedules] (every row with a payment id) collected.
+  ///
+  /// BUG(finstack#116): extracted verbatim from `LoanSettlementBloc` and
+  /// pinned as-is by golden test G7. The formula needs a design decision,
+  /// not a patch: the loop ASSIGNS instead of accumulating (only the last
+  /// element counts, and the bloc's list is newest-first by updated_at, so
+  /// production credits the least recently updated row); [schedules] includes
+  /// borrower submissions not yet confirmed; open-term rows credit the
+  /// computed interestCharge rather than the recorded interestPayment; and
+  /// approved top-ups (loan.additionalLoanAmounts) are not part of the
+  /// released amount. Flip G7 in the change that fixes this, never silently.
+  static double calculateSettlementBalance({
+    required List<Loan> loans,
+    required List<LoanSchedule> schedules,
+  }) {
+    var totalLoanAmount = 0.0;
+    var totalLoanPayment = 0.0;
+
+    for (final loan in loans) {
+      totalLoanAmount += (loan.amount + loan.additionalCharges) -
+          (loan.deductions + loan.additionalChargeUpfrontCollection);
+    }
+
+    for (final schedule in schedules) {
+      totalLoanPayment = (schedule.isOpenTerm
+              ? schedule.interestCharge
+              : schedule.interestPayment) +
+          schedule.principalPayment +
+          schedule.extraPayment;
+    }
+
+    return totalLoanAmount - totalLoanPayment;
+  }
+
   /// Calculates loan schedules for fixed-term loans.
   ///
   /// P = (Pv*R) / [1 - (1 + R)^(-n)]
@@ -144,6 +180,10 @@ class LoanCalculationService {
   /// Calculates loan schedules for open-term loans.
   ///
   /// Note: 1 month = 30 days (even if in a month there are 31 or 28 days)
+  ///
+  /// [now] is the clock used to clamp a past due date to today and, for
+  /// `'D1,D2'` terms, to pick the next salary day when the start date is on
+  /// neither. Defaults to the wall clock; tests pass a fixed date.
   static ({
     List<LoanSchedule> schedules,
     double totalLoanPayment,
@@ -156,6 +196,7 @@ class LoanCalculationService {
     required String companyId,
     List<LoanSchedule> paidSchedules = const [],
     bool forSoa = false,
+    DateTime? now,
   }) {
     final clientLoanSchedules = <LoanSchedule>[];
     final monthlyInterestRate = interestRate / 100;
@@ -164,7 +205,7 @@ class LoanCalculationService {
     var monthlyAmortization = 0.0;
     const numOfPayments = 1;
     var nextDate = Jiffy.parseFromDateTime(date).startOf(Unit.day);
-    final now = Jiffy.now();
+    final clock = Jiffy.parseFromDateTime(now ?? DateTime.now());
     paidSchedules.sortBy((sched) => sched.dueAt);
 
     if (paidSchedules.isNotEmpty) {
@@ -204,19 +245,19 @@ class LoanCalculationService {
           DateTime(nextDate.year, nextDate.month, firstSalaryDay),
         ).startOf(Unit.day);
       } else {
-        final nowDay = now.date;
+        final nowDay = clock.date;
 
         if (nowDay < firstSalaryDay) {
           nextDate = Jiffy.parseFromDateTime(
-            DateTime(now.year, now.month, firstSalaryDay),
+            DateTime(clock.year, clock.month, firstSalaryDay),
           ).startOf(Unit.day);
         } else if (nowDay < secondSalaryDay) {
           nextDate = Jiffy.parseFromDateTime(
-            DateTime(now.year, now.month, secondSalaryDay),
+            DateTime(clock.year, clock.month, secondSalaryDay),
           ).startOf(Unit.day);
         } else {
           nextDate = Jiffy.parseFromDateTime(
-            DateTime(now.year, now.month, firstSalaryDay),
+            DateTime(clock.year, clock.month, firstSalaryDay),
           ).startOf(Unit.day).add(months: 1);
         }
       }
@@ -226,8 +267,8 @@ class LoanCalculationService {
       nextDate = nextDate.add(days: 30);
     }
 
-    if (nextDate.isSameOrBefore(now)) {
-      nextDate = now.startOf(Unit.day);
+    if (nextDate.isSameOrBefore(clock)) {
+      nextDate = clock.startOf(Unit.day);
     }
 
     final loanMonthlyAmortization = calculateMonthlyPaymentSimple(
@@ -310,6 +351,7 @@ class LoanCalculationService {
     List<LoanSchedule> paidSchedules = const [],
     bool forSoa = false,
     Loan? loan,
+    DateTime? now,
   }) {
     final allSchedules = <LoanSchedule>[];
     var totalLoanPayment = 0.0;
@@ -324,6 +366,7 @@ class LoanCalculationService {
       forSoa: forSoa,
       companyId: companyId,
       paidSchedules: paidSchedules,
+      now: now,
     );
 
     final tempClientLoanSchedules = <LoanSchedule>[];

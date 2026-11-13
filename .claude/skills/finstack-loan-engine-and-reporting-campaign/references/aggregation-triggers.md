@@ -1,5 +1,18 @@
 # RTDB aggregation triggers — defect catalog (verified against source 2026-07-07)
 
+> **Status 2026-09-09:** D1–D8 FIXED on branch `fix/report-triggers-108`
+> (spec `docs/superpowers/specs/2026-09-09-report-triggers-rebuild.md`).
+> The three writers are adapter + core: `triggers/report_core.go` plans,
+> `report_store.go` applies one atomic multi-path update with server-value
+> increments after claiming the event id, `report_handlers.go` orchestrates.
+> Also fixed: **D13** two data items of one event shared a key (the second
+> overwrote the first); **D14** hard deletes on the `written` trigger
+> returned an error forever; **D15** the schedule query used
+> `{env}_loan_schedules`, which in production named a non-existent
+> collection (bad-debt/completed maths ran with zero schedules). The
+> line-number evidence below describes the code BEFORE that change; keep it
+> as the incident record.
+
 This is Phase 2 working material for the campaign in `../SKILL.md`. Every
 defect below was verified by reading the file at the stated line on
 2026-07-07 (branch `feature/chat-messaging`). Line numbers drift — re-grep
@@ -67,8 +80,13 @@ three writers.
   nodes.
 - Fix direction: `db.Ref.Transaction` (verified available in
   `firebase.google.com/go/v4 v4.13.0`, the version in `triggers/go.mod`).
-- Proof: `scripts/race_demo/` — see "Discriminating experiment" below. Run
-  2026-07-07: racy mode landed 2/50 increments (48 lost); txn mode 50/50.
+- Proof: `scripts/race_demo/` (skill-local, transaction variant) — see
+  "Discriminating experiment" below. Run 2026-07-07: racy 2/50, txn 50/50.
+  Shipped fix (2026-09-09): server-value increments in one multi-path
+  update, proven by `functions/loans/cmd/race_demo` (racy 2/50, atomic
+  50/50) and `functions/loans/test/triggers/report_store_emulator_test.go`
+  (the six-node release plan under 50 concurrent writers: 50/50 on every
+  node).
 
 ### D3 — Swallowed errors: `dataErrors` reassigned, not accumulated
 - Every branch does `dataErrors = applyToNodeValue(...)` repeatedly
@@ -128,11 +146,13 @@ three writers.
 - Root-module `go vet ./...` from `functions/loans/` is clean — it does NOT
   cover the sub-modules. Vet each sub-module directory.
 
-### D9 (Flutter, CANDIDATE) — early-settlement balance sums only the last schedule
-- `apps/loans/lib/features/loans/bloc/loan_settlement_bloc.dart` ~104-110:
+### D9 (Flutter, CONFIRMED 2026-09-08 → finstack#116) — early-settlement balance sums only the last schedule
+- Now `LoanCalculationService.calculateSettlementBalance` in
+  `apps/loans/lib/services/loan_calculation_service.dart` (extracted from
+  the bloc 2026-09-08; the bloc delegates):
 
   ```dart
-  for (final schedule in loanSchedules) {
+  for (final schedule in paidSchedules) {
     totalLoanPayment = (schedule.isOpenTerm
             ? schedule.interestCharge
             : schedule.interestPayment) +
@@ -144,10 +164,47 @@ three writers.
   `=` instead of `+=` — with 2+ paid schedules the displayed remaining
   balance ignores all but the last schedule's payments (overstates the
   balance owed).
-- Status: CANDIDATE — the pattern is almost certainly a bug, but pin the
-  intended semantics with golden scenario G7 before changing it. The bloc
-  has no test seam (constructor takes `BuildContext`); extract the formula
-  into a pure helper first (see golden-scenarios.md, G7).
+- Status 2026-09-08: CONFIRMED and pinned — G7
+  (`test/services/loan_calculation_settlement_test.dart`) shows
+  10200 - 1400 = 8800. The independent review of PR #115 found the formula
+  wrong in four ways, so finstack#116 is a design decision, not `+=`:
+  1. assigns instead of accumulating — and because the bloc's list comes
+     back newest-first (`loan_schedule_firestore_service.dart` orders
+     `updated_at` DESC) production credits the LEAST recently updated row;
+  2. `+=` would be wrong too: released − Σ payments subtracts interest from
+     principal (an interest-only open-term loan trends to zero);
+  3. the rows come from `payment_id != null`, which includes borrower
+     submissions not yet confirmed (`payment_submission_bloc.dart`);
+  4. open-term rows credit the computed `interestCharge`, not the recorded
+     `interestPayment`; approved top-ups (`loan.additionalLoanAmounts`) are
+     not part of the released amount.
+  Direction: settlement = last row's outstanding balance (top-ups included)
+  + accrued interest, over confirmed rows only. Flip G7 with the fix.
+
+### D10 (Flutter, CONFIRMED 2026-09-08 → finstack#117) — top-up interest copied onto the next row
+- `calculateOpenTerm` (`apps/loans/lib/services/loan_calculation_service.dart`,
+  the `lastLoanSchedule..outstandingBalance = ... ..interestCharge = ...`
+  mutation after inserting the placeholder) copies the placeholder's
+  prorated interest onto the adjacent computed schedule and never
+  recomputes its amortization. G9 pins it: next row shows 83.33 on 12100
+  where 12100 × 5% × 25/30 = 504.17 is due (owner decision).
+
+### D11 (Flutter, CANDIDATE) — open-term day math is not DST-safe
+- jiffy 6.4.4 `add(days:)` is a `Duration` add and `diff(unit: Unit.day)`
+  floors microseconds; across a fall-back a due date lands at 23:00 the
+  previous day (a calendar day early once read as a date) and across a
+  spring-forward a proration is one day short. Product is Asia/Manila
+  (no DST) today, so no user is affected; the golden suite states the
+  assumption and CI pins `TZ=UTC`. Confirmed by running the suite under
+  America/New_York, Europe/London and Australia/Sydney (review of PR #115).
+
+### D12 (Flutter, CONFIRMED 2026-09-08 → finstack#120) — overdue open-term row bills one month while the charge grows
+- `calculateOpenTermSchedules` sets
+  `amortization = min(min(monthlyAmortization, OB + interestCharge), interestCharge)`
+  with `monthlyAmortization = OB × rate`, so once the past-due clamp makes
+  the prorated charge exceed one month the amount due stays at the month
+  (G4c: interestCharge 633.33, amortization 500). Owner decides whether an
+  overdue row bills full accrual; flip G4c with the fix.
 
 ## Untested-code reality
 
@@ -160,6 +217,14 @@ three writers.
   fake conventions in `functions/loans/test/fakes/fakes.go`).
 
 ## Discriminating experiment for D2 (race proof)
+
+> 2026-09-09: the shipped implementation uses server-value increments, not
+> `Ref.Transaction`. The proof for the shipped path is
+> `cd functions/loans && FIREBASE_DATABASE_EMULATOR_HOST='localhost:9000?ns=demo-finstack' go run ./cmd/race_demo -n 50`
+> (both modes in one run; `apps/loans/firebase.json` already configures the
+> emulator on port 9000, start it with
+> `cd apps/loans && firebase emulators:start --only database --project demo-finstack`).
+> The block below is the original transaction demo, kept as the record.
 
 Run `scripts/race_demo/` (it refuses to start unless
 `FIREBASE_DATABASE_EMULATOR_HOST` is set — emulator only, honoring the

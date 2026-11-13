@@ -114,15 +114,15 @@ gcloud functions deploy userCreated_$environment --gen2 --service-account="$serv
 pids[$!]="userCreated"
 
 echo "Deploying LoanChanges trigger"
-gcloud functions deploy loanChanges_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=loanChanges --trigger-event-filters=type=google.cloud.firestore.document.v1.written --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}loans/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+gcloud functions deploy loanChanges_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=loanChanges --trigger-event-filters=type=google.cloud.firestore.document.v1.written --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}loans/{uid}" --set-env-vars=ENVIRONMENT=$environment --retry --project=$project &
 pids[$!]="loanChanges"
 
 echo "Deploying LoanScheduleChanges trigger"
-gcloud functions deploy loanScheduleChanges_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=loanScheduleChanges --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}loan_schedules/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+gcloud functions deploy loanScheduleChanges_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=loanScheduleChanges --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}loan_schedules/{uid}" --set-env-vars=ENVIRONMENT=$environment --retry --project=$project &
 pids[$!]="loanScheduleChanges"
 
 echo "Deploying CapitalCreated trigger"
-gcloud functions deploy capitalCreated_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=capitalCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}capital/{uid}" --set-env-vars=ENVIRONMENT=$environment --project=$project &
+gcloud functions deploy capitalCreated_$environment --gen2 --service-account="$serviceAccount" --runtime=go126 --region=asia-east1 --trigger-location=asia-east1 --source=. --entry-point=capitalCreated --trigger-event-filters=type=google.cloud.firestore.document.v1.created --trigger-event-filters=database='(default)' --trigger-event-filters-path-pattern=document="${collectionPrefix}capital/{uid}" --set-env-vars=ENVIRONMENT=$environment --retry --project=$project &
 pids[$!]="capitalCreated"
 
 echo "Deploying NotificationCreated trigger"
