@@ -49,7 +49,7 @@ class ClientDetailScheduleItem extends StatelessWidget {
     // is not payment-meaningful — derive the label from the due date so a
     // schedule persisted at approval doesn't render a misleading "Approved".
     final now = Jiffy.now().startOf(Unit.day);
-    final dueAt = Jiffy.parseFromDateTime(schedule.dueAt);
+    final dueAt = Jiffy.parseFromDateTime(schedule.lateFrom);
 
     // Concise single-word label so the Status cell never wraps to two lines
     // (which would make rows uneven). Full form is "Not paid (overdue)".
@@ -77,7 +77,7 @@ class ClientDetailScheduleItem extends StatelessWidget {
         ? PenaltyResult.none
         : previewPenalty(schedule: schedule, loan: currentLoan);
     final daysLateNow = calculateDaysLate(
-      dueAt: schedule.dueAt,
+      dueAt: schedule.lateFrom,
       collectedAt: DateTime.now(),
     );
 
@@ -364,7 +364,10 @@ class ClientDetailScheduleItem extends StatelessWidget {
       );
     }
 
-    if (schedule.paidAt == null && !schedule.isAdditionalLoanAmount) {
+    // Placeholder rows (the principal release and top-ups) are not
+    // installments: paying the principal release would record the whole
+    // principal as repaid on the loan's creation day.
+    if (schedule.paidAt == null && !schedule.isPlaceholder) {
       return Opacity(
         opacity: showMakePaymentButton ? 1.0 : 0.0,
         child: AppWidgets.defaultOutlinedButton(

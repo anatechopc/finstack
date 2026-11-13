@@ -67,7 +67,9 @@ class PaymentCenterBloc
   /// [cashPoolRepository] and [productRepository] are optional because they
   /// are `final` classes and so cannot be mocked; the OTP handlers never touch
   /// them, and a test that reaches a handler which does will fail loudly on
-  /// the unset late field rather than silently using a stand-in.
+  /// the unset late field rather than silently using a stand-in. Selecting a
+  /// borrower reads products through `_getProduct`, which treats a missing
+  /// product as none (no charges), so it runs without [productRepository].
   PaymentCenterBloc.withDependencies({
     required this.userRepository,
     required this.loanRepository,
@@ -94,6 +96,7 @@ class PaymentCenterBloc
       this.userLoanViewRepository = userLoanViewRepository;
     }
     on<SearchBorrowersEvent>(_handleSearchBorrowersEvent);
+    on<SelectBorrowerEvent>(_handleSelectBorrowerEvent);
     on<RequestOtpEvent>(_handleRequestOtpEvent);
     on<VerifyOtpEvent>(_handleVerifyOtpEvent);
   }
@@ -532,14 +535,24 @@ class PaymentCenterBloc
         )
         .toList();
 
-    // Combine: persisted unpaid + generated, then deduplicate by dueAt
+    // Combine: persisted unpaid + generated. A stored unpaid row (a rejected
+    // submission) and a regenerated row for the same cycle are one row; the
+    // stored one is kept because it carries the id. A cycle is keyed by its
+    // lateness date, since the open-term clamp moves due_at to the day the
+    // row was computed (finstack#114). On an open-term loan a stored unpaid
+    // row dated after the last paid row is the current cycle, which also
+    // covers rows stored before original_due_at existed. Stored dates come
+    // back in UTC, so days are compared in local time.
+    final lastPaidDue = paidSchedules.fold<DateTime>(
+      loan.createdAt,
+      (latest, s) => s.dueAt.isAfter(latest) ? s.dueAt : latest,
+    );
     final allUnpaid = <LoanSchedule>[...persistedUnpaid];
     for (final gen in generatedSchedules) {
       final alreadyExists = allUnpaid.any(
         (s) =>
-            s.dueAt.year == gen.dueAt.year &&
-            s.dueAt.month == gen.dueAt.month &&
-            s.dueAt.day == gen.dueAt.day,
+            DateUtils.isSameDay(s.lateFrom.toLocal(), gen.lateFrom.toLocal()) ||
+            (gen.isOpenTerm && s.lateFrom.isAfter(lastPaidDue)),
       );
       if (!alreadyExists) {
         allUnpaid.add(gen);
@@ -551,7 +564,7 @@ class PaymentCenterBloc
     // Mark overdue schedules
     final now = DateTime.now();
     for (final schedule in allUnpaid) {
-      if (schedule.dueAt.toLocal().isBefore(now) &&
+      if (schedule.lateFrom.toLocal().isBefore(now) &&
           schedule.status == LoanStatus.not_paid) {
         schedule.status = LoanStatus.not_paid_overdue;
       }

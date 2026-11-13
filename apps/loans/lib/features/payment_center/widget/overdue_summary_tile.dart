@@ -53,10 +53,10 @@ class OverdueSummaryTile extends StatelessWidget {
           );
 
     final earliestDue = overdueSchedules
-        .map((s) => s.dueAt)
+        .map((s) => s.lateFrom)
         .reduce((a, b) => a.isBefore(b) ? a : b);
     final latestDue = overdueSchedules
-        .map((s) => s.dueAt)
+        .map((s) => s.lateFrom)
         .reduce((a, b) => a.isAfter(b) ? a : b);
 
     return Container(
