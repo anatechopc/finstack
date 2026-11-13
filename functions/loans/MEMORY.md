@@ -4,6 +4,24 @@ Log of work done on the loans Cloud Functions (Go backend).
 
 ---
 
+## Dev reset tool: plan written, backups taken, nothing deleted (2026-11-13)
+
+Branch `chore/dev-reset-tool` → develop (draft PR). The owner wants dev emptied because data written by years of different code versions makes its computations unreliable; his constraint is that users who are registered in Firebase Auth stay.
+
+**Tool.** `cmd/dev_reset`, two modes. `-plan <new dir>` is read-only: it lists the `dev_` root collections, walks every document and subcollection (including subcollections under documents that no longer exist), lists the Auth uids, reads the key shape of `dev/` in the Realtime Database and writes `plan.jsonl` (one line per path: keep or delete, and the rule) and `summary.txt`. `-apply <dir> -confirm dev` re-validates every line and deletes exactly the lines marked delete, with no recursive deletes. The policy is one table in `rules.go`; a live `dev_` collection that is not in the table is kept in full and reported.
+
+**Rails.** Project `loooans-dev-stg`, prefix `dev_` and root `dev/` are constants; no flag or variable changes them (this is the one place where hard-coding the prefix is deliberate). Refuses when ADC or `GOOGLE_CLOUD_PROJECT`/`GCLOUD_PROJECT` name another project, when any emulator variable is set, when the plan is older than 2 hours, when `backup.txt` does not name a `SUCCESSFUL` export and an existing RTDB dump, and when a user planned for deletion is in Auth at apply time. RTDB deletes are limited to `dev/companies/{id}` and its three report nodes.
+
+**Run on 2026-11-13 (read-only).** 2,411 dev documents: 2,054 keep, 357 delete. 374 Auth users; 15 `dev_users` documents, 8 kept, 7 deleted (all 7 are `customer` records with Firestore auto ids, no Auth account). 1 company, kept. No unclassified collection. RTDB: 1 node to delete (`report_summary` of the one company), 2 kept. Managed export `SUCCESSFUL` (2,912 documents, 41 objects) plus an RTDB dump; both live outside the repository, paths in the PR.
+
+**Found on the way.** (1) The deployed Storage rules of `loooans-dev-stg.appspot.com` are `allow read, write: if request.auth != null` on every path, while the repo's `storage.rules` denies everything; the export went to the App Engine staging bucket instead (private, 15-day lifecycle, local copy kept). (2) 2,034 of the 2,411 dev documents are `dev_users/*/devices` records, 1,935 under one user; they are kept because they follow a kept user. (3) User ADC name no project of their own and on the dev machine carry an unrelated quota project; the tool pins the quota project to `loooans-dev-stg` as well.
+
+**Tests.** 8 unit tests in `cmd/dev_reset/rules_test.go` (classification, path validation, project guards, plan and backup gates, apply refuses before touching a client) and one emulator proof, `go test -tags emulator ./cmd/dev_reset/ -run Emulator` with `FIRESTORE_EMULATOR_HOST` and `FIREBASE_DATABASE_EMULATOR_HOST='localhost:PORT?ns=demo-finstack'` (the SDK rejects `127.0.0.1:PORT?ns=`).
+
+**Next.** `-apply` has not been run. A plan is valid for 2 hours and a plan directory is used once, so applying needs a new plan and a new backup first. Kept documents keep their derived fields (`karma`, the company's `total_rating` and `review_count`); nothing resets them.
+
+---
+
 ## Report triggers rebuild — campaign Phase 2/3, option (a) in full (2026-09-09)
 
 Branch `fix/report-triggers-108` → develop. Spec: `docs/superpowers/specs/2026-09-09-report-triggers-rebuild.md`. Closes finstack#108 (D5) and the campaign's D1–D8.
