@@ -16,6 +16,7 @@ import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 import 'package:loooans/widgets/countdown_text.dart';
+import 'package:loooans/widgets/payment_penalty_section.dart';
 
 /// Shows the make payment dialog for the Payment Center.
 /// Takes [Loan] directly instead of reading from LoansBloc.
@@ -49,111 +50,118 @@ Future<void> showPaymentCenterPaymentDialog(
                   child: Container(
                     width: double.infinity,
                     constraints: const BoxConstraints(maxWidth: 500),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        StreamBuilder(
-                          stream: innerContext
-                              .read<CashPoolBloc>()
-                              .loadCashPoolList2(userId),
-                          builder: (context, snapshot) {
-                            return BlocBuilder<CashPoolBloc, CashPoolState>(
-                              builder: (context, state) {
-                                final display = context
-                                    .read<CashPoolBloc>()
-                                    .cashPoolDisplay;
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          StreamBuilder(
+                            stream: innerContext
+                                .read<CashPoolBloc>()
+                                .loadCashPoolList2(userId),
+                            builder: (context, snapshot) {
+                              return BlocBuilder<CashPoolBloc, CashPoolState>(
+                                builder: (context, state) {
+                                  final display = context
+                                      .read<CashPoolBloc>()
+                                      .cashPoolDisplay;
 
-                                return Container(
-                                  padding: const EdgeInsets.all(16),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.black,
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  child: Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        'Cash pool balance',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w500,
-                                          fontSize: 16,
-                                          color: AppColors.white,
+                                  return Container(
+                                    padding: const EdgeInsets.all(16),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.black,
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Cash pool balance',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w500,
+                                            fontSize: 16,
+                                            color: AppColors.white,
+                                          ),
                                         ),
-                                      ),
-                                      const Gap(8),
-                                      const Spacer(),
-                                      Text(
-                                        display.balance.toCurrency(),
-                                        style: const TextStyle(
-                                          color: AppColors.white,
-                                          fontSize: 14,
+                                        const Gap(8),
+                                        const Spacer(),
+                                        Text(
+                                          display.balance.toCurrency(),
+                                          style: const TextStyle(
+                                            color: AppColors.white,
+                                            fontSize: 14,
+                                          ),
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            );
-                          },
-                        ),
-                        const Gap(24),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child:
-                                  AppWidgets.defaultFormBuilderTextField(
-                                enabled: schedule.isOpenTerm,
-                                initialValue: (schedule.isOpenTerm
-                                        ? schedule.amortization
-                                        : schedule.interestPayment)
-                                    .toStringAsFixed(2),
-                                name: 'interest_payment',
-                                label: 'Interest payment',
-                                helperText: schedule.isOpenTerm
-                                    ? 'You can make a larger payment'
-                                    : null,
-                                validator:
-                                    FormBuilderValidators.compose([
-                                  FormBuilderValidators.required(),
-                                  (value) {
-                                    if (value == null) return null;
-                                    final parsed = double.parse(value);
-                                    if (parsed <= 0) {
-                                      return 'Amount should be greater than 0';
-                                    }
-                                    return null;
-                                  },
-                                ]),
-                                inputFormatters: [
-                                  AppWidgets
-                                      .defaultCurrencyInputFormatter(),
-                                ],
+                                      ],
+                                    ),
+                                  );
+                                },
+                              );
+                            },
+                          ),
+                          const Gap(24),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child:
+                                    AppWidgets.defaultFormBuilderTextField(
+                                  enabled: schedule.isOpenTerm,
+                                  initialValue: (schedule.isOpenTerm
+                                          ? schedule.amortization
+                                          : schedule.interestPayment)
+                                      .toStringAsFixed(2),
+                                  name: 'interest_payment',
+                                  label: 'Interest payment',
+                                  helperText: schedule.isOpenTerm
+                                      ? 'You can make a larger payment'
+                                      : null,
+                                  validator:
+                                      FormBuilderValidators.compose([
+                                    FormBuilderValidators.required(),
+                                    (value) {
+                                      if (value == null) return null;
+                                      final parsed = double.parse(value);
+                                      if (parsed <= 0) {
+                                        return 'Amount should be greater than 0';
+                                      }
+                                      return null;
+                                    },
+                                  ]),
+                                  inputFormatters: [
+                                    AppWidgets
+                                        .defaultCurrencyInputFormatter(),
+                                  ],
+                                ),
                               ),
-                            ),
-                            const Gap(16),
-                            Expanded(
-                              child:
-                                  AppWidgets.defaultFormBuilderTextField(
-                                initialValue: schedule.principalPayment
-                                    .toStringAsFixed(2),
-                                name: 'principal_payment',
-                                label: 'Principal payment',
-                                helperText: 'You can make a larger payment',
-                                validator:
-                                    FormBuilderValidators.compose([
-                                  FormBuilderValidators.required(),
-                                ]),
-                                inputFormatters: [
-                                  AppWidgets
-                                      .defaultCurrencyInputFormatter(),
-                                ],
+                              const Gap(16),
+                              Expanded(
+                                child:
+                                    AppWidgets.defaultFormBuilderTextField(
+                                  initialValue: schedule.principalPayment
+                                      .toStringAsFixed(2),
+                                  name: 'principal_payment',
+                                  label: 'Principal payment',
+                                  helperText: 'You can make a larger payment',
+                                  validator:
+                                      FormBuilderValidators.compose([
+                                    FormBuilderValidators.required(),
+                                  ]),
+                                  inputFormatters: [
+                                    AppWidgets
+                                        .defaultCurrencyInputFormatter(),
+                                  ],
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                      ],
+                            ],
+                          ),
+                          const Gap(16),
+                          PaymentPenaltySection(
+                            schedules: [schedule],
+                            loan: loan,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -265,109 +273,116 @@ Future<void> showOverduePaymentDialog(
                   child: Container(
                     width: double.infinity,
                     constraints: const BoxConstraints(maxWidth: 500),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        StreamBuilder(
-                          stream: innerContext
-                              .read<CashPoolBloc>()
-                              .loadCashPoolList2(userId),
-                          builder: (context, snapshot) {
-                            return BlocBuilder<CashPoolBloc, CashPoolState>(
-                              builder: (context, state) {
-                                final display = context
-                                    .read<CashPoolBloc>()
-                                    .cashPoolDisplay;
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          StreamBuilder(
+                            stream: innerContext
+                                .read<CashPoolBloc>()
+                                .loadCashPoolList2(userId),
+                            builder: (context, snapshot) {
+                              return BlocBuilder<CashPoolBloc, CashPoolState>(
+                                builder: (context, state) {
+                                  final display = context
+                                      .read<CashPoolBloc>()
+                                      .cashPoolDisplay;
 
-                                return Container(
-                                  padding: const EdgeInsets.all(16),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.black,
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  child: Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        'Cash pool balance',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w500,
-                                          fontSize: 16,
-                                          color: AppColors.white,
+                                  return Container(
+                                    padding: const EdgeInsets.all(16),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.black,
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Cash pool balance',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w500,
+                                            fontSize: 16,
+                                            color: AppColors.white,
+                                          ),
                                         ),
-                                      ),
-                                      const Gap(8),
-                                      const Spacer(),
-                                      Text(
-                                        display.balance.toCurrency(),
-                                        style: const TextStyle(
-                                          color: AppColors.white,
-                                          fontSize: 14,
+                                        const Gap(8),
+                                        const Spacer(),
+                                        Text(
+                                          display.balance.toCurrency(),
+                                          style: const TextStyle(
+                                            color: AppColors.white,
+                                            fontSize: 14,
+                                          ),
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            );
-                          },
-                        ),
-                        const Gap(24),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child:
-                                  AppWidgets.defaultFormBuilderTextField(
-                                enabled: isOpenTerm,
-                                initialValue:
-                                    totalInterest.toStringAsFixed(2),
-                                name: 'interest_payment',
-                                label: 'Total interest',
-                                helperText: isOpenTerm
-                                    ? 'You can make a larger payment'
-                                    : null,
-                                validator:
-                                    FormBuilderValidators.compose([
-                                  FormBuilderValidators.required(),
-                                  (value) {
-                                    if (value == null) return null;
-                                    final parsed = double.parse(value);
-                                    if (parsed <= 0) {
-                                      return 'Amount should be greater than 0';
-                                    }
-                                    return null;
-                                  },
-                                ]),
-                                inputFormatters: [
-                                  AppWidgets
-                                      .defaultCurrencyInputFormatter(),
-                                ],
+                                      ],
+                                    ),
+                                  );
+                                },
+                              );
+                            },
+                          ),
+                          const Gap(24),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child:
+                                    AppWidgets.defaultFormBuilderTextField(
+                                  enabled: isOpenTerm,
+                                  initialValue:
+                                      totalInterest.toStringAsFixed(2),
+                                  name: 'interest_payment',
+                                  label: 'Total interest',
+                                  helperText: isOpenTerm
+                                      ? 'You can make a larger payment'
+                                      : null,
+                                  validator:
+                                      FormBuilderValidators.compose([
+                                    FormBuilderValidators.required(),
+                                    (value) {
+                                      if (value == null) return null;
+                                      final parsed = double.parse(value);
+                                      if (parsed <= 0) {
+                                        return 'Amount should be greater than 0';
+                                      }
+                                      return null;
+                                    },
+                                  ]),
+                                  inputFormatters: [
+                                    AppWidgets
+                                        .defaultCurrencyInputFormatter(),
+                                  ],
+                                ),
                               ),
-                            ),
-                            const Gap(16),
-                            Expanded(
-                              child:
-                                  AppWidgets.defaultFormBuilderTextField(
-                                initialValue:
-                                    totalPrincipal.toStringAsFixed(2),
-                                name: 'principal_payment',
-                                label: 'Total principal',
-                                helperText: 'You can make a larger payment',
-                                validator:
-                                    FormBuilderValidators.compose([
-                                  FormBuilderValidators.required(),
-                                ]),
-                                inputFormatters: [
-                                  AppWidgets
-                                      .defaultCurrencyInputFormatter(),
-                                ],
+                              const Gap(16),
+                              Expanded(
+                                child:
+                                    AppWidgets.defaultFormBuilderTextField(
+                                  initialValue:
+                                      totalPrincipal.toStringAsFixed(2),
+                                  name: 'principal_payment',
+                                  label: 'Total principal',
+                                  helperText: 'You can make a larger payment',
+                                  validator:
+                                      FormBuilderValidators.compose([
+                                    FormBuilderValidators.required(),
+                                  ]),
+                                  inputFormatters: [
+                                    AppWidgets
+                                        .defaultCurrencyInputFormatter(),
+                                  ],
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                      ],
+                            ],
+                          ),
+                          const Gap(16),
+                          PaymentPenaltySection(
+                            schedules: overdueSchedules,
+                            loan: loan,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -480,6 +495,10 @@ Future<void> _handleOverduePaymentOption(
             fileBytes: fileBytes,
             fileName: fileName,
             signatureBytes: signatureBytes,
+            collectedAt: key.currentState!.value['collected_at'] as DateTime?,
+            waivePenalty:
+                key.currentState!.value['waive_penalty'] as bool? ?? false,
+            waiveReason: key.currentState!.value['waive_reason'] as String?,
           );
     } catch (err) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -504,6 +523,10 @@ Future<void> _handleOverduePaymentOption(
           totalPrincipalPayment:
               key.currentState!.value['principal_payment'] as String,
           otpVerified: true,
+          collectedAt: key.currentState!.value['collected_at'] as DateTime?,
+          waivePenalty:
+              key.currentState!.value['waive_penalty'] as bool? ?? false,
+          waiveReason: key.currentState!.value['waive_reason'] as String?,
         );
   } else if (selectedOption == 'force') {
     final answer = await showDialog<bool>(
@@ -546,6 +569,10 @@ Future<void> _handleOverduePaymentOption(
           totalPrincipalPayment:
               key.currentState!.value['principal_payment'] as String,
           force: true,
+          collectedAt: key.currentState!.value['collected_at'] as DateTime?,
+          waivePenalty:
+              key.currentState!.value['waive_penalty'] as bool? ?? false,
+          waiveReason: key.currentState!.value['waive_reason'] as String?,
         );
   }
 
@@ -672,6 +699,10 @@ Future<void> _handleSignaturePayment(
           fileBytes: fileBytes,
           fileName: fileName,
           signatureBytes: signatureBytes,
+          collectedAt: key.currentState!.value['collected_at'] as DateTime?,
+          waivePenalty:
+              key.currentState!.value['waive_penalty'] as bool? ?? false,
+          waiveReason: key.currentState!.value['waive_reason'] as String?,
         );
   } catch (err) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -706,6 +737,10 @@ Future<void> _handleOtpPayment(
         payment:
             key.currentState!.value['principal_payment'] as String,
         otpVerified: true,
+        collectedAt: key.currentState!.value['collected_at'] as DateTime?,
+        waivePenalty:
+            key.currentState!.value['waive_penalty'] as bool? ?? false,
+        waiveReason: key.currentState!.value['waive_reason'] as String?,
       );
 }
 
@@ -754,6 +789,10 @@ Future<void> _handleForcePayment(
         payment:
             key.currentState!.value['principal_payment'] as String,
         force: true,
+        collectedAt: key.currentState!.value['collected_at'] as DateTime?,
+        waivePenalty:
+            key.currentState!.value['waive_penalty'] as bool? ?? false,
+        waiveReason: key.currentState!.value['waive_reason'] as String?,
       );
 }
 

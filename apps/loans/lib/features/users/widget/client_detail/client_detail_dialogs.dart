@@ -18,6 +18,7 @@ import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
+import 'package:loooans/widgets/payment_penalty_section.dart';
 
 /// Shows the settle account dialog with the statement of account screen.
 Future<void> showSettleAccountDialog(
@@ -142,114 +143,121 @@ Future<void> showMakePaymentDialog(
             constraints: const BoxConstraints(
               maxWidth: 500,
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                StreamBuilder(
-                  stream: context
-                      .read<CashPoolBloc>()
-                      .loadCashPoolList2(userId),
-                  builder: (context, snapshot) {
-                    return BlocBuilder<CashPoolBloc, CashPoolState>(
-                      builder: (context, state) {
-                        return Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: AppColors.black,
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: BlocBuilder<CashPoolBloc, CashPoolState>(
-                            builder: (context, state) {
-                              final display = context
-                                  .read<CashPoolBloc>()
-                                  .cashPoolDisplay;
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  StreamBuilder(
+                    stream: context
+                        .read<CashPoolBloc>()
+                        .loadCashPoolList2(userId),
+                    builder: (context, snapshot) {
+                      return BlocBuilder<CashPoolBloc, CashPoolState>(
+                        builder: (context, state) {
+                          return Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: AppColors.black,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: BlocBuilder<CashPoolBloc, CashPoolState>(
+                              builder: (context, state) {
+                                final display = context
+                                    .read<CashPoolBloc>()
+                                    .cashPoolDisplay;
 
-                              return Row(
-                                crossAxisAlignment:
-                                    CrossAxisAlignment.start,
-                                children: [
-                                  const Text(
-                                    'Cash pool balance',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w500,
-                                      fontSize: 16,
-                                      color: AppColors.white,
+                                return Row(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Cash pool balance',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w500,
+                                        fontSize: 16,
+                                        color: AppColors.white,
+                                      ),
                                     ),
-                                  ),
-                                  const Gap(8),
-                                  const Spacer(),
-                                  Text(
-                                    display.balance.toCurrency(),
-                                    style: const TextStyle(
-                                      color: AppColors.white,
-                                      fontSize: 14,
+                                    const Gap(8),
+                                    const Spacer(),
+                                    Text(
+                                      display.balance.toCurrency(),
+                                      style: const TextStyle(
+                                        color: AppColors.white,
+                                        fontSize: 14,
+                                      ),
                                     ),
-                                  ),
-                                ],
-                              );
-                            },
-                          ),
-                        );
-                      },
-                    );
-                  },
-                ),
-                const Gap(24),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: AppWidgets.defaultFormBuilderTextField(
-                        enabled: schedule.isOpenTerm,
-                        initialValue: (schedule.isOpenTerm
-                                ? schedule.amortization
-                                : schedule.interestPayment)
-                            .toStringAsFixed(2),
-                        name: 'interest_payment',
-                        label: 'Interest payment',
-                        helperText: schedule.isOpenTerm
-                            ? 'You can make a larger payment'
-                            : null,
-                        validator: FormBuilderValidators.compose([
-                          FormBuilderValidators.required(),
-                          (value) {
-                            if (value == null) {
+                                  ],
+                                );
+                              },
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                  const Gap(24),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: AppWidgets.defaultFormBuilderTextField(
+                          enabled: schedule.isOpenTerm,
+                          initialValue: (schedule.isOpenTerm
+                                  ? schedule.amortization
+                                  : schedule.interestPayment)
+                              .toStringAsFixed(2),
+                          name: 'interest_payment',
+                          label: 'Interest payment',
+                          helperText: schedule.isOpenTerm
+                              ? 'You can make a larger payment'
+                              : null,
+                          validator: FormBuilderValidators.compose([
+                            FormBuilderValidators.required(),
+                            (value) {
+                              if (value == null) {
+                                return null;
+                              }
+
+                              final tempParsed = double.parse(value);
+
+                              if (tempParsed <= 0) {
+                                return 'Amount should be greater than 0';
+                              }
+
                               return null;
-                            }
-
-                            final tempParsed = double.parse(value);
-
-                            if (tempParsed <= 0) {
-                              return 'Amount should be greater than 0';
-                            }
-
-                            return null;
-                          },
-                        ]),
-                        inputFormatters: [
-                          AppWidgets.defaultCurrencyInputFormatter(),
-                        ],
+                            },
+                          ]),
+                          inputFormatters: [
+                            AppWidgets.defaultCurrencyInputFormatter(),
+                          ],
+                        ),
                       ),
-                    ),
-                    const Gap(16),
-                    Expanded(
-                      child: AppWidgets.defaultFormBuilderTextField(
-                        initialValue:
-                            schedule.principalPayment.toStringAsFixed(2),
-                        name: 'principal_payment',
-                        label: 'Principal payment',
-                        helperText: 'You can make a larger payment',
-                        validator: FormBuilderValidators.compose([
-                          FormBuilderValidators.required(),
-                        ]),
-                        inputFormatters: [
-                          AppWidgets.defaultCurrencyInputFormatter(),
-                        ],
+                      const Gap(16),
+                      Expanded(
+                        child: AppWidgets.defaultFormBuilderTextField(
+                          initialValue:
+                              schedule.principalPayment.toStringAsFixed(2),
+                          name: 'principal_payment',
+                          label: 'Principal payment',
+                          helperText: 'You can make a larger payment',
+                          validator: FormBuilderValidators.compose([
+                            FormBuilderValidators.required(),
+                          ]),
+                          inputFormatters: [
+                            AppWidgets.defaultCurrencyInputFormatter(),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                  const Gap(16),
+                  PaymentPenaltySection(
+                    schedules: [schedule],
+                    loan: context.read<LoansBloc>().selectedLoan,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -419,6 +427,13 @@ By clicking 'Proceed,' you acknowledge that the payment will be covered by the c
                                   fileBytes: fileBytes,
                                   fileName: fileName,
                                   signatureBytes: signatureBytes,
+                                  collectedAt: key.currentState!
+                                      .value['collected_at'] as DateTime?,
+                                  waivePenalty: key.currentState!
+                                          .value['waive_penalty'] as bool? ??
+                                      false,
+                                  waiveReason: key.currentState!
+                                      .value['waive_reason'] as String?,
                                 );
                           }
                         } else {
@@ -508,6 +523,13 @@ By clicking 'Proceed,' you acknowledge that the payment will be covered by the c
                               payment: key.currentState!
                                   .value['principal_payment'] as String,
                               otpVerified: true,
+                              collectedAt: key.currentState!
+                                  .value['collected_at'] as DateTime?,
+                              waivePenalty: key.currentState!
+                                      .value['waive_penalty'] as bool? ??
+                                  false,
+                              waiveReason: key.currentState!
+                                  .value['waive_reason'] as String?,
                             );
                       }
                     }
@@ -556,6 +578,13 @@ By clicking 'Proceed,' you acknowledge that the payment will be covered by the c
                             payment: key.currentState!
                                 .value['principal_payment'] as String,
                             force: true,
+                            collectedAt: key.currentState!
+                                .value['collected_at'] as DateTime?,
+                            waivePenalty: key.currentState!
+                                    .value['waive_penalty'] as bool? ??
+                                false,
+                            waiveReason: key.currentState!
+                                .value['waive_reason'] as String?,
                           );
                     }
                   }

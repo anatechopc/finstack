@@ -8,6 +8,7 @@ import 'package:form_builder_validators/form_builder_validators.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loan_repository/loan_repository.dart';
+import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/chat/chat_context_label.dart';
 import 'package:loooans/features/chat/chat_participants.dart';
@@ -272,6 +273,7 @@ class _LoanDetailsState extends State<LoanDetails> {
                       context,
                       schedule: schedules[index - 5],
                       index: index - 5,
+                      loan: loan,
                     ),
                 };
               },
@@ -304,7 +306,7 @@ class _LoanDetailsState extends State<LoanDetails> {
         final loan = context.read<LoansBloc>().selectedLoan;
         final schedules = context.read<LoansBloc>().clientLoanSchedules;
         // The whole panel scrolls; the schedule table is sized to its content
-        // (48px per row including the header) so a long schedule extends the
+        // (LoanScheduleWidget.rowHeight px per row including the header) so a long schedule extends the
         // scroll instead of being squeezed by the fixed top section.
         return SingleChildScrollView(
           child: Column(
@@ -397,7 +399,9 @@ class _LoanDetailsState extends State<LoanDetails> {
                 schedules: schedules,
                 completeTerm: loan.completeTerm,
                 buildTable: true,
-                tableHeight: (schedules.length + 1) * 48.0,
+                tableHeight:
+                    (schedules.length + 1) * LoanScheduleWidget.rowHeight,
+                loan: loan,
               ),
             ],
           ),
@@ -447,13 +451,23 @@ class _LoanDetailsState extends State<LoanDetails> {
         .toList()
       ..sort((a, b) => a.dueAt.compareTo(b.dueAt));
     final nextDue = unpaid.isNotEmpty ? unpaid.first : null;
-    // The lender side collects amortization + any extraPayment.
-    final nextDueAmount =
-        nextDue == null ? 0.0 : nextDue.amortization + nextDue.extraPayment;
-    final remainingTotal = unpaid.fold<double>(
+    // The lender side collects amortization + any extraPayment, plus the
+    // running late penalty as of now (what the teller will charge when the
+    // collection date defaults to the submission time).
+    final nextDuePenalty =
+        nextDue == null ? 0.0 : previewPenalty(schedule: nextDue, loan: loan).total;
+    final nextDueAmount = nextDue == null
+        ? 0.0
+        : nextDue.amortization + nextDue.extraPayment + nextDuePenalty;
+    final remainingPenalty = unpaid.fold<double>(
       0,
-      (sum, s) => sum + s.amortization + s.extraPayment,
+      (sum, s) => sum + previewPenalty(schedule: s, loan: loan).total,
     );
+    final remainingTotal = unpaid.fold<double>(
+          0,
+          (sum, s) => sum + s.amortization + s.extraPayment,
+        ) +
+        remainingPenalty;
 
     // Nothing left to pay (or the loan has completed) — show a "fully paid"
     // panel instead of the Pay now / Pay in full buttons, which would otherwise
@@ -542,6 +556,11 @@ class _LoanDetailsState extends State<LoanDetails> {
               fontSize: 12,
             ),
           ),
+          if (nextDuePenalty > 0)
+            Text(
+              'incl. ${nextDuePenalty.toCurrency()} late penalty',
+              style: const TextStyle(fontSize: 11, color: AppColors.red2),
+            ),
           const Gap(16),
           SizedBox(
             width: !fullScreen ? null : double.infinity,
@@ -562,6 +581,7 @@ class _LoanDetailsState extends State<LoanDetails> {
                   loanId: loan.id,
                   companyId: userLoanView.companyId,
                   amount: nextDueAmount,
+                  penalty: nextDuePenalty,
                 );
               },
             ),
@@ -585,6 +605,7 @@ class _LoanDetailsState extends State<LoanDetails> {
                   loanId: loan.id,
                   companyId: userLoanView.companyId,
                   amount: remainingTotal,
+                  penalty: remainingPenalty,
                 );
               },
             ),

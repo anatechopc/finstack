@@ -175,6 +175,11 @@ Future<Uint8List> _buildPdfSoa(
                             allowEmpty: true,
                           ),
                         ),
+                        _tableItemWidget(
+                          entry.penalty.toCurrency(
+                            allowEmpty: true,
+                          ),
+                        ),
                       ],
                     );
                   }),

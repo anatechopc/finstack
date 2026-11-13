@@ -15,6 +15,9 @@ final class PayLoanScheduleEvent extends PaymentEvent {
     this.interestPayment = 0,
     this.force = false,
     this.otpVerified = false,
+    this.collectedAt,
+    this.waivePenalty = false,
+    this.waiveReason,
   });
 
   final Loan loan;
@@ -27,6 +30,13 @@ final class PayLoanScheduleEvent extends PaymentEvent {
   final bool force;
   final bool otpVerified;
 
+  /// When the money was actually received. Null means now.
+  final DateTime? collectedAt;
+
+  /// Provider chose to waive the computed penalty. Needs [waiveReason].
+  final bool waivePenalty;
+  final String? waiveReason;
+
   @override
   List<Object?> get props => [
         loan,
@@ -38,6 +48,9 @@ final class PayLoanScheduleEvent extends PaymentEvent {
         signatureBytes,
         force,
         otpVerified,
+        collectedAt,
+        waivePenalty,
+        waiveReason,
       ];
 }
 

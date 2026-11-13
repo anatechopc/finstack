@@ -79,6 +79,7 @@ PenaltyResult computePenalties({
 
 const _unpaidStatuses = {
   LoanStatus.not_paid,
+  LoanStatus.not_paid_overdue,
   LoanStatus.payment_submitted,
 };
 
@@ -105,5 +106,54 @@ PenaltyResult previewPenalty({
     penalties: loan.penalties,
     daysLate: daysLate,
     termDays: termDaysOf(loan.term),
+  );
+}
+
+/// The confirmation-time decision for one installment.
+final class LatenessResult {
+  const LatenessResult({
+    required this.daysLate,
+    required this.isLate,
+    required this.penalties,
+  });
+
+  /// Calendar days after the due date, recorded even when [isLate] is false.
+  final int daysLate;
+
+  /// True when collected after the due date on a loan that does not allow
+  /// late payments. Drives the paid_late status.
+  final bool isLate;
+
+  /// Empty unless [isLate].
+  final PenaltyResult penalties;
+}
+
+/// Decide lateness and penalties for a payment collected on [collectedAt].
+/// Unlike [previewPenalty] this ignores the row's current status, because
+/// the caller is about to set it.
+LatenessResult resolveLateness({
+  required LoanSchedule schedule,
+  required Loan loan,
+  required DateTime collectedAt,
+}) {
+  final daysLate = calculateDaysLate(
+    dueAt: schedule.dueAt,
+    collectedAt: collectedAt,
+  );
+  final isLate = daysLate > 0 && !loan.allowLatePayments;
+
+  return LatenessResult(
+    daysLate: daysLate,
+    isLate: isLate,
+    penalties: isLate
+        ? computePenalties(
+            amountDue: schedule.isOpenTerm
+                ? schedule.outstandingBalance
+                : schedule.amortization,
+            penalties: loan.penalties,
+            daysLate: daysLate,
+            termDays: termDaysOf(loan.term),
+          )
+        : PenaltyResult.none,
   );
 }

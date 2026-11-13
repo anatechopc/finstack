@@ -27,9 +27,6 @@ class StatementOfAccountScreen extends StatefulWidget {
 }
 
 class _StatementOfAccountScreenState extends State<StatementOfAccountScreen> {
-  int _deductionBuildCount = 0;
-  int _additionalChargesBuildCount = 0;
-
   @override
   void initState() {
     super.initState();
@@ -320,10 +317,6 @@ class _StatementOfAccountScreenState extends State<StatementOfAccountScreen> {
           return Container();
         }
 
-        // initialize buildCounts
-        _deductionBuildCount = 0;
-        _additionalChargesBuildCount = 0;
-
         return TableView.builder(
           cellBuilder: (context, vicinity) {
             return _buildCell(
@@ -451,6 +444,11 @@ class _StatementOfAccountScreenState extends State<StatementOfAccountScreen> {
           defaultCellDisplay = wrapPadding(
             Text(amount > 0 ? amount.toCurrency() : ''),
           );
+        } else if (column == 8) {
+          final amount = entry.penalty;
+          defaultCellDisplay = wrapPadding(
+            Text(amount > 0 ? amount.toCurrency() : ''),
+          );
         }
       } else {
         // other things
@@ -529,7 +527,8 @@ class _StatementOfAccountScreenState extends State<StatementOfAccountScreen> {
         } else if (currentIndex <=
             (entryCount + 4 + soaModel.deductions.length)) {
           // deductions
-          final deduction = soaModel.deductions[_deductionBuildCount];
+          final deductionIndex = currentIndex - (entryCount + 5);
+          final deduction = soaModel.deductions[deductionIndex];
 
           if (column == 2) {
             columnMergeStart = 2;
@@ -545,9 +544,6 @@ class _StatementOfAccountScreenState extends State<StatementOfAccountScreen> {
                 ),
               ),
             );
-          } else if (column == 7) {
-            // last column
-            _deductionBuildCount += 1;
           }
         } else if (currentIndex ==
             (entryCount + 4 + soaModel.deductions.length + 1)) {
@@ -587,8 +583,9 @@ class _StatementOfAccountScreenState extends State<StatementOfAccountScreen> {
             debugPrint('empty additional charges!');
             // do nothing
           } else {
-            final additionalCharge =
-                soaModel.additionalCharges[_additionalChargesBuildCount];
+            final chargeIndex =
+                currentIndex - (entryCount + soaModel.deductions.length + 6);
+            final additionalCharge = soaModel.additionalCharges[chargeIndex];
 
             if (column == 2) {
               columnMergeStart = 2;
@@ -604,8 +601,6 @@ class _StatementOfAccountScreenState extends State<StatementOfAccountScreen> {
                   ),
                 ),
               );
-            } else if (column == 7) {
-              _additionalChargesBuildCount += 1;
             }
           }
         } else if (currentIndex ==

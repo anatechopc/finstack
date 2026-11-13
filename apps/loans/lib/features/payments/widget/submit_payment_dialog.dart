@@ -7,6 +7,7 @@ import 'package:gap/gap.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/features/payments/bloc/payment_submission_bloc.dart';
 import 'package:loooans/utils/extensions.dart';
+import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 
@@ -21,6 +22,7 @@ Future<void> showSubmitPaymentDialog(
   required String loanId,
   required String companyId,
   required double amount,
+  double penalty = 0,
   PaymentSubmissionBloc Function(BuildContext)? createBloc,
 }) {
   final bankDetailsRepository = context.read<BaseRepository<BankDetails>>();
@@ -56,6 +58,7 @@ Future<void> showSubmitPaymentDialog(
             loanId: loanId,
             companyId: companyId,
             amount: amount,
+            penalty: penalty,
             bankDetailsRepository: bankDetailsRepository,
           ),
         ),
@@ -71,12 +74,14 @@ class _SubmitPaymentDialogBody extends StatefulWidget {
     required this.companyId,
     required this.amount,
     required this.bankDetailsRepository,
+    this.penalty = 0,
   });
 
   final List<LoanSchedule> schedules;
   final String loanId;
   final String companyId;
   final double amount;
+  final double penalty;
   final BaseRepository<BankDetails> bankDetailsRepository;
 
   @override
@@ -234,6 +239,11 @@ class _SubmitPaymentDialogBodyState extends State<_SubmitPaymentDialogBody> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+                if (widget.penalty > 0)
+                  Text(
+                    'Includes ${widget.penalty.toCurrency()} late penalty',
+                    style: const TextStyle(fontSize: 12, color: AppColors.red2),
+                  ),
                 const Gap(16),
                 AppWidgets.defaultOutlinedButton(
                   onPressed: submitting ? null : _chooseFile,

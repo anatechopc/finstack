@@ -12,6 +12,7 @@ final class SOAEntry {
     this.isTotal = false,
     this.toRemove = false,
     this.isAdditionalAmount = false,
+    this.penalty = 0,
   });
   final DateTime date;
   final double principalLoan;
@@ -24,4 +25,7 @@ final class SOAEntry {
   bool toRemove;
   final bool isAdditionalAmount;
   final String numberOfDays;
+
+  /// Penalty charged on this installment (0 when none, waived, or allowed).
+  final double penalty;
 }

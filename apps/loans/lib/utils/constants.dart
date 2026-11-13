@@ -134,6 +134,7 @@ class Constants {
     // 'Insurance',
     // Savings,
     'Principal\nbalance',
+    'Penalty',
   ];
 
   static List<String> printLoanScheduleHeaders = [

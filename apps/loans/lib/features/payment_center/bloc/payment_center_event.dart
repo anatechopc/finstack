@@ -55,6 +55,9 @@ final class MakePaymentEvent extends PaymentCenterEvent {
     this.signatureBytes,
     this.force = false,
     this.otpVerified = false,
+    this.collectedAt,
+    this.waivePenalty = false,
+    this.waiveReason,
   });
 
   final Loan loan;
@@ -67,6 +70,13 @@ final class MakePaymentEvent extends PaymentCenterEvent {
   final bool force;
   final bool otpVerified;
 
+  /// When the money was actually received. Null means now.
+  final DateTime? collectedAt;
+
+  /// Provider chose to waive the computed penalty. Needs [waiveReason].
+  final bool waivePenalty;
+  final String? waiveReason;
+
   @override
   List<Object?> get props => [
         loan,
@@ -78,6 +88,9 @@ final class MakePaymentEvent extends PaymentCenterEvent {
         signatureBytes,
         force,
         otpVerified,
+        collectedAt,
+        waivePenalty,
+        waiveReason,
       ];
 }
 
@@ -92,6 +105,9 @@ final class MakeOverduePaymentEvent extends PaymentCenterEvent {
     this.signatureBytes,
     this.force = false,
     this.otpVerified = false,
+    this.collectedAt,
+    this.waivePenalty = false,
+    this.waiveReason,
   });
 
   final Loan loan;
@@ -104,6 +120,13 @@ final class MakeOverduePaymentEvent extends PaymentCenterEvent {
   final bool force;
   final bool otpVerified;
 
+  /// When the money was actually received. Null means now.
+  final DateTime? collectedAt;
+
+  /// Provider chose to waive the computed penalty. Needs [waiveReason].
+  final bool waivePenalty;
+  final String? waiveReason;
+
   @override
   List<Object?> get props => [
         loan,
@@ -115,6 +138,9 @@ final class MakeOverduePaymentEvent extends PaymentCenterEvent {
         signatureBytes,
         force,
         otpVerified,
+        collectedAt,
+        waivePenalty,
+        waiveReason,
       ];
 }
 
@@ -141,11 +167,19 @@ final class RefreshBorrowerDataEvent extends PaymentCenterEvent {
 }
 
 final class ConfirmSubmissionEvent extends PaymentCenterEvent {
-  const ConfirmSubmissionEvent({required this.payments});
+  const ConfirmSubmissionEvent({
+    required this.payments,
+    this.collectedAt,
+    this.waivePenalty = false,
+    this.waiveReason,
+  });
   final List<Payment> payments;
+  final DateTime? collectedAt;
+  final bool waivePenalty;
+  final String? waiveReason;
 
   @override
-  List<Object?> get props => [payments];
+  List<Object?> get props => [payments, collectedAt, waivePenalty, waiveReason];
 }
 
 final class RejectSubmissionEvent extends PaymentCenterEvent {

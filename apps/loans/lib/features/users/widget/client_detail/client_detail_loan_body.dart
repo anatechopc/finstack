@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:company_repository/company_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_form_builder/flutter_form_builder.dart';
 import 'package:gap/gap.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
@@ -20,8 +21,9 @@ import 'package:loooans/services/payment_confirmation_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
+import 'package:loooans/widgets/image_viewer_dialog.dart';
+import 'package:loooans/widgets/payment_penalty_section.dart';
 import 'package:payment_repository/payment_repository.dart';
-import 'package:photo_view/photo_view.dart';
 
 class ClientDetailLoanBody extends StatelessWidget {
   const ClientDetailLoanBody({
@@ -90,6 +92,7 @@ class ClientDetailLoanBody extends StatelessWidget {
                 index: 0,
                 schedule: clientLoanSchedules.first,
                 isHeader: true,
+                loan: selectedLoan,
                 onMakePayment: (schedule) =>
                     _onMakePayment(context, schedule),
               );
@@ -99,6 +102,7 @@ class ClientDetailLoanBody extends StatelessWidget {
               return ClientDetailScheduleItem(
                 index: finalIndex,
                 schedule: schedule,
+                loan: selectedLoan,
                 onMakePayment: (schedule) =>
                     _onMakePayment(context, schedule),
                 onReviewPayment: (schedule) =>
@@ -193,6 +197,7 @@ class ClientDetailLoanBody extends StatelessWidget {
   }) {
     final originalUrl = payment.transactionPhotoUrl?.original;
     final displayUrl = payment.transactionPhotoUrl?.thumbnail ?? originalUrl;
+    final key = GlobalKey<FormBuilderState>(debugLabel: 'review_payment');
 
     return showDialog<void>(
       context: context,
@@ -200,52 +205,68 @@ class ClientDetailLoanBody extends StatelessWidget {
         return AlertDialog(
           title: const Text('Review payment'),
           content: SizedBox(
-            width: 360,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (originalUrl != null && displayUrl != null)
-                  GestureDetector(
-                    onTap: () => _showFullImage(dialogContext, originalUrl),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: CachedNetworkImage(
-                        imageUrl: displayUrl,
-                        height: 200,
-                        width: double.infinity,
-                        fit: BoxFit.cover,
-                        errorWidget: (context, url, error) => Container(
-                          height: 200,
-                          color: Colors.grey.withValues(alpha: 0.15),
-                          child: const Center(
-                            child:
-                                Icon(Icons.broken_image, color: Colors.grey),
+            width: 420,
+            child: FormBuilder(
+              key: key,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (originalUrl != null && displayUrl != null)
+                      GestureDetector(
+                        onTap: () => showImageViewerDialog(
+                          dialogContext,
+                          url: originalUrl,
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: CachedNetworkImage(
+                            imageUrl: displayUrl,
+                            height: 200,
+                            width: double.infinity,
+                            fit: BoxFit.cover,
+                            errorWidget: (context, url, error) => Container(
+                              height: 200,
+                              color: Colors.grey.withValues(alpha: 0.15),
+                              child: const Center(
+                                child: Icon(
+                                  Icons.broken_image,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
+                      )
+                    else
+                      Container(
+                        height: 80,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text(
+                          'No screenshot provided',
+                          style: TextStyle(color: Colors.black, fontSize: 12),
+                        ),
                       ),
+                    const Gap(12),
+                    Text(
+                      '${schedule.amortization.toCurrency()} • due '
+                      '${schedule.dueAt.toDefaultDateFormat()}',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
-                  )
-                else
-                  Container(
-                    height: 80,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: Colors.grey.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
+                    const Gap(12),
+                    PaymentPenaltySection(
+                      schedules: [schedule],
+                      loan: context.read<LoansBloc>().selectedLoan,
+                      initialCollectedAt: payment.createdAt,
                     ),
-                    child: const Text(
-                      'No screenshot provided',
-                      style: TextStyle(color: Colors.black, fontSize: 12),
-                    ),
-                  ),
-                const Gap(12),
-                Text(
-                  '${schedule.amortization.toCurrency()} • due '
-                  '${schedule.dueAt.toDefaultDateFormat()}',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
           actions: [
@@ -259,11 +280,18 @@ class ClientDetailLoanBody extends StatelessWidget {
               child: const Text('Reject'),
             ),
             AppWidgets.defaultFilledButton(
-              onPressed: () => _onConfirmFromReview(
-                context,
-                dialogContext: dialogContext,
-                payment: payment,
-              ),
+              onPressed: () {
+                if (!(key.currentState?.saveAndValidate() ?? false)) return;
+                final values = key.currentState!.value;
+                _onConfirmFromReview(
+                  context,
+                  dialogContext: dialogContext,
+                  payment: payment,
+                  collectedAt: values['collected_at'] as DateTime?,
+                  waivePenalty: values['waive_penalty'] as bool? ?? false,
+                  waiveReason: values['waive_reason'] as String?,
+                );
+              },
               child: const Text('Confirm'),
             ),
           ],
@@ -279,6 +307,9 @@ class ClientDetailLoanBody extends StatelessWidget {
     BuildContext context, {
     required BuildContext dialogContext,
     required Payment payment,
+    DateTime? collectedAt,
+    bool waivePenalty = false,
+    String? waiveReason,
   }) async {
     final messenger = ScaffoldMessenger.of(context);
     final service = _buildConfirmationService(context);
@@ -289,6 +320,9 @@ class ClientDetailLoanBody extends StatelessWidget {
       await service.confirm(
         payment: payment,
         confirmedById: AuthenticationService.instance.user.id,
+        collectedAt: collectedAt,
+        waivePenalty: waivePenalty,
+        waiveReason: waiveReason,
       );
 
       if (!context.mounted) return;
@@ -339,42 +373,6 @@ class ClientDetailLoanBody extends StatelessWidget {
         const SnackBar(content: Text('Failed to reject payment')),
       );
     }
-  }
-
-  /// Full-screen proof image viewer. Mirrors the Payment Center's
-  /// `_showFullImage` (`pending_submission_section.dart`) for consistency.
-  void _showFullImage(BuildContext context, String url) {
-    showDialog<void>(
-      context: context,
-      builder: (context) {
-        return Dialog(
-          insetPadding: const EdgeInsets.all(16),
-          child: Stack(
-            children: [
-              SizedBox(
-                height: 400,
-                width: double.infinity,
-                child: PhotoView(
-                  imageProvider: CachedNetworkImageProvider(url),
-                  backgroundDecoration: const BoxDecoration(
-                    color: AppColors.white,
-                  ),
-                ),
-              ),
-              Positioned(
-                top: 8,
-                right: 8,
-                child: IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () =>
-                      Navigator.of(context, rootNavigator: true).maybePop(),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
   }
 
   /// Mirrors the Payment Center's reject reason dialog

@@ -7,6 +7,7 @@ import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
 import 'package:loooans/utils/constants.dart';
 import 'package:loooans/utils/extensions.dart';
+import 'package:loooans/utils/screen_helpers.dart';
 import 'package:two_dimensional_scrollables/two_dimensional_scrollables.dart';
 
 class LoanScheduleWidget extends StatelessWidget {
@@ -18,7 +19,11 @@ class LoanScheduleWidget extends StatelessWidget {
     this.forDialogHeight,
     this.buildTable = false,
     this.tableHeight,
+    this.loan,
   });
+
+  /// Row extent of the schedule table; callers size the table with it.
+  static const double rowHeight = 56;
 
   final double? forDialogHeight;
   final bool buildTable;
@@ -30,6 +35,10 @@ class LoanScheduleWidget extends StatelessWidget {
   final double amortization;
   final String completeTerm;
   final List<LoanSchedule> schedules;
+
+  /// The loan these rows belong to. Null for offer previews, where there is
+  /// no loan yet and no penalty can be shown.
+  final Loan? loan;
 
   @override
   Widget build(BuildContext context) {
@@ -87,6 +96,7 @@ class LoanScheduleWidget extends StatelessWidget {
           context,
           schedule: schedules[index],
           index: index,
+          loan: loan,
         );
       },
       separatorBuilder: (context, index) {
@@ -111,6 +121,7 @@ class LoanScheduleWidget extends StatelessWidget {
     BuildContext context, {
     required LoanSchedule schedule,
     int index = 0,
+    Loan? loan,
   }) {
     final trailingText = !schedule.isOpenTerm
         ? context.read<LoansBloc>().monthlyAmortization
@@ -135,6 +146,7 @@ class LoanScheduleWidget extends StatelessWidget {
               fontSize: 12,
             ),
           ),
+          ..._penaltyLines(schedule, loan),
         ],
       ),
       isThreeLine: true,
@@ -162,8 +174,18 @@ class LoanScheduleWidget extends StatelessWidget {
       } else if (vicinity.column == 1) {
         defaultCellDisplay = Padding(
           padding: const EdgeInsets.only(right: 16),
-          child: Text(
-            schedule.amortization.toCurrency(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                schedule.amortization.toCurrency(),
+                style: const TextStyle(fontSize: 14),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              ..._penaltyLines(schedule, loan),
+            ],
           ),
         );
       } else if (vicinity.column == 2) {
@@ -179,12 +201,49 @@ class LoanScheduleWidget extends StatelessWidget {
       }
     }
 
+    // Column 1 (amortization) can carry a second, 11px penalty line inside
+    // the fixed row — tighter vertical padding gives it the extra room.
+    final verticalPadding = vicinity.column == 1 && vicinity.row > 0 ? 4.0 : 8.0;
+
     return TableViewCell(
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: EdgeInsets.symmetric(vertical: verticalPadding),
         child: defaultCellDisplay,
       ),
     );
+  }
+
+  /// Running penalty on an unpaid row, or the charged/waived amount on a
+  /// paid one.
+  static List<Widget> _penaltyLines(LoanSchedule schedule, Loan? loan) {
+    const style = TextStyle(color: AppColors.red2, fontSize: 11);
+    final preview = loan == null
+        ? PenaltyResult.none
+        : previewPenalty(schedule: schedule, loan: loan);
+
+    return [
+      if (preview.total > 0)
+        Text(
+          '+ ${preview.total.toCurrency()} penalty',
+          style: style,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      if (schedule.penalty > 0)
+        Text(
+          '+ ${schedule.penalty.toCurrency()} penalty charged',
+          style: style,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      if (schedule.penaltyWaivedBy != null)
+        const Text(
+          'penalty waived',
+          style: TextStyle(fontSize: 11),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+    ];
   }
 
   /// Borrower-facing status for a schedule row. Shows the real payment state
@@ -233,13 +292,13 @@ class LoanScheduleWidget extends StatelessWidget {
     if (index == 0) {
       return const TableSpan(
         backgroundDecoration: decoration,
-        extent: FixedTableSpanExtent(48),
+        extent: FixedTableSpanExtent(rowHeight),
       );
     }
 
     return TableSpan(
       backgroundDecoration: decoration,
-      extent: const FixedTableSpanExtent(48),
+      extent: const FixedTableSpanExtent(rowHeight),
       cursor: SystemMouseCursors.click,
       recognizerFactories: <Type, GestureRecognizerFactory>{
         TapGestureRecognizer:

@@ -261,6 +261,8 @@ class FormWidgets {
     DateTime? lastDate,
     DateTime? initialDate,
     bool enabled = true,
+    DateTime? initialValue,
+    ValueChanged<DateTime?>? onChanged,
   }) {
     return FormBuilderDateTimePicker(
       enabled: enabled,
@@ -269,6 +271,8 @@ class FormWidgets {
       inputType: InputType.date,
       lastDate: lastDate,
       initialDate: initialDate ?? lastDate,
+      initialValue: initialValue,
+      onChanged: onChanged,
       decoration: InputDecoration(
         contentPadding: const EdgeInsets.all(16),
         focusedBorder: OutlineInputBorder(

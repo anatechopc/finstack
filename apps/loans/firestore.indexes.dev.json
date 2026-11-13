@@ -59,6 +59,24 @@
       ]
     },
     {
+      "collectionGroup": "dev_bank_details",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "dataId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "deleted_at",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "updated_at",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "dev_cash_pool",
       "queryScope": "COLLECTION",
       "fields": [
@@ -86,6 +104,24 @@
         },
         {
           "fieldPath": "user_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "updated_at",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "dev_chat_rooms",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "member_ids",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "deleted_at",
           "order": "ASCENDING"
         },
         {
@@ -481,6 +517,94 @@
       ]
     },
     {
+      "collectionGroup": "dev_product_views",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "search_tokens",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "company_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "deleted_at",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "term",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "updated_at",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "dev_product_views",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "search_tokens",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "company_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "deleted_at",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "updated_at",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "dev_product_views",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "search_tokens",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "deleted_at",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "term",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "updated_at",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "dev_product_views",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "search_tokens",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "deleted_at",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "updated_at",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "dev_reviews",
       "queryScope": "COLLECTION",
       "fields": [
@@ -566,6 +690,24 @@
         },
         {
           "fieldPath": "updated_at",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "dev_user_loan_views",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "deleted_at",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "loan_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "created_at",
           "order": "DESCENDING"
         }
       ]
@@ -705,94 +847,6 @@
         {
           "fieldPath": "last_name",
           "order": "ASCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "dev_product_views",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "search_tokens",
-          "arrayConfig": "CONTAINS"
-        },
-        {
-          "fieldPath": "deleted_at",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "updated_at",
-          "order": "DESCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "dev_product_views",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "search_tokens",
-          "arrayConfig": "CONTAINS"
-        },
-        {
-          "fieldPath": "company_id",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "deleted_at",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "updated_at",
-          "order": "DESCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "dev_product_views",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "search_tokens",
-          "arrayConfig": "CONTAINS"
-        },
-        {
-          "fieldPath": "deleted_at",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "term",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "updated_at",
-          "order": "DESCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "dev_product_views",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "search_tokens",
-          "arrayConfig": "CONTAINS"
-        },
-        {
-          "fieldPath": "company_id",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "deleted_at",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "term",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "updated_at",
-          "order": "DESCENDING"
         }
       ]
     }
