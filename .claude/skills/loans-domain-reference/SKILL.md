@@ -135,8 +135,14 @@ to today; golden G4c) and keeps the cycle's own due date on the row as
 late and penalized from the cycle's due date, and one that allows them records
 the days late and charges nothing, as fixed-term loans do (golden G13).
 Before #114 open-term rows were never late. Placeholder rows (the principal
-release and top-ups) are not installments: no penalty, and not in the
-borrower's Next payment / Pay in full.
+release and top-ups) are not installments: no penalty, never late at
+confirmation, no "Make payment" button, and not in the borrower's Next
+payment / Pay in full. Every open-term loan that does not allow late payments
+(also loans created before penalties existed, which read the flag as false)
+now confirms an overdue cycle as `paid_late`; money is charged only where the
+loan has penalties. Known limits: salary-day loans after an off-day row
+(#144); a top-up during an overdue cycle raises the penalty base for all its
+late days; missed cycles collapse into one row ("once" charged once).
 
 ## 6. Additional loans (top-ups) — the sort invariant
 
