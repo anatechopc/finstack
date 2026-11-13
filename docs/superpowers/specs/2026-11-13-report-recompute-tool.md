@@ -81,9 +81,10 @@ The arithmetic of a release, a collection, a settlement, a bad debt and a capita
 
 | Case | Triggers | Recompute | Right |
 |---|---|---|---|
-| Row **created** as `payment_submitted` (open-term runtime row) | booked as a collection at creation, and counted as returned principal at settlement / bad debt | not counted; listed as a pending submission | recompute: unconfirmed cash is not a collection. **This is a deliberate difference from the trigger planner, decided in review; the trigger is not changed in this PR.** |
+| Row **created** as `payment_submitted` (open-term runtime row) | booked as a collection at creation, and counted as returned principal at settlement / bad debt | not counted; listed as a pending submission | open: owner decision 12. Not counting it reverses the standing rule that listed `payment_submitted` among paid rows; the trigger is not changed in this PR. |
 | Planned row moved to `payment_submitted` by "Pay now" | not booked (update) | not counted; listed | both agree. Counting it would book the whole principal of an open-term loan (10,000 on a 10,000 loan). |
-| That row then confirmed (`paid_on_time`) | never booked | counted | recompute: the trigger misses a real payment |
+| That row then confirmed (`paid_on_time` / `paid_late`), not open-term | never booked | counted | recompute: the trigger misses a real payment |
+| That row then confirmed, open-term | never booked | counted at its planned amounts: `principal_payment` is still the whole `amount`, because confirmation writes no amounts (#138) | neither. Recompute would book the whole loan as returned principal (10,000 principal, collections and capital on a 10,000 loan). The tool lists such rows (paid, `is_open_term` true, `principal_payment` at or above the loan's `amount`), flags the loan in `-loans`, and refuses every apply while one exists. There is no override; the app must write the paid amounts first (#138). |
 | Row created as `payment_submitted`, then confirmed | booked at submission | counted once confirmed, on `collected_at` (by default the submission time) | both count it |
 | Submission rejected (`not_paid`) | booking remains | not counted | recompute |
 
@@ -104,11 +105,11 @@ Consequence: straight after an apply, live equals the recompute exactly. Once tr
 
 - **Core** — `functions/loans/triggers/report_recompute.go`. `RecomputeReport(RecomputeInput) RecomputeResult` is pure: raw documents and the product-type map in; the summed `ReportPlan`, counts, one line per loan, and three lists out (dropped documents, pending submissions, rows with a foreign `company_id`). `ReportPlan.SummaryNode()` turns the plan into the `report_summary` node. Bookings are summed in a fixed order (date, then document id), so the result depends only on the set of documents. The trigger's schedule loader and recompute share one function for reading a row's amounts.
 - **Adapters** — `functions/loans/cmd/recompute_reports/adapters.go`. Firestore reader: loans and capital by company, rows by `loan_id` per loan. Realtime Database: read `report_summary` with its ETag, read `report_events` and the product-type nodes, write `report_summary` conditionally, read and write run records. `-env` sets `ENVIRONMENT`, and prefixes, database root and URL come from `utils`, as for the triggers.
-- **CLI** — `functions/loans/cmd/recompute_reports/main.go`. Flags: `-company <id>` and `-env dev|stg|prod` (required), `-loans`, `-apply`, `-confirm-prod <id>`, `-restore <runId>`, `-by <who>` (default `user@host`).
+- **CLI** — `functions/loans/cmd/recompute_reports/main.go`. Flags: `-company <id>` and `-env dev|stg|prod` (required), `-loans`, `-apply`, `-confirm-prod <id>`, `-restore <runId>`, `-discard-changes-since-run` (with `-restore` only, §6), `-by <who>` (default `user@host`).
 
 Dry run (the default) reads and prints: document counts; every dropped document, pending submission and foreign-company row; the claims summary; every all-time total as recomputed, live and live minus recomputed; the period totals that differ by 0.005 or more; the number of data items on each side; whether live equals the recompute; and why an apply would be refused. `-loans` adds one line per loan: id, status, amount, released, the releases the live `data` list holds for it, paid principal, interest, settlement remainder, bad debt, and why it was dropped or not released; then one line per live release whose loan Firestore no longer has. Ids, statuses and amounts only; no names or contact data.
 
-An apply is refused when: `-env prod` lacks `-confirm-prod` equal to the company; `ENVIRONMENT` is already set to another environment; one emulator variable is set without the other; **the recompute is empty** (it would delete the live node); **any document was dropped** (the recompute is incomplete; the documents are listed); a claim is unapplied and younger than 7 days (§6); the previous node cannot be saved; a trigger wrote to the summary during the run.
+An apply is refused when: `-env prod` lacks `-confirm-prod` equal to the company; `ENVIRONMENT` is already set to another environment; one emulator variable is set without the other; **the recompute is empty** (it would delete the live node); **any document was dropped** (the recompute is incomplete; the documents are listed); **a confirmed open-term row still carries the planned principal** (§4.3, #138); a claim is unapplied and younger than 7 days (§6); the previous node cannot be saved; a trigger wrote to the summary during the run.
 
 ## 6. Apply, rollback, the race with triggers, and verification
 
@@ -128,7 +129,11 @@ go run ./cmd/recompute_reports -env dev -company <id> -restore <runId>          
 go run ./cmd/recompute_reports -env dev -company <id> -restore <runId> -apply   # write it back
 ```
 
-A restore puts back the node as it was before that run. Increments the triggers added after the run are not in it; restore soon after the apply, or expect to recompute again.
+A restore puts back the node as it was before that run. Increments the triggers added after the run are not in it. The tool therefore refuses a restore when:
+
+- the run record has no `previous` node (the restore would replace the live node with nothing);
+- the run record is not marked `applied: true` (the saved node was never replaced);
+- the live totals or the number of live data items differ from what that run wrote (`after`, `data_items.after`). The differences are printed. `-discard-changes-since-run` lets the restore go ahead and accepts losing what was booked since.
 
 What the conditional write does not cover:
 
@@ -160,7 +165,7 @@ The tool is built on the defaults.
 | 9 | Run record | `{company}/report_recomputes/{runId}` with the complete previous node | Keep the copy elsewhere (it grows by one full node per apply). |
 | 10 | Smallest reported difference | 0.005 (half a centavo) | — |
 | 11 | Top-ups (`additional_loan_amounts`) | not part of `total_amount_released`, as in the triggers | Count them; needs the same change in the triggers. |
-| 12 | `payment_submitted` rows | not counted until confirmed (review decision; differs from the trigger planner and from the earlier rule that listed them as paid) | Count them as the triggers do. Then "Pay now" on an open-term planned row books the whole principal. |
+| 12 | `payment_submitted` rows. **Open, for the owner.** The standing rule listed `payment_submitted` among paid rows; the tool's default reverses it. | not counted until confirmed (differs from the trigger planner and from that rule) | Count them as the rule and the triggers do. Then "Pay now" on an open-term planned row books the whole principal. |
 | 13 | A dropped document | blocks every apply for that company | An explicit flag that names the documents the operator accepts losing. |
 
 ## 8. Before any apply
@@ -169,16 +174,19 @@ None of this is done by merging the PR.
 
 - [x] An apply cannot delete or shrink the live node silently: empty recompute and dropped documents are refused (review fix 1).
 - [x] The complete previous node is saved before the write, and `-restore` writes it back (review fix 2).
-- [x] Unconfirmed submissions are not counted (review fix 3).
+- [x] Unconfirmed submissions are not counted (review fix 3); whether that stays is owner decision 12.
+- [x] An apply is refused while a confirmed open-term row still carries the planned principal (§4.3; second review).
+- [x] A restore is refused when the run record has no `previous` node, is not marked applied, or the live node changed after the run without `-discard-changes-since-run` (§6; second review).
+- [ ] #138 (confirming an open-term planned row writes no amounts) fixed in the app and the affected rows corrected; until then every company with such a row is refused.
 - [ ] #133 (the schedule trigger books created rows only) resolved, or accepted in writing with its effect on the company measured by a `-loans` dry run.
 - [ ] #134 (extra payment subtracted twice in the settlement remainder) fixed in the trigger core, or accepted in writing; until then an apply restates the under-count.
-- [ ] Owner decisions 1, 2, 4, 5, 7, 9 (and 12, which the review introduced) taken.
+- [ ] Owner decisions 1, 2, 4, 5, 7, 9 and 12 taken (12 reverses the standing rule on `payment_submitted` rows and is open).
 - [ ] Dev first: apply, check that the app's reports render, record the run; then stg; then prod.
 
 ## 9. Tests
 
-- **Unit** (`test/triggers/report_recompute_test.go`, `cmd/recompute_reports/main_test.go`; run by CI): hand-derived totals and loan lines for a five-loan company; every `LoanStatus` value released or not; the collection date rule; dropped and skipped documents; foreign-company rows; the same documents in another order give the same node; replay-versus-recompute equivalence and ten named differences; option checks; the names each `-env` uses; a dry run writes nothing; an apply saves the previous node, then writes, then a second dry run shows zero difference and a second apply writes nothing; restore; every refusal, including claims at one hour and at almost seven days.
-- **Integration** (`cmd/recompute_reports/emulator_test.go`, build tag `emulator`, Firestore and Realtime Database emulators, real adapters; **not run by CI**, which starts no emulators): under the dev, stg and prod names, a dry run leaves the whole company node untouched; an apply leaves `report_summary` equal to the recompute of the seeded documents, saves a copy equal to the node as it was, and leaves other nodes unchanged; rows are found by loan and foreign documents are not read; a restore puts the saved node back; the review's probe (one approved loan, no product type) is refused with nothing changed; a trigger write during the run makes the conditional write fail.
+- **Unit** (`test/triggers/report_recompute_test.go`, `cmd/recompute_reports/main_test.go`; run by CI): hand-derived totals and loan lines for a five-loan company; every `LoanStatus` value released or not; the collection date rule; dropped and skipped documents; foreign-company rows; the same documents in another order give the same node; replay-versus-recompute equivalence and ten named differences; option checks; the names each `-env` uses; a dry run writes nothing; an apply saves the previous node, then writes, then a second dry run shows zero difference and a second apply writes nothing; restore; every refusal, including claims at one hour and at almost seven days, a confirmed open-term planned row, and the three restore refusals (no `previous`, not applied, live changed since the run, and the flag that overrides the last).
+- **Integration** (`cmd/recompute_reports/emulator_test.go`, build tag `emulator`, Firestore and Realtime Database emulators, real adapters; **not run by CI**, which starts no emulators): under the dev, stg and prod names, a dry run leaves the whole company node untouched; an apply leaves `report_summary` equal to the recompute of the seeded documents, saves a copy equal to the node as it was, and leaves other nodes unchanged; rows are found by loan and foreign documents are not read; a restore puts the saved node back; the review's probe (one approved loan, no product type) is refused with nothing changed; a trigger write during the run makes the conditional write fail; a confirmed open-term planned row is refused; a restore of a record without `previous`, of a record not marked applied, and after a trigger booked 777 since the apply is refused with nothing changed.
 - **Manual**: the built binary against the emulators, and read-only dry runs against dev. Outputs are in the pull request.
 
 ## 10. Out of scope
