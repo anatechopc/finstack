@@ -83,6 +83,7 @@ Future<Uint8List> _buildPdf(
                         child: _quotationWidget(
                           loan: loan,
                           product: product,
+                          schedules: schedules,
                         ),
                       ),
                     ],
