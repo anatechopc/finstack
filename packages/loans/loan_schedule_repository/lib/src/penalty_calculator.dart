@@ -85,18 +85,22 @@ const _unpaidStatuses = {
 
 /// What an unpaid installment would owe in penalties if collected on [asOf]
 /// (default: now). Applies the loan's allow-late gate. Used for the red line
-/// on schedule rows and for the confirmation breakdown.
+/// on schedule rows and for the confirmation breakdown. An open-term
+/// placeholder row (the principal release or a top-up) is not an
+/// installment and owes nothing.
 PenaltyResult previewPenalty({
   required LoanSchedule schedule,
   required Loan loan,
   DateTime? asOf,
 }) {
-  if (!_unpaidStatuses.contains(schedule.status) || loan.allowLatePayments) {
+  if (!_unpaidStatuses.contains(schedule.status) ||
+      schedule.isPlaceholder ||
+      loan.allowLatePayments) {
     return PenaltyResult.none;
   }
 
   final daysLate = calculateDaysLate(
-    dueAt: schedule.dueAt,
+    dueAt: schedule.lateFrom,
     collectedAt: asOf ?? DateTime.now(),
   );
 
@@ -137,7 +141,7 @@ LatenessResult resolveLateness({
   required DateTime collectedAt,
 }) {
   final daysLate = calculateDaysLate(
-    dueAt: schedule.dueAt,
+    dueAt: schedule.lateFrom,
     collectedAt: collectedAt,
   );
   final isLate = daysLate > 0 && !loan.allowLatePayments;

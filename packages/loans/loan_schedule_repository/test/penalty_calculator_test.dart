@@ -373,4 +373,68 @@ void main() {
       expect(twiceAMonth.penalties.total, 200);
     });
   });
+
+  group('open-term original due date (finstack#114)', () {
+    // The engine billed the cycle due Aug 15 as due Sep 3 (interest to
+    // today) and kept Aug 15. Aug 15 -> Sep 3 = 19 days x 100 = 1,900.
+    LoanSchedule billedToday() =>
+        schedule(isOpenTerm: true)
+          ..dueAt = DateTime(2026, 9, 3)
+          ..originalDueAt = DateTime(2026, 8, 15);
+    final sep3 = DateTime(2026, 9, 3);
+
+    test('preview and confirmation count from the original due date', () {
+      final penalties = loan(penalties: const [daily100]);
+
+      expect(billedToday().lateFrom, DateTime(2026, 8, 15));
+      expect(
+        previewPenalty(schedule: billedToday(), loan: penalties, asOf: sep3)
+            .total,
+        1900,
+      );
+      final lateness = resolveLateness(
+        schedule: billedToday(),
+        loan: penalties,
+        collectedAt: sep3,
+      );
+      expect(lateness.daysLate, 19);
+      expect(lateness.isLate, true);
+      expect(lateness.penalties.total, 1900);
+    });
+
+    test('without an original due date, due_at decides', () {
+      final row = billedToday()..originalDueAt = null;
+
+      expect(row.lateFrom, sep3);
+      expect(
+        resolveLateness(schedule: row, loan: loan(), collectedAt: sep3)
+            .daysLate,
+        0,
+      );
+    });
+
+    test('a placeholder row (principal release, top-up) owes nothing', () {
+      final placeholder = LoanSchedule.create(
+        dueAt: DateTime(2026, 8, 15),
+        loanId: 'l1',
+        outstandingBalance: 0,
+        principalPayment: 20000,
+        interestCharge: 0,
+        amortization: 0,
+        interestDayMultiplier: 1,
+        companyId: 'c1',
+        isOpenTerm: true,
+        isPlaceholder: true,
+      );
+
+      expect(
+        previewPenalty(
+          schedule: placeholder,
+          loan: loan(penalties: const [once500]),
+          asOf: sep3,
+        ).total,
+        0,
+      );
+    });
+  });
 }

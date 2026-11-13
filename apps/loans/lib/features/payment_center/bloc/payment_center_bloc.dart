@@ -67,7 +67,9 @@ class PaymentCenterBloc
   /// [cashPoolRepository] and [productRepository] are optional because they
   /// are `final` classes and so cannot be mocked; the OTP handlers never touch
   /// them, and a test that reaches a handler which does will fail loudly on
-  /// the unset late field rather than silently using a stand-in.
+  /// the unset late field rather than silently using a stand-in. Selecting a
+  /// borrower reads products through `_getProduct`, which treats a missing
+  /// product as none (no charges), so it runs without [productRepository].
   PaymentCenterBloc.withDependencies({
     required this.userRepository,
     required this.loanRepository,
@@ -94,6 +96,7 @@ class PaymentCenterBloc
       this.userLoanViewRepository = userLoanViewRepository;
     }
     on<SearchBorrowersEvent>(_handleSearchBorrowersEvent);
+    on<SelectBorrowerEvent>(_handleSelectBorrowerEvent);
     on<RequestOtpEvent>(_handleRequestOtpEvent);
     on<VerifyOtpEvent>(_handleVerifyOtpEvent);
   }
@@ -551,7 +554,7 @@ class PaymentCenterBloc
     // Mark overdue schedules
     final now = DateTime.now();
     for (final schedule in allUnpaid) {
-      if (schedule.dueAt.toLocal().isBefore(now) &&
+      if (schedule.lateFrom.toLocal().isBefore(now) &&
           schedule.status == LoanStatus.not_paid) {
         schedule.status = LoanStatus.not_paid_overdue;
       }
