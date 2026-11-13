@@ -257,8 +257,9 @@ recompute tool is built once and reused.
 ## PHASE 4 — Validation, promotion, and data repair
 
 **Status 2026-11-13: the recompute tool is BUILT (branch
-`feat/report-recompute-tool`, draft PR #132 to `develop`); no repair has been
-applied in any environment.** Spec:
+`feat/report-recompute-tool`, draft PR #132 to `develop`) and is a DRY-RUN
+measurement tool. No repair has been applied in any environment, and none
+may be until the spec's §8 "Before any apply" is satisfied.** Spec:
 `docs/superpowers/specs/2026-11-13-report-recompute-tool.md`.
 
 - Core `triggers/report_recompute.go`: `RecomputeReport` feeds a company's
@@ -267,25 +268,37 @@ applied in any environment.** Spec:
   the event time. Release → loan `created_at`; settlement / bad debt → loan
   `updated_at`; collection → `collected_at`, else `paid_at`, else
   `created_at`. These dates are defaults awaiting the owner (spec §7).
+- Only confirmed rows (`paid_on_time`, `paid_late`) count. A
+  `payment_submitted` row is listed as a pending submission and not counted
+  (review decision; the trigger planner still counts it at creation).
 - CLI (from `functions/loans`, ADC needed):
-  `go run ./cmd/recompute_reports -env dev|stg|prod -company <id>` is a dry
-  run (reads only, prints recomputed vs live per total). `-apply` replaces
-  `report_summary` in one conditional write and records the run under
-  `{company}/report_recomputes/`; prod also needs `-confirm-prod <id>`.
+  `go run ./cmd/recompute_reports -env dev|stg|prod -company <id> [-loans]`
+  is a dry run (reads only; recomputed vs live per total; `-loans` adds a
+  line per loan). `-apply` first saves the complete live node under
+  `{company}/report_recomputes/{runId}`, then replaces `report_summary` in
+  one conditional write; prod also needs `-confirm-prod <id>`.
+  `-restore <runId>` (dry run, then with `-apply`) writes a saved node back.
+- An apply is refused when the recompute is empty, when any document was
+  dropped, when an event is claimed and not applied (under 7 days), and when
+  a trigger wrote during the run.
 - Verification after an apply: a second dry run must print
   `live equals the recomputed summary: zero difference`.
-- Recompute and the triggers differ in named ways (spec §4, pinned by
-  `TestRecompute_DiffersFromTheTriggers_OnlyInTheNamedWays`): event-time
-  versus document-date buckets, and three trigger gaps found while building,
-  **D16–D18** in `references/aggregation-triggers.md`. After an apply those
-  differences return as the triggers book new events; compare the all-time
-  totals (`sales`, `products`, `capital_usage`) to measure pollution.
-- First measurement (dev, one company, dry run, 2026-11-13): 20 of 21
-  all-time totals differ; live is lower than the recompute on most (history
-  the triggers never booked). Figures and the run log are in
-  `functions/loans/MEMORY.md`. Every later dry-run measurement and every
-  apply is added to that log.
-- Remaining: owner decisions (spec §7) → dev apply + app check → stg → prod.
+- Recompute and the triggers differ in named ways (spec §4, pinned with
+  numbers by `TestRecompute_DiffersFromTheTriggers_OnlyInTheNamedWays`):
+  event-time versus document-date buckets, histories the triggers never
+  reverse, and the trigger defects **D16 (#133), D17, D18, D19 (#134)** in
+  `references/aggregation-triggers.md`. D19 is shared arithmetic: an apply
+  would restate it. After an apply the differences return as the triggers
+  book new events; compare the all-time totals (`sales`, `products`,
+  `capital_usage`) to measure pollution.
+- Measurements (dev, one company, dry runs, 2026-11-13): 20 of 21 all-time
+  totals differ. Released: live is 478,501.00 below the recompute: 9 loans
+  never released in live (502,101.00), 6 released more than once (13,600.00
+  over, D1). Figures per loan and the run log are in
+  `functions/loans/MEMORY.md`. Every later measurement and every apply is
+  added to that log.
+- Remaining: spec §8 (#133, #134, owner decisions 1, 2, 4, 5, 7, 9, 12) →
+  dev apply + app check → stg → prod.
 
 1. **All gates green:** golden suite (Gate 1), writer tests + race +
    double-delivery proofs (Gate 2/3 obligations), `go vet` clean in
