@@ -42,7 +42,7 @@ lint disabled for this):
 | `pending` | Pending | Loan creation (`loans_bloc.dart:553`) |
 | `declined` / `approved` | — | Staff status update (`_handleUpdateLoanStatusEvent`, `loans_bloc.dart:671`) |
 | `payment_submitted` | Payment submitted | Borrower self-submits payment proof, awaits lender confirm (`apps/loans/lib/features/payments/bloc/payment_submission_bloc.dart:80`) |
-| `paid_on_time` / `paid_late` | — | Teller records payment; picked by `schedule.dueAt` vs now (`payment_bloc.dart:92-99`) |
+| `paid_on_time` / `paid_late` | — | Every confirmation path; `PaymentConfirmationService.applyLateness` compares the collection date with `schedule.lateFrom` (`original_due_at ?? due_at`, see §5) and the loan's allow-late flag |
 | `not_paid` / `not_paid_overdue` | — | Default schedule display state / overdue (`apps/loans/lib/features/products/screen/loan_schedule_widget.dart:191-207`) |
 | `completed` | **Fully paid** | Early Settlement confirm (`apps/loans/lib/features/loans/bloc/loan_settlement_bloc.dart:166-173`) |
 | `bad_debt` | Bad debt | Staff status update; excluded from settlement queries (`loan_settlement_bloc.dart:68,153`) |
@@ -125,6 +125,18 @@ Verified example: OB=10,000, 5%/month, salary days `'15,30'`, 15 days elapsed �
 multiplier 0.5, interest **250.00**, scheduled amortization **250.00**, principal 0.
 The multiplier is persisted on the schedule doc as `interest_day_multiplier`
 (`packages/loans/loan_schedule_repository/lib/src/model/loan_schedule_entity.dart:143-146`).
+
+**Overdue open-term cycles (finstack#114, 2026-11-13).** When the next due
+date is already past, the engine bills the row as due TODAY (interest accrues
+to today; golden G4c) and keeps the cycle's own due date on the row as
+`original_due_at`. Lateness, overdue labels and penalties count from
+`LoanSchedule.lateFrom` (`original_due_at ?? due_at`); billing counts from
+`due_at`. So an open-term loan whose product does not allow late payments is
+late and penalized from the cycle's due date, and one that allows them records
+the days late and charges nothing, as fixed-term loans do (golden G13).
+Before #114 open-term rows were never late. Placeholder rows (the principal
+release and top-ups) are not installments: no penalty, and not in the
+borrower's Next payment / Pay in full.
 
 ## 6. Additional loans (top-ups) — the sort invariant
 

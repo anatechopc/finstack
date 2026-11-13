@@ -83,6 +83,7 @@ Copied from the product in `Loan.create` at the same point `isForceCollect` is c
 | `penalties: List<Penalty>` | `penalties` | `[]` | the definitions applied (copied from the loan at confirmation) |
 | `penaltyWaivedBy: String?` | `penalty_waived_by` | null | user id of the provider who waived |
 | `penaltyWaiveReason: String?` | `penalty_waive_reason` | null | required when waived |
+| `originalDueAt: DateTime?` | `original_due_at` | null | open-term only (finstack#114, 2026-11-13): the cycle's own due date when the engine billed an overdue cycle as due today; lateness counts from it |
 
 Penalty lines are recomputed from `penalties`, `days_late`, and the row's amount due wherever displayed. No new Firestore indexes; nothing queries on the new fields. Firestore rules: none of these fields is referenced by rules; see `finstack-security-hardening` if that changes.
 
@@ -105,7 +106,9 @@ line.amount   = base * periods
 total         = sum(line.amount)
 ```
 
-`daysLate` is the difference in local calendar dates between `due_at` and the collection date, floored at 0; collected on the due date is on time. `previewPenalty(schedule, loan, asOf)` applies the allow-late gate and is what unpaid rows display before confirmation. Worked example: amortization 5,000; ₱100 daily + 2% monthly; 19 days late → 1,900 + 100 = 2,000.
+`daysLate` is the difference in local calendar dates between `due_at` and the collection date, floored at 0; collected on the due date is on time.
+
+Open-term loans (finstack#114, 2026-11-13). When an open-term cycle is already past due, `calculateOpenTermSchedules` bills the row as due today so that interest accrues to today (golden G4c). Until #114 that made `daysLate` 0 for every open-term row, so open-term loans were never late and never penalized. The row now also carries `original_due_at`, the cycle's own due date, and every lateness and overdue decision uses `LoanSchedule.lateFrom` (`original_due_at ?? due_at`): `previewPenalty`, `resolveLateness`, the overdue labels, the Payment Center overdue list, and the revert-on-reject status. Billing still uses `due_at`. The "Allow late payments" option now behaves for open-term products as it does for fixed-term ones. The base stays the row's outstanding balance (D7): 1% per day on a 12,750 balance is 127.50 a day. Open-term placeholder rows (the principal release and top-ups) are not installments and preview no penalty. `previewPenalty(schedule, loan, asOf)` applies the allow-late gate and is what unpaid rows display before confirmation. Worked example: amortization 5,000; ₱100 daily + 2% monthly; 19 days late → 1,900 + 100 = 2,000.
 
 ## 6. Trigger: payment confirmation (PR 3)
 
