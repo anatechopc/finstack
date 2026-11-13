@@ -38,6 +38,20 @@ List<LoanSchedule> _fixed(double amount, int months, String term) {
   ).schedules;
 }
 
+/// One real open-term row (G8 principal 10500, interest 525), so the
+/// open-term tests fail if the period check becomes an emptiness check.
+List<LoanSchedule> _open() {
+  final s = LoanCalculationService.calculateOpenTerm(
+    amount: 10500,
+    date: _date,
+    interestRate: 5,
+    term: '1m',
+    companyId: 'c',
+  ).schedules;
+  expect(s, isNotEmpty);
+  return s;
+}
+
 Loan _loan({
   required int period,
   required String term,
@@ -139,7 +153,7 @@ void main() {
         additionalCharges: 650,
         deductions: 150,
       );
-      expect(pdfTotalPayable(loan, const []), isNull);
+      expect(pdfTotalPayable(loan, _open()), isNull);
     });
   });
 
@@ -178,7 +192,7 @@ void main() {
       );
       final bytes = await tester.runAsync(
         () => PdfGenerator.buildPdfBytes(
-          schedules: const [],
+          schedules: _open(),
           loan: loan,
           product: _product(),
           user: _user(),

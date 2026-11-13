@@ -3,9 +3,12 @@ import 'package:loooans/services/charge_calculator.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:product_repository/product_repository.dart';
 
-/// The top-up dialog total: the same `totalAmount` the stored top-up is
-/// built from (`AdditionalLoanBloc`), so the dialog cannot disagree with it.
-/// Empty or unparsable input shows 0.
+/// The top-up dialog total: amount + additional charges − deductions of the
+/// top-up record `AdditionalLoanBloc` stores. The bloc runs the same
+/// `applyChargesAndDeductionsDetailed` call and discards its `totalAmount`
+/// (`additional_loan_bloc.dart:79`), storing the parts this sums. Upfront
+/// charges are stored separately and are not in the total. Empty or
+/// unparsable input shows 0.
 double topUpDialogTotal(Product product, String? amountText) {
   final amount = double.tryParse(amountText ?? '');
   if (amount == null) return 0;
