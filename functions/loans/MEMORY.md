@@ -4,6 +4,42 @@ Log of work done on the loans Cloud Functions (Go backend).
 
 ---
 
+## Report recompute tool — campaign Phase 4 (2026-11-13)
+
+Branch `feat/report-recompute-tool` → develop (draft PR). Spec: `docs/superpowers/specs/2026-11-13-report-recompute-tool.md` (source and formula per total, the date rule per bucket, the differences from the live triggers, the race with triggers, 11 open decisions with the defaults built).
+
+**What was built.** `triggers/report_recompute.go`: `RecomputeReport(RecomputeInput)` is pure. It takes a company's raw loan, schedule and capital documents plus the product-type map and returns the summed `ReportPlan`; every number comes from `PlanLoanReport` / `PlanScheduleReport` / `PlanCapitalReport`, called once per document with a document date in place of the event time. `ReportPlan.SummaryNode()` is the `report_summary` node. `cmd/recompute_reports/` is the CLI: `adapters.go` (Firestore reader on the prefixed collections; Realtime Database reader, conditional writer and run marker) and `main.go` (flags, refusals, the recomputed/live table). The trigger's schedule loader now shares `scheduleAmountsOf` with recompute; no trigger behaviour changed.
+
+**How to run** (from `functions/loans`, with `gcloud auth application-default login` done):
+
+```bash
+go run ./cmd/recompute_reports -env dev -company <companyId>                 # dry run: reads only
+go run ./cmd/recompute_reports -env dev -company <companyId> -apply          # replaces report_summary, records the run
+go run ./cmd/recompute_reports -env prod -company <id> -apply -confirm-prod <id>
+```
+
+After an apply, wait a minute and dry run again: it must print `live equals the recomputed summary: zero difference`. If not, an event landed in between; apply again. Then add a row to the run log below.
+
+**Rules built (owner may change them; see the spec §7).** Release buckets on the loan's `created_at` (the loan has no approval date); settlement and bad debt on the loan's `updated_at`; a collection on `collected_at`, else `paid_at`, else `created_at`; all in UTC like the triggers. A loan counts as released in every status except `pending` and `declined`. Documents with `deleted_at` are left out. A loan without a product-type node is dropped and listed (the trigger cannot book it either). Malformed documents are dropped and listed.
+
+**Apply.** One conditional write (`If-Match` on the ETag read before Firestore) replaces the whole node, so a trigger write during the run makes the apply fail instead of being overwritten. The run marker goes to `{company}/report_recomputes/{yyyymmddThhmmssZ}` (`at`, `by`, document counts, totals before and after without the `data` list). Refused: prod without `-confirm-prod <company>`; `ENVIRONMENT` set to another environment; one emulator variable without the other; no documents found for the company; an event claimed under `report_events` and not applied in the last 7 days.
+
+**Found while building (not fixed here).** (1) `loanScheduleChanges` runs on creation only, so a planned row paid later by update is never booked, and a `payment_submitted` row that is rejected stays booked. Recompute counts by final status, so after an apply these two cases reappear as differences. (2) Two events in the same millisecond share a `data` key and the later item overwrites the earlier. (3) The loan document has no `approved_at` / `completed_at`; exact period buckets need those fields. Catalogued as D16–D18 in the campaign skill.
+
+**Evidence.** Unit: 6 test functions in `test/triggers/report_recompute_test.go` and 7 in `cmd/recompute_reports/main_test.go` (35 cases with subtests), among them replay-versus-recompute equivalence, five named differences, order independence, a second apply that writes nothing. Emulators (`firebase emulators:start --only database,firestore --project demo-finstack`, then `FIRESTORE_EMULATOR_HOST=localhost:8081 FIREBASE_DATABASE_EMULATOR_HOST='localhost:9000?ns=demo-finstack' go test -tags emulator ./cmd/recompute_reports/ -run Emulator`): a dry run leaves the whole company node untouched; an apply leaves `report_summary` exactly equal to the recompute, with other nodes unchanged and one marker; a trigger write during the run is detected. `go vet ./...` clean in the root and `triggers` modules.
+
+**Run log (every dry-run measurement and every apply goes here).**
+
+| Date | Env | Company | Mode | Result |
+|---|---|---|---|---|
+| 2026-11-13 | dev | `onOytOlQOGAUscnmcIjj` | dry run | 31 loans (25 released), 32 schedules (32 paid), 1 capital, 0 dropped, 0 claims. 20 of 21 all-time totals and 133 of 216 period totals differ; data items 112 recomputed, 86 live. `sales` recomputed / live: released 747,061.00 / 268,560.00; collections 647,318.71 / 332,656.68; interest 30,507.18 / 24,624.42; principal 616,811.53 / 107,116.87. `capital_usage/total_capital` 617,811.53 / 205,816.11. Live is lower on most totals (history the triggers never booked, e.g. no 2024 releases) and higher on two products (`Business loan` released +12,898.00, `Fix - OneRequirement` +1,200.00). Nothing written. |
+
+No apply has been run in any environment.
+
+**Still open.** The owner's decisions in the spec §7; the dev apply and the check that the app's reports render; stg and prod measurements and applies; the trigger follow-ups (D16–D18).
+
+---
+
 ## Report triggers rebuild — campaign Phase 2/3, option (a) in full (2026-09-09)
 
 Branch `fix/report-triggers-108` → develop. Spec: `docs/superpowers/specs/2026-09-09-report-triggers-rebuild.md`. Closes finstack#108 (D5) and the campaign's D1–D8.

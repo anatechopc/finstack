@@ -46,6 +46,7 @@ entry gate and a falsifiable exit; do not skip gates.
 | Golden suite G1–G10 (Phase 1 DONE 2026-09-08) | `apps/loans/test/services/loan_calculation_{service,open_term,settlement}_test.dart`, `charge_calculator_test.dart` |
 | Campaign references | `references/golden-scenarios.md`, `references/aggregation-triggers.md` |
 | Race proof tool (emulator-only) | `functions/loans/cmd/race_demo/` + `functions/loans/test/triggers/report_store_emulator_test.go` (`go test -tags emulator`) |
+| Recompute tool (Phase 4, built 2026-11-13) | core `functions/loans/triggers/report_recompute.go`; CLI `functions/loans/cmd/recompute_reports/`; spec `docs/superpowers/specs/2026-11-13-report-recompute-tool.md` |
 
 Standing constraints (see finstack-change-control for the full set): never
 touch prod data by hand; schema changes ship both sides, backend first;
@@ -255,6 +256,37 @@ recompute tool is built once and reused.
 
 ## PHASE 4 — Validation, promotion, and data repair
 
+**Status 2026-11-13: the recompute tool is BUILT (branch
+`feat/report-recompute-tool`, draft PR to `develop`); no repair has been
+applied in any environment.** Spec:
+`docs/superpowers/specs/2026-11-13-report-recompute-tool.md`.
+
+- Core `triggers/report_recompute.go`: `RecomputeReport` feeds a company's
+  final documents to the trigger planning functions (`PlanLoanReport`,
+  `PlanScheduleReport`, `PlanCapitalReport`) with a document date in place of
+  the event time. Release → loan `created_at`; settlement / bad debt → loan
+  `updated_at`; collection → `collected_at`, else `paid_at`, else
+  `created_at`. These dates are defaults awaiting the owner (spec §7).
+- CLI (from `functions/loans`, ADC needed):
+  `go run ./cmd/recompute_reports -env dev|stg|prod -company <id>` is a dry
+  run (reads only, prints recomputed vs live per total). `-apply` replaces
+  `report_summary` in one conditional write and records the run under
+  `{company}/report_recomputes/`; prod also needs `-confirm-prod <id>`.
+- Verification after an apply: a second dry run must print
+  `live equals the recomputed summary: zero difference`.
+- Recompute and the triggers differ in named ways (spec §4, pinned by
+  `TestRecompute_DiffersFromTheTriggers_OnlyInTheNamedWays`): event-time
+  versus document-date buckets, and three trigger gaps found while building,
+  **D16–D18** in `references/aggregation-triggers.md`. After an apply those
+  differences return as the triggers book new events; compare the all-time
+  totals (`sales`, `products`, `capital_usage`) to measure pollution.
+- First measurement (dev, one company, dry run, 2026-11-13): 20 of 21
+  all-time totals differ; live is lower than the recompute on most (history
+  the triggers never booked). Figures and the run log are in
+  `functions/loans/MEMORY.md`. Every later dry-run measurement and every
+  apply is added to that log.
+- Remaining: owner decisions (spec §7) → dev apply + app check → stg → prod.
+
 1. **All gates green:** golden suite (Gate 1), writer tests + race +
    double-delivery proofs (Gate 2/3 obligations), `go vet` clean in
    `triggers/`, full `CGO_ENABLED=0 go test ./...` and
@@ -296,7 +328,8 @@ recompute tool is built once and reused.
   completed-branch numbers covered by tests).
 - For at least one real company per env, recompute-from-Firestore equals the
   live `report_summary` totals within a written tolerance, and the repair
-  run is recorded in `functions/loans/MEMORY.md`.
+  run is recorded in `functions/loans/MEMORY.md`. (Tool built 2026-11-13,
+  tolerance 0.005; NOT yet true in any env: no apply has been run.)
 - The Phase 3 decision (a/b/c) is recorded with rationale and date in
   `functions/loans/MEMORY.md`.
 
@@ -324,6 +357,8 @@ grep -n 'dataErrors =' functions/loans/triggers/loan_changes.go            # D3 
 grep -n '%\$w' functions/loans/triggers/loan_changes.go                    # D7 (0 hits since 2026-09-09)
 grep -n 'TODO(deibeeed)' functions/loans/triggers/loan_changes.go          # D6 (0 hits since 2026-09-09)
 grep -n 'ClaimEvent' functions/loans/triggers/report_handlers.go           # idempotency guard present (1+ hits)
+grep -n 'func RecomputeReport' functions/loans/triggers/report_recompute.go  # Phase 4 core present (1 hit since 2026-11-13)
+(cd functions/loans && go test ./test/triggers/ ./cmd/recompute_reports/)   # includes the recompute unit tests
 grep -n 'document.v1.written' .github/scripts/deploy_functions.sh          # D1 precondition (loanChanges + messageWritten)
 grep -n 'totalLoanPayment = (schedule' apps/loans/lib/services/loan_calculation_service.dart  # D9: 1 hit until finstack#116 lands
 
