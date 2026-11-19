@@ -19,6 +19,13 @@ import 'package:payment_repository/payment_repository.dart';
 //      row left unpaid (the row's billed principal, amortization -
 //      interestCharge, less the principal recorded; to the centavo). The
 //      last bill clears the whole remaining balance, rounding included.
+//      Rounding (review of #156): a bill that carries a shortfall is in
+//      centavos, the figures the dialog fills in: amount = the
+//      amortization to the centavo + the carry, principal = amount -
+//      interest to the centavo, and the next row starts from the balance
+//      after that principal. The projection then equals the rows after
+//      payment, and the shown bills sum to what is owed. Other bills keep
+//      the unrounded amortization (G1, unchanged).
 //   2. A shortfall on the last bill: one more row bills the balance, due on
 //      the last due date, no interest; penalties as for any missed bill.
 //   4. A penalty on the missed bill is a percent of the carried bill's full
@@ -31,16 +38,19 @@ import 'package:payment_repository/payment_repository.dart';
 //
 // G16a, the owner's example. Bill 1 paid 500 + 3,000 (billed principal
 //   3,172.0856): stored balance 7,000; shortfall 172.0856 -> 172.09.
-//   Bill 2: 3,672.0856 + 172.09 = 3,844.1756 (3,844.18); interest
-//     7,000 x 5% = 350; principal 3,494.1756 (3,494.18); balance 3,505.8244.
-//   Bill 3 (preview): interest 175.2912, principal 3,505.8244, amount
-//     3,681.1156 (3,681.12).
-//   The teller pays bill 2 as the dialog fills it, 350.00 + 3,494.18
-//     (0.0044 above the bill): stored balance 3,505.82. Bill 3 then:
-//     interest 175.291, principal 3,505.82, amount 3,681.111 (3,681.11).
-//   Total paid 3,500 + 3,844.18 + 3,681.111 = 11,025.29 (on time
+//   Bill 2: 3,672.09 + 172.09 = 3,844.18; interest 7,000 x 5% = 350;
+//     principal 3,494.18; balance 3,505.82.
+//   Bill 3: interest 175.291, principal 3,505.82, amount 3,681.111
+//     (3,681.11), the same before and after bill 2 is paid as the dialog
+//     fills it (350.00 + 3,494.18, no extra payment).
+//   Shown bills 3,844.18 + 3,681.11 = 7,525.29 = owed 7,000 + 350 +
+//   175.291. Total paid 3,500 + 3,844.18 + 3,681.111 = 11,025.29 (on time
 //   11,016.26). Before the fix: bills 2 and 3 were 3,672.09 each, the
-//   stored balance after bill 3 was 189.72, and nothing billed it.
+//   stored balance after bill 3 was 189.72, and nothing billed it. First
+//   version of this PR: bill 2 3,844.1756 (principal 3,494.1756), bill 3
+//   3,681.1156, shown 7,525.30, one centavo more than owed.
+//   The dev row holds the amortization unrounded (3,672.0856463124487):
+//   the same figures.
 //
 // G16b, short on bill 2 of 3. Bill 1 paid 500 + 3,172.09: balance 6,827.91.
 //   Bill 2: interest 341.3955, principal 3,330.6901; paid 341.40 + 3,000:
@@ -70,21 +80,22 @@ import 'package:payment_repository/payment_repository.dart';
 // G16f, '15d' (G2: 6 bills, R 2.5%, P 1,815.4997). Bill 1 paid 250 + 1,000
 //   (billed principal 1,565.4997): balance 9,000, shortfall 565.50.
 //   | bill | amount    | interest | principal | balance   |
-//   | 2    | 2380.9997 | 225.0000 | 2155.9997 | 6844.0003 |
-//   | 3    | 1815.4997 | 171.1000 | 1644.3997 | 5199.6006 |
-//   | 4    | 1815.4997 | 129.9900 | 1685.5097 | 3514.0909 |
-//   | 5    | 1815.4997 |  87.8523 | 1727.6474 | 1786.4435 |
-//   | 6    | 1831.1045 |  44.6611 | 1786.4435 |    0.0000 |
-//   Due Feb 9, Feb 24, Mar 11, Mar 26, Apr 10. Total paid 10,908.6034 (on
-//   time 10,893.00).
+//   | 2    | 2381.0000 | 225.0000 | 2156.0000 | 6844.0000 |
+//   | 3    | 1815.4997 | 171.1000 | 1644.3997 | 5199.6003 |
+//   | 4    | 1815.4997 | 129.9900 | 1685.5097 | 3514.0906 |
+//   | 5    | 1815.4997 |  87.8523 | 1727.6474 | 1786.4431 |
+//   | 6    | 1831.1042 |  44.6611 | 1786.4431 |    0.0000 |
+//   Due Feb 9, Feb 24, Mar 11, Mar 26, Apr 10. Shown bills sum 9,658.60 =
+//   owed 9,000 + interest 658.6033. Total paid 10,908.6034 (on time
+//   10,893.00).
 //
 // G16g, completion. Every bill paid and a paid row at 0.005 or less:
 //   completed. G16c's three paid bills (497.2244 owed): not completed; its
 //   remainder paid: completed. 0.006 owed: not completed.
 //
-// Rule 4. G16a's bill 2 (3,844.1756) unpaid on Mar 20, 10 days late: 1% a
-//   day of the missed bill = 384.4176; 0.1% a day of the balance in force
-//   (3,505.8244 + 3,494.1756 = 7,000) = 70.00.
+// Rule 4. G16a's bill 2 (3,844.18) unpaid on Mar 20, 10 days late: 1% a
+//   day of the missed bill = 384.418; 0.1% a day of the balance in force
+//   (3,505.82 + 3,494.18 = 7,000) = 70.00.
 
 final created = DateTime(2026, 1, 10);
 
@@ -164,18 +175,59 @@ void main() {
 
       expect(rest, hasLength(2));
       final (bill2, bill3) = (rest.first, rest.last);
-      expect(bill2.amortization, closeTo(3844.1756, 0.0001));
-      expect(bill2.amortization.toStringAsFixed(2), '3844.18');
+      expect(bill2.amortization, closeTo(3844.18, 0.000001));
       expect(bill2.interestCharge, closeTo(350, 0.000001));
       expect(bill2.interestPayment, closeTo(350, 0.000001));
-      expect(bill2.principalPayment, closeTo(3494.1756, 0.0001));
-      expect(bill2.outstandingBalance, closeTo(3505.8244, 0.0001));
+      expect(bill2.principalPayment, closeTo(3494.18, 0.000001));
+      expect(bill2.outstandingBalance, closeTo(3505.82, 0.000001));
       expect(day(bill2.dueAt), DateTime(2026, 3, 10));
-      expect(bill3.interestCharge, closeTo(175.2912, 0.0001));
-      expect(bill3.principalPayment, closeTo(3505.8244, 0.0001));
-      expect(bill3.amortization, closeTo(3681.1156, 0.0001));
+      expect(bill3.interestCharge, closeTo(175.291, 0.000001));
+      expect(bill3.principalPayment, closeTo(3505.82, 0.000001));
+      expect(bill3.amortization, closeTo(3681.111, 0.000001));
+      expect(bill3.amortization.toStringAsFixed(2), '3681.11');
       expect(bill3.outstandingBalance, closeTo(0, 0.000001));
       expect(day(bill3.dueAt), DateTime(2026, 4, 10));
+    });
+
+    test('the dev row as stored (amortization 3,672.0856463124487): '
+        '3,844.18, then 3,681.11; the shown bills sum to what is owed', () {
+      final devRow = LoanSchedule()
+        ..id = 'dAz09ZDes7ZEeIUXypcY'
+        ..loanId = 'AlWAkiTsiUIvG7Ia6g8D'
+        ..companyId = 'co-1'
+        ..status = LoanStatus.paid_late
+        ..dueAt = DateTime(2026, 10, 4)
+        ..amortization = 3672.0856463124487
+        ..interestCharge = 500
+        ..interestPayment = 500
+        ..principalPayment = 3000
+        ..extraPayment = 0
+        ..outstandingBalance = 7000
+        ..isOpenTerm = false;
+      final rest = LoanCalculationService.calculateFixedTerm(
+        amount: 10000,
+        monthsToPay: 3,
+        date: DateTime(2026, 9, 4),
+        interestRate: 5,
+        term: '1m',
+        companyId: 'co-1',
+        paidSchedules: [devRow],
+      ).schedules;
+
+      expect(rest.map((s) => s.amortization.toStringAsFixed(2)), [
+        '3844.18',
+        '3681.11',
+      ]);
+      expect(rest.first.principalPayment.toStringAsFixed(2), '3494.18');
+      expect(rest.last.principalPayment.toStringAsFixed(2), '3505.82');
+      final shown = rest.fold<int>(
+        0,
+        (sum, s) => sum + (s.amortization * 100).round(),
+      );
+      final owed = devRow.outstandingBalance +
+          rest.fold<double>(0, (sum, s) => sum + s.interestCharge);
+      expect(shown, (owed * 100).round(), reason: '7,525.29 both');
+      expect(shown, 752529);
     });
 
     test("the borrower's Pay now is bill 2: 3,844.18", () {
@@ -191,16 +243,16 @@ void main() {
       );
 
       expect(due.payNow, hasLength(1));
-      expect(due.nextDueAmount, closeTo(3844.1756, 0.0001));
-      expect(due.remainingTotal, closeTo(3844.1756 + 3681.1156, 0.0001));
+      expect(due.nextDueAmount, closeTo(3844.18, 0.000001));
+      expect(due.remainingTotal, closeTo(3844.18 + 3681.111, 0.000001));
     });
 
     test(
-        'bill 2 paid as the dialog fills it: bill 3 is 175.29 + 3,505.82 '
+        'bill 2 paid as the dialog fills it: bill 3 stays 175.29 + 3,505.82 '
         '= 3,681.11; total 11,025.29', () {
       final two = payNext(bill1, interest: 350, principal: 3494.18);
       expect(two.last.outstandingBalance, closeTo(3505.82, 0.000001));
-      expect(two.last.extraPayment, closeTo(0.0044, 0.0001));
+      expect(two.last.extraPayment, 0);
 
       final bill3 = engine(two).schedules.single;
       expect(bill3.interestCharge, closeTo(175.291, 0.000001));
@@ -360,12 +412,13 @@ void main() {
 
     final rest = engine(one, term: '15d').schedules;
     expect(rest.map((s) => s.amortization), [
-      closeTo(2380.9997, 0.0001),
+      closeTo(2381, 0.000001),
       closeTo(1815.4997, 0.0001),
       closeTo(1815.4997, 0.0001),
       closeTo(1815.4997, 0.0001),
-      closeTo(1831.1045, 0.0001),
+      closeTo(1831.1042, 0.0001),
     ]);
+    expect(rest.first.principalPayment, closeTo(2156, 0.000001));
     expect(rest.map((s) => s.interestCharge), [
       closeTo(225, 0.0001),
       closeTo(171.1000, 0.0001),
@@ -374,12 +427,23 @@ void main() {
       closeTo(44.6611, 0.0001),
     ]);
     expect(rest.map((s) => s.outstandingBalance), [
-      closeTo(6844.0003, 0.0001),
-      closeTo(5199.6006, 0.0001),
-      closeTo(3514.0909, 0.0001),
-      closeTo(1786.4435, 0.0001),
+      closeTo(6844, 0.000001),
+      closeTo(5199.6003, 0.0001),
+      closeTo(3514.0906, 0.0001),
+      closeTo(1786.4431, 0.0001),
       closeTo(0, 0.0001),
     ]);
+    // The shown bills sum to what is owed: 9,658.60.
+    expect(
+      rest.fold<int>(0, (sum, s) => sum + (s.amortization * 100).round()),
+      965860,
+    );
+    expect(
+      ((9000 + rest.fold<double>(0, (sum, s) => sum + s.interestCharge)) *
+              100)
+          .round(),
+      965860,
+    );
     expect(rest.map((s) => day(s.dueAt)), [
       DateTime(2026, 2, 9),
       DateTime(2026, 2, 24),
@@ -424,7 +488,7 @@ void main() {
             basedOn: PenaltyBase.missedBill,
           ),
         ),
-        closeTo(384.4176, 0.0001),
+        closeTo(384.418, 0.000001),
       );
     });
 

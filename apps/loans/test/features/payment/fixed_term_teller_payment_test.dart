@@ -41,8 +41,8 @@ import '../../helpers/helpers.dart';
 //     6,827.91 and 3,497.22 (was 3,655.83 and 166.53); next bill 3,672.09.
 // #150: in client detail only the earliest unpaid installment can be paid.
 // #152 (golden G16a): bill 1 paid 500 + 3,000 (172.09 short) stores 7,000;
-//   bill 2 is 3,844.18 = 350.00 + 3,494.18 (was 3,672.09), bill 3 3,681.12
-//   (3,681.11 once bill 2 is paid as the dialog fills it; was 3,672.09). A
+//   bill 2 is 3,844.18 = 350.00 + 3,494.18 (was 3,672.09), bill 3 3,681.11
+//   before and after bill 2 is paid as the dialog fills it (was 3,672.09). A
 //   last bill paid 175.29 + 3,000 leaves 505.82: the loan stays open (was
 //   completed) and one more row bills it on bill 3's due date; paying it
 //   completes the loan. The loan is stored on a fake Firestore here, so its
@@ -545,7 +545,7 @@ void main() {
       expect(bill2.amortization.toStringAsFixed(2), '3844.18');
       expect(bill2.interestPayment.toStringAsFixed(2), '350.00');
       expect(bill2.principalPayment.toStringAsFixed(2), '3494.18');
-      expect(rows[2].amortization.toStringAsFixed(2), '3681.12');
+      expect(rows[2].amortization.toStringAsFixed(2), '3681.11');
 
       await payInClientDetail(
         bill2,
@@ -559,6 +559,11 @@ void main() {
       expect(bill3.interestPayment.toStringAsFixed(2), '175.29');
       expect(bill3.principalPayment.toStringAsFixed(2), '3505.82');
       expect(bill3.amortization.toStringAsFixed(2), '3681.11');
+      expect(
+        bill3.amortization,
+        closeTo(rows[2].amortization, 0.000001),
+        reason: 'the projection equals the bill after bill 2 is paid',
+      );
     });
 
     test('Payment Center single: 500 + 3,000 stores 7,000; bill 2 is '
@@ -574,7 +579,7 @@ void main() {
       ]);
       expect(next.map((s) => s.amortization.toStringAsFixed(2)), [
         '3844.18',
-        '3681.12',
+        '3681.11',
       ]);
       expect(next.first.interestPayment, closeTo(350, 0.000001));
       expect(next.first.principalPayment.toStringAsFixed(2), '3494.18');

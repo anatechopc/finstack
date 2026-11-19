@@ -79,9 +79,10 @@ class LoanCalculationService {
   ///
   /// Resuming after the stored [paidSchedules] (owner, 2026-11-19, #152):
   /// the next bill is the amortization plus the principal the last stored
-  /// row left unpaid, and the last bill clears the whole balance, rounding
-  /// included. When every bill is stored and the last one left principal
-  /// owed, one more row bills it: due on the last due date, no interest.
+  /// row left unpaid, both to the centavo, with its principal to the
+  /// centavo; the last bill clears the whole balance, rounding included.
+  /// When every bill is stored and the last one left principal owed, one
+  /// more row bills it: due on the last due date, no interest.
   static LoanCalculationResult calculateFixedTerm({
     required double amount,
     required int monthsToPay,
@@ -147,14 +148,20 @@ class LoanCalculationService {
     for (var i = 1; i <= numOfPayments; i++) {
       final beginningBalance = outstandingBalance;
       final interestPayment = outstandingBalance * monthlyInterestRate;
-      final monthlyAmort = i == numOfPayments
-          ? beginningBalance + interestPayment
-          : min(
-              loanMonthlyAmortization + carry,
-              beginningBalance + interestPayment,
-            );
+      final clears = beginningBalance + interestPayment;
+      var monthlyAmort = i == numOfPayments
+          ? clears
+          : min(loanMonthlyAmortization + carry, clears);
+      var principalPayment = monthlyAmort - interestPayment;
+      // A bill that carries a shortfall is in centavos, the figures the
+      // dialog fills in, so the rows after it start from the balance its
+      // payment leaves (review of #156: 3,681.11, not 3,681.12).
+      final carriedBill = _toCentavo(loanMonthlyAmortization) + carry;
+      if (i < numOfPayments && carry > 0 && carriedBill < clears) {
+        monthlyAmort = carriedBill;
+        principalPayment = _toCentavo(carriedBill - interestPayment);
+      }
       carry = 0;
-      final principalPayment = monthlyAmort - interestPayment;
       outstandingBalance -= principalPayment;
       _log
         ..finest('month: $i')
@@ -514,6 +521,8 @@ class LoanCalculationService {
   static bool _isPaid(LoanSchedule row) =>
       row.status == LoanStatus.paid_on_time ||
       row.status == LoanStatus.paid_late;
+
+  static double _toCentavo(double amount) => (amount * 100).round() / 100;
 
   /// Calculates open-term loan with additional loan amounts and creates
   /// the full schedule list including paid schedules and placeholders.
