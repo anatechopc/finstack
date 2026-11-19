@@ -4,6 +4,16 @@ Log of refactoring and bug fix work done across multiple sessions.
 
 ---
 
+## Top-up on an overdue open-term loan: deduct, add to the next bill, or cancel (owner, 2026-11-19)
+
+Branch `feat/topup-overdue-warning`, draft PR stacked on #146 (`feat/openterm-billing-by-cycle`).
+
+- **Warning (creation):** client detail "Additional loan" and the Payment Center "Amount" button call `askTopUpOverdueChoice` (`lib/features/loans/widget/top_up_overdue_dialogs.dart`) after the amount is entered. It shows only when a bill is past due: amount = `borrowerAmountsDue(...).nextDueAmount` (Pay now: every bill due + the stretch penalty once; submitted bills excluded), via `TopUpOverdueService.overdue`. "Deduct" is disabled when the overdue amount is more than the cash the top-up hands over (`proceedsOf`: amount − deductions − upfront charges). Only `overdue_choice` (`deduct` / `next_bill`) is stored on the top-up; nothing else is written then.
+- **Approval (`AdditionalLoanBloc`):** only a pending top-up can be approved or declined (a second approval no longer moves `approved_at`). For `deduct`: recompute on the approval day with the top-up still pending (`TopUpOverdueService.schedulesOf` = LoansBloc's computation), refuse unless the total equals what the approve dialog showed (`expectedDeduction`) and fits the proceeds; record `overdue_deduction` first (an interrupted approval then refuses a retry), write one confirmed payment per bill (`bypassPaymentProof`, comment names the top-up) through `PaymentConfirmationService.persistPaidSchedule` (moved out of the Payment Center), rows `paid_late`/`paid_on_time` collected at approval with their penalties, interest = amount due, principal 0; then `deducted_payment_ids`, status approved, `approved_at` (after the rows' `created_at`, so `_includesTopUp` keeps the top-up for the next bill), loan status = last bill's. Decline writes nothing else. No cash-pool entry (orchestrator decision, option A): the pool is the borrower's prepaid balance; the released cash is handed over outside the app.
+- **Worked example:** 40,000 at 5%, '15d', bill 1,000 missed 5 days, Late fee 100 + 0.1%/day → 300; top-up 10,000 → 1,300 deducted, 8,700 released; next bill 333.33 + 833.33 = 1,166.67. Add to the next bill: on that bill's day 1,000 + 1,166.67 + 800 = 2,966.67.
+- **Tests:** `test/services/top_up_overdue_test.dart` 10, `test/features/top_up_overdue_test.dart` 19 (bloc through the real handlers + both dialogs). Full suite 530 (UTC, random); `test/services/` 117 under UTC and Manila. Six guard mutations each fail a test. Manual browser run NOT done (needs an overdue loan in dev).
+- **Known limits:** writes are not atomic (as in the bulk handler); two approvers at once on two devices are not serialized. A top-up approved on a later day still counts in the balance from its creation day (#146); the deducted bills' penalties use the old balance (the top-up was pending).
+
 ## Open-term bills keep their cycle dates (owner rules R1-R5; #144, #120, #117, #145; 2026-11-19)
 
 Branch `feat/openterm-billing-by-cycle` → develop (draft PR, stacked on #143, which merged as 7857570; develop merged in). Supersedes draft PR #131.

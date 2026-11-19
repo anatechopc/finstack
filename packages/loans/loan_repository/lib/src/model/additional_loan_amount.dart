@@ -1,5 +1,6 @@
 import 'package:loan_repository/src/model/additional_loan_amount_entity.dart';
 import 'package:loan_repository/src/model/loan_status.dart';
+import 'package:loan_repository/src/model/overdue_choice.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 
 class AdditionalLoanAmount extends AdditionalLoanAmountEntity
@@ -18,6 +19,7 @@ class AdditionalLoanAmount extends AdditionalLoanAmountEntity
     String? description,
     List<FileUrl> uploadedFilesUrls = const [],
     LoanStatus status = LoanStatus.pending,
+    OverdueChoice? overdueChoice,
   }) {
     final now = DateTime.timestamp();
 
@@ -34,7 +36,8 @@ class AdditionalLoanAmount extends AdditionalLoanAmountEntity
       ..uploadedFilesUrls = uploadedFilesUrls
       ..selfiePhotoUrl = selfiePhotoUrl
       ..signatureUrl = signatureUrl
-      ..status = status;
+      ..status = status
+      ..overdueChoice = overdueChoice;
   }
   @override
   AdditionalLoanAmountEntity toEntity() {

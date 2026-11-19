@@ -171,6 +171,17 @@ double-counted principal. That was the first real production bug
 (finstack#4, fixed by PR finstack#33) — full narrative in `finstack-failure-archaeology`.
 If you touch `calculateOpenTerm`, do not remove or reorder this sort.
 
+**Top-ups exist only on open-term loans** (the UI offers them only when
+`loan.dueAt == null` / `period == 0`; `AdditionalLoanBloc` itself does not
+check). A teller or admin adds one (pending); a loan officer or admin of a
+self-managed company approves it. **Overdue soft block (owner, 2026-11-19):**
+adding a top-up while a bill is past due asks the lender to deduct the
+overdue amount (Pay now's) from it, add it to the next bill, or cancel; only
+the choice (`overdue_choice`) is stored then. Approval applies "deduct" once,
+on the approval day: the bills are recorded paid from the proceeds
+(`overdue_deduction`, `deducted_payment_ids`), no cash-pool entry, the rest is
+handed over outside the app. `TopUpOverdueService`.
+
 ## 7. Capital vs cash pool (two different pots)
 
 | | `capital` | `cash_pool` |

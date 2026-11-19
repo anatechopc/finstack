@@ -14,6 +14,7 @@ import 'package:loooans/features/chat/chat_context_label.dart';
 import 'package:loooans/features/chat/chat_participants.dart';
 import 'package:loooans/features/loans/bloc/additional_loan_bloc.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
+import 'package:loooans/features/loans/widget/top_up_overdue_dialogs.dart';
 import 'package:loooans/features/products/bloc/product_bloc.dart';
 import 'package:loooans/features/products/bloc/product_status.dart';
 import 'package:loooans/features/products/requirement_temp_container.dart';
@@ -21,6 +22,7 @@ import 'package:loooans/features/users/screens/additional_loan_docs_dialog.dart'
 import 'package:loooans/features/users/widget/client_detail/client_detail_dialogs.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/settings_service.dart';
+import 'package:loooans/services/top_up_overdue_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
@@ -299,6 +301,7 @@ class ClientDetailActionButtons extends StatelessWidget {
       final formKey = GlobalKey<FormBuilderState>(
         debugLabel: 'loan_client_add_amount_dialog',
       );
+      OverdueChoice? overdueChoice;
       final result = await showDialog<dynamic>(
         context: context,
         builder: (context) {
@@ -395,6 +398,32 @@ class ClientDetailActionButtons extends StatelessWidget {
                 child: const Text('Add'),
                 onPressed: () async {
                   if (formKey.currentState?.saveAndValidate() ?? false) {
+                    // Owner's soft block (2026-11-19): overdue bills are
+                    // deducted, added to the next bill, or the top-up is
+                    // cancelled.
+                    final answer = await askTopUpOverdueChoice(
+                      context,
+                      loan: loan,
+                      schedules: context.read<LoansBloc>().clientLoanSchedules,
+                      proceeds: TopUpOverdueService.proceedsOf(
+                        amount: double.tryParse(
+                              formKey.currentState!.value['amount'] as String,
+                            ) ??
+                            0,
+                        charges: product?.additionalCharges ?? const [],
+                        deductions: product?.deductions ?? const [],
+                      ),
+                    );
+                    if (!answer.proceed) {
+                      if (context.mounted) {
+                        Navigator.of(context, rootNavigator: true).pop();
+                      }
+                      return;
+                    }
+                    overdueChoice = answer.choice;
+                    if (!context.mounted) {
+                      return;
+                    }
                     final result = await showDialog<dynamic>(
                       context: context,
                       builder: (context) {
@@ -502,6 +531,7 @@ class ClientDetailActionButtons extends StatelessWidget {
               deductions: product?.deductions ?? [],
               selfiePhoto: result['selfie'] as SimpleFileData,
               signatureBytes: result['signature'] as Uint8List,
+              overdueChoice: overdueChoice,
             );
 
         // Get additional loan documents from the selected product

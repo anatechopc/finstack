@@ -8,9 +8,11 @@ import 'package:form_builder_validators/form_builder_validators.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loan_repository/loan_repository.dart';
+import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/loans/bloc/additional_loan_bloc.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
+import 'package:loooans/features/loans/widget/top_up_overdue_dialogs.dart';
 import 'package:loooans/features/payment_center/bloc/payment_center_bloc.dart';
 import 'package:loooans/features/products/requirement_temp_container.dart';
 import 'package:loooans/features/payment_center/widget/borrower_loan_section.dart';
@@ -20,8 +22,10 @@ import 'package:loooans/features/payment_center/widget/payment_center_dialogs.da
 import 'package:loooans/features/payment_center/widget/pending_submission_section.dart';
 import 'package:loooans/features/users/bloc/user_bloc.dart';
 import 'package:loooans/features/users/widget/client_detail/client_detail_dialogs.dart';
+import 'package:loooans/services/top_up_overdue_service.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
+import 'package:loooans_helpers/data_helpers.dart';
 import 'package:product_repository/product_repository.dart';
 
 class PaymentCenterScreen extends StatelessWidget {
@@ -230,7 +234,15 @@ class _BorrowerContent extends StatelessWidget {
             onAddAmount: (group) {
               // Select the loan in LoansBloc so AdditionalLoanBloc can use it
               context.read<LoansBloc>().selectLoan(group.loan.id);
-              _showAdditionalAmountDialog(context, loan: group.loan);
+              _showAdditionalAmountDialog(
+                context,
+                loan: group.loan,
+                // Stored rows and the bills computed after them.
+                schedules: [
+                  ...group.storedSchedules,
+                  ...group.actionableSchedules.where((s) => s.id == NO_ID),
+                ],
+              );
             },
           ),
           const Gap(32),
@@ -269,6 +281,7 @@ class _BorrowerContent extends StatelessWidget {
 Future<void> _showAdditionalAmountDialog(
   BuildContext context, {
   required Loan loan,
+  required List<LoanSchedule> schedules,
 }) async {
   // Fetch product for charge info
   Product? product;
@@ -314,6 +327,7 @@ Future<void> _showAdditionalAmountDialog(
   final formKey = GlobalKey<FormBuilderState>(
     debugLabel: 'payment_center_add_amount_dialog',
   );
+  OverdueChoice? overdueChoice;
 
   final result = await showDialog<dynamic>(
     context: context,
@@ -374,6 +388,32 @@ Future<void> _showAdditionalAmountDialog(
             child: const Text('Add'),
             onPressed: () async {
               if (formKey.currentState?.saveAndValidate() ?? false) {
+                // Owner's soft block (2026-11-19): overdue bills are
+                // deducted, added to the next bill, or the top-up is
+                // cancelled.
+                final answer = await askTopUpOverdueChoice(
+                  dialogContext,
+                  loan: loan,
+                  schedules: schedules,
+                  proceeds: TopUpOverdueService.proceedsOf(
+                    amount: double.tryParse(
+                          formKey.currentState!.value['amount'] as String,
+                        ) ??
+                        0,
+                    charges: product?.additionalCharges ?? const [],
+                    deductions: product?.deductions ?? const [],
+                  ),
+                );
+                if (!answer.proceed) {
+                  if (dialogContext.mounted) {
+                    Navigator.of(dialogContext, rootNavigator: true).pop();
+                  }
+                  return;
+                }
+                overdueChoice = answer.choice;
+                if (!dialogContext.mounted) {
+                  return;
+                }
                 // Capture selfie + signature
                 final captureResult = await showDialog<dynamic>(
                   context: dialogContext,
@@ -452,6 +492,7 @@ Future<void> _showAdditionalAmountDialog(
           deductions: product?.deductions ?? [],
           selfiePhoto: result['selfie'] as SimpleFileData,
           signatureBytes: result['signature'] as Uint8List,
+          overdueChoice: overdueChoice,
         );
   }
 }

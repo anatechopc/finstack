@@ -1128,24 +1128,16 @@ class PaymentCenterBloc extends Bloc<PaymentCenterEvent, PaymentCenterState> {
     ];
   }
 
-  /// Saves [payment] and [schedule] (adds a computed row, updates a stored
-  /// one) and links them. Returns the saved payment.
   Future<Payment> _persistPaidSchedule(
     LoanSchedule schedule,
     Payment payment,
-  ) async {
-    final saved = await paymentRepository.add(data: payment);
-    if (schedule.id == NO_ID) {
-      final added = await loanScheduleRepository.add(
-        data: schedule..paymentId = saved.id,
+  ) =>
+      PaymentConfirmationService.persistPaidSchedule(
+        schedule,
+        payment,
+        loanScheduleRepository: loanScheduleRepository,
+        paymentRepository: paymentRepository,
       );
-      await paymentRepository.update(data: saved..loanScheduleId = added.id);
-    } else {
-      await loanScheduleRepository.update(data: schedule..paymentId = saved.id);
-    }
-
-    return saved;
-  }
 
   Future<String> _buildOtpComment(Loan loan) async {
     final borrower = await userRepository.get(id: loan.userId);

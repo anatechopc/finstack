@@ -111,6 +111,23 @@ class AdditionalLoanAmountEntity implements BaseEntity {
   )
   DateTime? approvedAt;
 
+  /// The lender's choice when the top-up was added to an open-term loan
+  /// with overdue bills (owner, 2026-11-19). Null when nothing was overdue
+  /// then, and on top-ups added before this field existed.
+  @JsonKey(name: 'overdue_choice')
+  OverdueChoice? overdueChoice;
+
+  /// What approval paid from the top-up's proceeds: the overdue bills plus
+  /// their penalties on the approval day. The cash released is the
+  /// proceeds (amount less deductions and advance charges) less this.
+  @JsonKey(name: 'overdue_deduction', defaultValue: 0.0)
+  double overdueDeduction = 0;
+
+  /// The confirmed payment documents of the bills paid from the top-up,
+  /// one per bill (each payment's `loan_schedule_id` names its row).
+  @JsonKey(name: 'deducted_payment_ids', defaultValue: <String>[])
+  List<String> deductedPaymentIds = [];
+
   Map<String, dynamic> toJson() {
     return _$AdditionalLoanAmountEntityToJson(this);
   }
@@ -131,6 +148,9 @@ class AdditionalLoanAmountEntity implements BaseEntity {
         loanId,
         status,
         approvedAt,
+        overdueChoice,
+        overdueDeduction,
+        deductedPaymentIds,
       ];
 
   @override
@@ -152,6 +172,9 @@ class AdditionalLoanAmountEntity implements BaseEntity {
       ..selfiePhotoUrl = selfiePhotoUrl
       ..signatureUrl = signatureUrl
       ..status = status
-      ..approvedAt = approvedAt;
+      ..approvedAt = approvedAt
+      ..overdueChoice = overdueChoice
+      ..overdueDeduction = overdueDeduction
+      ..deductedPaymentIds = List.of(deductedPaymentIds);
   }
 }

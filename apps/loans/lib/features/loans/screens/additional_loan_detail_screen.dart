@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loooans/features/loans/bloc/additional_loan_bloc.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
+import 'package:loooans/features/loans/widget/top_up_overdue_dialogs.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 import 'package:loooans/widgets/file_viewer_widget.dart';
@@ -168,44 +169,22 @@ class AdditionalLoanDetailScreen extends StatelessWidget {
                 foregroundColor: AppColors.green2,
                 child: const Text('Approve'),
                 onPressed: () async {
-                  final ok = await showDialog<bool>(
-                    context: context,
-                    builder: (context) {
-                      return AlertDialog(
-                        title: const Text('Are you sure?'),
-                        content: const Text(
-                          'Warning: You are about to approve the additional loan amount.\nPlease make sure this is your desired action.\nYou cannot undo this action.',
-                        ),
-                        actions: [
-                          AppWidgets.defaultFilledButton(
-                            backgroundColor: AppColors.green1,
-                            foregroundColor: AppColors.black,
-                            child: const Text('Approve'),
-                            onPressed: () {
-                              Navigator.of(context, rootNavigator: true)
-                                  .pop(true);
-                            },
-                          ),
-                          AppWidgets.defaultFilledButton(
-                            child: const Text('Cancel'),
-                            onPressed: () {
-                              Navigator.of(context, rootNavigator: true)
-                                  .pop(false);
-                            },
-                          ),
-                        ],
-                      );
-                    },
+                  // Shows a "deduct" top-up's overdue amount on the approval
+                  // day; the bloc refuses if it is no longer what was shown.
+                  final deduction = await showTopUpApprovalDialog(
+                    context,
+                    topUp: additionalLoan,
+                    loan: loan,
+                    schedules: context.read<LoansBloc>().clientLoanSchedules,
                   );
 
-                  if (ok ?? false) {
-                    if (context.mounted) {
-                      context.read<AdditionalLoanBloc>().updateAdditionalLoanAmount(
-                            loanId: loan.id,
-                            additionalLoanAmountId: additionalLoan.id,
-                            status: LoanStatus.approved,
-                          );
-                    }
+                  if (deduction != null && context.mounted) {
+                    context.read<AdditionalLoanBloc>().updateAdditionalLoanAmount(
+                          loanId: loan.id,
+                          additionalLoanAmountId: additionalLoan.id,
+                          status: LoanStatus.approved,
+                          expectedDeduction: deduction,
+                        );
                   }
                 },
               ),

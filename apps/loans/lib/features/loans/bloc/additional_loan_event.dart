@@ -13,6 +13,7 @@ final class AddLoanAmountEvent extends AdditionalLoanEvent {
     required this.selfiePhoto,
     required this.signatureBytes,
     this.description,
+    this.overdueChoice,
   });
 
   final String loanId;
@@ -22,6 +23,7 @@ final class AddLoanAmountEvent extends AdditionalLoanEvent {
   final List<Charge> deductions;
   final SimpleFileData selfiePhoto;
   final Uint8List signatureBytes;
+  final OverdueChoice? overdueChoice;
 
   @override
   List<Object?> get props => [
@@ -32,6 +34,7 @@ final class AddLoanAmountEvent extends AdditionalLoanEvent {
         deductions,
         selfiePhoto,
         signatureBytes,
+        overdueChoice,
       ];
 }
 
@@ -40,16 +43,19 @@ final class UpdateAdditionalLoanAmountEvent extends AdditionalLoanEvent {
     required this.loanId,
     required this.additionalLoanAmountId,
     required this.status,
+    this.expectedDeduction,
   });
 
   final String loanId;
   final String additionalLoanAmountId;
   final LoanStatus status;
+  final double? expectedDeduction;
 
   @override
   List<Object?> get props => [
         loanId,
         additionalLoanAmountId,
         status,
+        expectedDeduction,
       ];
 }
