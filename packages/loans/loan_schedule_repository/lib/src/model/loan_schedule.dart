@@ -101,6 +101,19 @@ class LoanSchedule extends LoanScheduleEntity
     return _isAdditionalLoanAmount;
   }
 
+  /// The open-term principal release: the in-memory row 0 ([isPlaceholder]),
+  /// or that row as approval stores it for app-managed companies, where
+  /// `isPlaceholder` is not kept: open term, the whole principal as its
+  /// principal and nothing to collect (finstack#138). It is not a bill and
+  /// can never be paid.
+  bool get isPrincipalRelease =>
+      !isAdditionalLoanAmount &&
+      (isPlaceholder ||
+          (isOpenTerm &&
+              principalPayment > 0 &&
+              interestCharge == 0 &&
+              amortization == 0));
+
   /// The date lateness and overdue status count from: [originalDueAt] when
   /// the open-term engine moved an overdue row's [dueAt] to today, otherwise
   /// [dueAt] (finstack#114).

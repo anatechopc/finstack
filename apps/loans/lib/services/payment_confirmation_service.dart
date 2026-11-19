@@ -87,6 +87,15 @@ class PaymentConfirmationService {
     return shares;
   }
 
+  /// Throws when [schedules] include the open-term principal release, which
+  /// is never a payment: recording it would book the whole principal as
+  /// repaid on the day it was released (finstack#138).
+  static void rejectPrincipalRelease(Iterable<LoanSchedule> schedules) {
+    if (schedules.any((s) => s.isPrincipalRelease)) {
+      throw Exception('The principal release is not a payment');
+    }
+  }
+
   /// A submitted open-term bill is settled, for the overdue stretch, at its
   /// transfer (review of #146): rows submitted before submissions recorded
   /// it on the row get it from their payment here, in memory.
@@ -128,6 +137,7 @@ class PaymentConfirmationService {
   }) async {
     final schedule =
         await loanScheduleRepository.get(id: payment.loanScheduleId);
+    rejectPrincipalRelease([schedule]);
     final loan = await loanRepository.get(id: schedule.loanId);
     // An open-term penalty is one per overdue stretch (R3): rows of the same
     // submission confirmed before this one are stored with their collection
@@ -151,11 +161,15 @@ class PaymentConfirmationService {
     payment.markConfirmed(confirmedById: confirmedById);
     await paymentRepository.update(data: payment);
 
-    // The borrower paid the amount shown. Recording it lets a row from the
-    // old clamp (more interest charged than shown) carry the rest to the
-    // next bill (R4; review of #146).
-    if (schedule.isOpenTerm && schedule.interestPayment <= 0) {
-      schedule.interestPayment = schedule.amortization;
+    // The borrower paid the amount shown, interest only: a submission
+    // carries no principal (#138: a planned row kept the whole principal as
+    // repaid). Recording the interest lets a row from the old clamp (more
+    // interest charged than shown) carry the rest to the next bill (R4).
+    if (schedule.isOpenTerm) {
+      schedule.principalPayment = 0;
+      if (schedule.interestPayment <= 0) {
+        schedule.interestPayment = schedule.amortization;
+      }
     }
 
     schedule

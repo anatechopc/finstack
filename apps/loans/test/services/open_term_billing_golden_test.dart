@@ -109,9 +109,10 @@ import 'package:loooans_helpers/data_helpers.dart';
 //        due_at Nov 5, interest Aug 1 -> Nov 5 = 96 days = 1,600 charged,
 //        500 due, 500 paid -> 1,100 never billed; after the paid Aug 1 row
 //        the next bill (Nov 29, 24 days, 400) owes 400 + 1,100 = 1,500,
-//        with or without original_due_at. With no earlier stored row the
-//        schedule continues from the clamp row's own date (second review):
-//        Dec 5, 30 days, 500 + 1,100 = 1,600.
+//        with or without original_due_at, and the same with no earlier
+//        stored row: a clamp row (paid on Nov 5) is not within a day of a
+//        scheduled date, so it does not move the schedule (third review;
+//        the second review's Dec 5, 1,600 is gone).
 //   G14m local calendar days in every zone: a loan created at Jul 2 00:30
 //        Manila (Jul 1 16:30 UTC) with its first bill stored by a Manila
 //        device (Aug 1 00:00 Manila = Jul 31 16:00 UTC): on a UTC device and
@@ -128,13 +129,30 @@ import 'package:loooans_helpers/data_helpers.dart';
 //        1,000-row cap could drop the current bill).
 //
 // Second review of #146
-//   G14p the schedule continues from the stored bills' cycle dates (run under
-//        TZ=UTC and TZ=Asia/Manila): (1) created Jul 2 00:30 Manila, first
-//        bill stored by the old engine on Jul 31 (it read the creation day
-//        in UTC) -> next bill 30 days after that row's day, 500.00 (was a
-//        16.67 bill due Aug 1 in Manila); (2) created Jul 2 10:00 Manila, a
-//        Manila-written Aug 1 row read on a UTC device -> 30 days, 500.00
-//        (was a 1-day bill due Aug 1 UTC).
+//   G14p the schedule follows the local creation day; a stored bill within
+//        one day of a scheduled date is that bill (third review). Run under
+//        TZ=UTC and TZ=Asia/Manila: (1) created Jul 2 00:30 Manila (Jul 1
+//        16:30 UTC), first bill stored by the old engine Jul 31 00:00 UTC:
+//          UTC: schedule Jul 31, Aug 30; the row is Jul 31 -> Aug 30, 30 d, 500
+//          Manila: schedule Aug 1, Aug 31; the row (local Jul 31) is the Aug
+//          1 bill -> Aug 31, interest from Jul 31 = 31 d, 516.67
+//        (2) created Jul 2 10:00 Manila, a Manila-written Aug 1 row (Jul 31
+//        16:00 UTC):
+//          UTC: schedule Aug 1, Aug 31; the row (local Jul 31) is the Aug 1
+//          bill -> Aug 31, 31 d, 516.67
+//          Manila: the row is Aug 1 -> Aug 31, 30 d, 500
+//        Never a 1-day bill (was 16.67 due Aug 1). The same loan shows its
+//        dates one day apart on a UTC and a Manila device (their calendars
+//        differ); the bills are the same ones.
+//   G14s an old app build's clamp row as the FIRST stored row does not move
+//        the schedule: loan of Jul 2, the Aug 1 bill paid Aug 9 by an old
+//        build (due_at Aug 9, no original_due_at, Jul 2 -> Aug 9 = 38 days,
+//        633.33 charged, 500 shown and paid -> 133.33 carried), seen Sep 5
+//        -> Aug 31 (Aug 9 -> Aug 31 = 22 days, 366.67, due 366.67 + 133.33 =
+//        500.00, missed) then Sep 30 (30 days, 500). The second review's
+//        anchor gave Sep 8 (30 days, 633.33) then Oct 8. As a second stored
+//        row (after a paid Aug 1 row, paid Sep 8 for the Aug 31 bill) it
+//        shifts nothing either: next Sep 30, 22 days, 366.67 + 133.33.
 //   G14q a top-up counts from its approval: 2,000 + 100 created Aug 6,
 //        approved Sep 5, the Aug 31 bill stored Aug 31 on 10,000 -> Sep 30 =
 //        12,100 x 5% + 2,100 x 5% x 25/30 (Aug 6-31, never billed) = 605 +
@@ -1069,8 +1087,8 @@ void main() {
     }
 
     test(
-        'a lone clamp row without original_due_at continues from its own '
-        'date: Dec 5, 500 + 1,100 = 1,600', () {
+        'a lone clamp row without original_due_at does not move the '
+        'schedule: Nov 29, 400 + 1,100 = 1,500', () {
       final rows = bills(
         amount: 10000,
         start: DateTime(2026, 7, 2),
@@ -1091,10 +1109,10 @@ void main() {
 
       expectBill(
         rows.single,
-        due: DateTime(2026, 12, 5),
-        days: 30,
-        interest: 500,
-        amountDue: 1600,
+        due: DateTime(2026, 11, 29),
+        days: 24,
+        interest: 400,
+        amountDue: 1500,
       );
     });
   });
@@ -1191,8 +1209,11 @@ void main() {
     );
   });
 
-  group('G14p the schedule continues from the stored bills (UTC and Manila)',
-      () {
+  group(
+      'G14p a stored bill within a day of its date is that bill (UTC and '
+      'Manila)', () {
+    /// The next bill is the creation day + 60 in the device's calendar, its
+    /// interest from the stored row's day (30 or 31 days), never 1 day.
     void expectNextIn30Days(DateTime created, LoanSchedule storedFirst) {
       final next = bills(
         amount: 10000,
@@ -1201,13 +1222,16 @@ void main() {
         now: DateTime.utc(2026, 8, 20),
         storedRows: [storedFirst],
       );
+      final due = DateUtils.addDaysToDate(dayOf(created.toLocal()), 60);
+      final days = due.difference(dayOf(storedFirst.dueAt.toLocal())).inDays;
 
       expect(next, hasLength(1), reason: 'no 1-day bill');
-      expect(next.single.interestDayMultiplier * 30, closeTo(30, 1e-9));
-      expect(next.single.interestCharge, closeTo(500, 0.01));
+      expect(days, inInclusiveRange(29, 31));
+      expect(dayOf(next.single.dueAt), due);
+      expect(next.single.interestDayMultiplier * 30, closeTo(days, 1e-9));
       expect(
-        dayOf(next.single.dueAt),
-        DateUtils.addDaysToDate(dayOf(storedFirst.dueAt.toLocal()), 30),
+        next.single.interestCharge,
+        closeTo(10000 * 0.05 * days / 30, 0.01),
       );
     }
 
@@ -1343,5 +1367,59 @@ void main() {
         expect(rows.map((r) => r.daysLate), [35, 5]);
       });
     }
+  });
+
+  group("G14s an old build's clamp row does not move the schedule", () {
+    LoanSchedule clampRow(DateTime dueAt) => stored(
+          id: 'clamp',
+          dueAt: dueAt,
+          balance: 10000,
+          status: LoanStatus.paid_late,
+          interestCharge: 633.33,
+          amortization: 500,
+          interestPayment: 500,
+        );
+
+    test('as the first stored row: Aug 31 (22 days, 500 due), then Sep 30', () {
+      final rows = bills(
+        amount: 10000,
+        start: DateTime(2026, 7, 2),
+        term: '1m',
+        now: DateTime(2026, 9, 5, 12),
+        storedRows: [clampRow(DateTime(2026, 8, 9))],
+      );
+
+      expect(rows, hasLength(2));
+      expectBill(
+        rows[0],
+        due: DateTime(2026, 8, 31),
+        days: 22,
+        interest: 366.67,
+        amountDue: 500,
+      );
+      expectBill(rows[1], due: DateTime(2026, 9, 30), days: 30, interest: 500);
+    });
+
+    test('as the second stored row: Sep 30, 22 days', () {
+      final rows = bills(
+        amount: 10000,
+        start: DateTime(2026, 7, 2),
+        term: '1m',
+        now: DateTime(2026, 9, 10, 12),
+        storedRows: [
+          stored(id: 'sched-1', dueAt: DateTime(2026, 8), balance: 10000),
+          clampRow(DateTime(2026, 9, 8)),
+        ],
+      );
+
+      expect(rows, hasLength(1));
+      expectBill(
+        rows.single,
+        due: DateTime(2026, 9, 30),
+        days: 22,
+        interest: 366.67,
+        amountDue: 500,
+      );
+    });
   });
 }

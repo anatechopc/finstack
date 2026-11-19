@@ -195,9 +195,9 @@ class LoanCalculationService {
   ///
   /// Owner rules R1-R5 (2026-11-14 to 2026-11-19; golden set G14):
   /// - R1: a bill keeps its scheduled date. `'1m'` and `'15d'` bills fall
-  ///   every 30 or 15 calendar days from the earliest stored bill's cycle
-  ///   date, or from [date] (the loan's creation day) when nothing is
-  ///   stored, the way the first bill always did; salary-day terms (`'D1,D2'`) fall
+  ///   every 30 or 15 calendar days from [date] (the loan's local creation
+  ///   day), the way the first bill always did; a stored bill within one
+  ///   day of a scheduled date counts as that bill; salary-day terms (`'D1,D2'`) fall
   ///   on the next salary day after the previous bill (the month's last day
   ///   when the salary day does not exist). Never from today or from a
   ///   payment date (finstack#144). All days are local calendar days.
@@ -238,14 +238,8 @@ class LoanCalculationService {
     List<AdditionalLoanAmount> additionalLoans = const [],
   }) {
     final monthlyInterestRate = interestRate / 100;
-    final stored = paidSchedules.sortedBy((sched) => sched.dueAt);
-    final last = stored.lastOrNull;
-    // The schedule continues from the stored bills' own cycle dates: a first
-    // bill stored by the old engine was anchored on the creation day in UTC,
-    // and re-deriving the anchor from the local creation day would add a
-    // 1-day bill (review of #146). With no stored bill, the local creation
-    // day.
-    final start = _localDay(stored.firstOrNull?.lateFrom ?? date);
+    final last = paidSchedules.sortedBy((sched) => sched.dueAt).lastOrNull;
+    final start = _localDay(date);
     final today = _localDay(now ?? DateTime.now());
 
     var balance = last?.outstandingBalance ?? amount;
@@ -268,6 +262,7 @@ class LoanCalculationService {
       term: term,
       start: start,
       after: cycleStart,
+      lastBill: last == null ? null : _localDay(last.lateFrom),
     )) {
       var interestCharge = 0.0;
       var from = cycleStart;
@@ -332,13 +327,21 @@ class LoanCalculationService {
 
   /// R1: the scheduled bill dates after [after], in order, one at a time.
   /// `'D1,D2'` are the salary days of each month (the month's last day when
-  /// one does not exist); `'15d'` steps 15 calendar days from [start],
-  /// anything else 30. Calendar days, so a daylight-saving change cannot
-  /// move a date (campaign D11).
+  /// one does not exist); `'15d'` steps 15 calendar days from [start] (the
+  /// local creation day), anything else 30. Calendar days, so a
+  /// daylight-saving change cannot move a date (campaign D11).
+  ///
+  /// [lastBill] is the last stored row's cycle date. Within one day of a
+  /// scheduled date it is that bill (a first bill the old engine dated on
+  /// the creation day's UTC date, or a row written in another zone), so the
+  /// schedule goes on with the next date instead of adding a 1-day bill. A
+  /// row further away (an old clamp row, dated the day it was paid) does
+  /// not move the schedule (review of #146).
   static Iterable<Jiffy> _openTermDueDates({
     required String term,
     required Jiffy start,
     required Jiffy after,
+    Jiffy? lastBill,
   }) sync* {
     if (term.contains(',')) {
       yield* _salaryDueDates(term: term, after: after);
@@ -350,6 +353,14 @@ class LoanCalculationService {
           DateTime(start.year, start.month, start.date + step * cycle),
         );
     var cycle = 1;
+    if (lastBill != null) {
+      while (_days(billOn(cycle), lastBill) > 1) {
+        cycle++;
+      }
+      if (_days(lastBill, billOn(cycle)) <= 1) {
+        cycle++; // the stored row is this bill
+      }
+    }
     while (!billOn(cycle).isAfter(after)) {
       cycle++;
     }

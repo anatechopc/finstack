@@ -48,7 +48,8 @@ class PaymentSubmissionBloc
     emit(state.copyWith(status: PaymentSubmissionStatus.submitting));
     try {
       final userId = authService.user.id;
-      if (event.schedules.isEmpty) {
+      if (event.schedules.isEmpty ||
+          event.schedules.any((s) => s.isPrincipalRelease)) {
         emit(
           state.copyWith(
             status: PaymentSubmissionStatus.error,

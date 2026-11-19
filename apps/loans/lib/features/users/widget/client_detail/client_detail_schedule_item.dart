@@ -4,11 +4,13 @@ import 'package:gap/gap.dart';
 import 'package:jiffy/jiffy.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
+import 'package:loooans/features/products/screen/loan_schedule_widget.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/loan_calculation_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
+import 'package:loooans_helpers/data_helpers.dart';
 
 class ClientDetailScheduleItem extends StatelessWidget {
   const ClientDetailScheduleItem({
@@ -42,6 +44,15 @@ class ClientDetailScheduleItem extends StatelessWidget {
     // Open-term placeholders carry their own meaningful status.
     if (schedule.isPlaceholder) {
       return schedule.status.label;
+    }
+
+    // A pending application's projected bill: no money was released.
+    final currentLoan = loan;
+    if (schedule.isOpenTerm &&
+        schedule.id == NO_ID &&
+        currentLoan != null &&
+        currentLoan.status == LoanStatus.pending) {
+      return LoanScheduleWidget.projectedLabel;
     }
 
     // Payment-meaningful statuses render as-is.
@@ -406,8 +417,11 @@ class ClientDetailScheduleItem extends StatelessWidget {
 
     // Placeholder rows (the principal release and top-ups) are not
     // installments: paying the principal release would record the whole
-    // principal as repaid on the loan's creation day.
-    if (schedule.paidAt == null && !schedule.isPlaceholder) {
+    // principal as repaid on the loan's creation day. That includes the
+    // release row approval stores for app-managed companies (#138).
+    if (schedule.paidAt == null &&
+        !schedule.isPlaceholder &&
+        !schedule.isPrincipalRelease) {
       return Opacity(
         opacity: showMakePaymentButton ? 1.0 : 0.0,
         child: AppWidgets.defaultOutlinedButton(

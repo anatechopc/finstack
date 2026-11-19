@@ -28,6 +28,7 @@ LoanSchedule _schedule(String id, {LoanStatus status = LoanStatus.not_paid}) =>
       ..loanId = 'loan-1'
       ..status = status
       ..dueAt = DateTime.now().add(const Duration(days: 5))
+      ..isOpenTerm = false
       ..amortization = 100;
 
 void main() {
@@ -90,6 +91,50 @@ void main() {
       newSubmissionId: () => 'sub-1',
     );
   }
+
+  blocTest<PaymentSubmissionBloc, PaymentSubmissionState>(
+    'the open-term principal release (as approval stores it) is never '
+    'submitted (#138)',
+    build: build,
+    act: (b) => b.add(
+      SubmitPaymentEvent(
+        schedules: [
+          _schedule('planned', status: LoanStatus.approved)
+            ..isOpenTerm = true
+            ..principalPayment = 10000
+            ..interestCharge = 0
+            ..amortization = 0,
+        ],
+        loanId: 'loan-1',
+        fileBytes: bytes,
+        fileName: 'p.jpg',
+        bankDetailsId: 'bd-1',
+      ),
+    ),
+    expect: () => [
+      isA<PaymentSubmissionState>().having(
+        (s) => s.status,
+        'status',
+        PaymentSubmissionStatus.submitting,
+      ),
+      isA<PaymentSubmissionState>().having(
+        (s) => s.status,
+        'status',
+        PaymentSubmissionStatus.error,
+      ),
+    ],
+    verify: (_) {
+      verifyNever(
+        () => storage.upload(
+          data: any(named: 'data'),
+          folder: any(named: 'folder'),
+          fileName: any(named: 'fileName'),
+          includeOriginal: any(named: 'includeOriginal'),
+        ),
+      );
+      verifyNever(() => payments.add(data: any(named: 'data')));
+    },
+  );
 
   blocTest<PaymentSubmissionBloc, PaymentSubmissionState>(
     'Pay now uploads proof + creates ONE pending payment for the next schedule',

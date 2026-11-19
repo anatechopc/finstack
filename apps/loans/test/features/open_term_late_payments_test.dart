@@ -201,6 +201,31 @@ LoanSchedule rejectedSubmission({
   return LoanScheduleEntity.fromJson(row.toJson()).toLoanSchedule();
 }
 
+/// The open-term principal release as approval stores it for app-managed
+/// companies (#138): open term, the whole principal as principal_payment,
+/// nothing to collect, no isPlaceholder.
+LoanSchedule storedRelease({
+  required DateTime createdAt,
+  LoanStatus status = LoanStatus.approved,
+}) =>
+    LoanSchedule()
+      ..id = 'planned'
+      ..loanId = 'loan-1'
+      ..companyId = 'co-1'
+      ..createdAt = createdAt
+      ..updatedAt = createdAt
+      ..dueAt = createdAt
+      ..status = status
+      ..isOpenTerm = true
+      ..outstandingBalance = 0
+      ..principalPayment = 10000
+      ..interestPayment = 0
+      ..interestCharge = 0
+      ..amortization = 0
+      ..extraPayment = 0
+      ..advanceInterestPayments = 0
+      ..interestDayMultiplier = 1;
+
 class _Users extends Mock implements UserRepository {}
 
 class _Loans extends Mock implements LoanRepository {}
@@ -359,6 +384,30 @@ void main() {
     expect(find.textContaining('3,900.00 penalty'), findsOneWidget);
     expect(find.textContaining('penalty'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      "borrower schedule table: a pending application's projected "
+      'bill', (tester) async {
+    final loan = openTermLoan(createdAt: daysFromToday(-68))
+      ..status = LoanStatus.pending;
+    await tester.pumpApp(
+      LoanScheduleWidget(
+        amortization: 500,
+        schedules: clientRowsNow(loan, const [])
+            .where((r) => !r.isPlaceholder)
+            .toList(),
+        completeTerm: 'Open term',
+        buildTable: true,
+        tableHeight: 2 * LoanScheduleWidget.rowHeight,
+        loan: loan,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text(LoanScheduleWidget.projectedLabel), findsOneWidget);
+    expect(find.text(LoanStatus.not_paid_overdue.label), findsNothing);
+    expect(find.textContaining('penalty'), findsNothing);
   });
 
   group('payment dialog breakdown (PaymentPenaltySection)', () {
@@ -1281,6 +1330,27 @@ void main() {
       expect(buttons.map((b) => b.onPressed), everyElement(isNull));
       expect(find.textContaining('penalty'), findsNothing);
       expect(borrowerAmountsDue(schedules: rows, loan: loan).unpaid, isEmpty);
+      // Its money was never released: projected, not overdue.
+      expect(find.text(LoanScheduleWidget.projectedLabel), findsOneWidget);
+      expect(find.text('Overdue'), findsNothing);
+    });
+
+    testWidgets(
+        'the principal release approval stored has no Make payment '
+        '(#138)', (tester) async {
+      final loan = openTermLoan(createdAt: daysFromToday(-68));
+      final release = storedRelease(createdAt: daysFromToday(-68));
+      final rows = clientRowsNow(loan, [release]);
+      await pumpButtons(tester, loan, [release]);
+
+      expect(find.text('Make payment'), findsNothing);
+      expect(
+        borrowerAmountsDue(schedules: rows, loan: loan)
+            .unpaid
+            .any((r) => r.id == 'planned'),
+        isFalse,
+        reason: "not the borrower's next payment either",
+      );
     });
 
     testWidgets('a settled loan: no bill, no Make payment, no penalty',
@@ -1365,6 +1435,32 @@ void main() {
       expect(
         rows.skip(1).map((r) => DateUtils.dateOnly(r.dueAt)),
         [daysFromToday(-8), daysFromToday(22)],
+      );
+    });
+
+    test(
+        'a principal release left unpaid by a rejected submission is not '
+        'listed (#138)', () async {
+      when(
+        () => schedules.allByLoanId(
+          loanId: any(named: 'loanId'),
+          onlyPaid: any(named: 'onlyPaid'),
+        ),
+      ).thenAnswer(
+        (_) async => [
+          storedRelease(
+            createdAt: daysFromToday(-68),
+            status: LoanStatus.not_paid_overdue,
+          ),
+          paidCycle(daysFromToday(-38)),
+        ],
+      );
+      final bloc = await selected();
+
+      expect(
+        bloc.state.borrowerLoans.single.actionableSchedules
+            .any((r) => r.id == 'planned'),
+        isFalse,
       );
     });
 
@@ -1515,6 +1611,9 @@ void main() {
 
           for (final id in ['A', 'B']) {
             final row = read(id);
+            // A submission is interest only: the interest due, principal 0.
+            expect(row.principalPayment, 0, reason: id);
+            expect(row.interestPayment, closeTo(500, 0.01), reason: id);
             expect(row.status, LoanStatus.paid_late, reason: id);
             expect(row.daysLate, 8, reason: id);
             expect(row.penalty, closeTo(900, 0.01), reason: id);
@@ -1644,6 +1743,36 @@ void main() {
       expect(DateUtils.dateOnly(next.dueAt), DateTime(2026, 11, 29));
       expect(next.interestCharge, closeTo(400, 0.01));
       expect(next.amortization, closeTo(1500, 0.01));
+    });
+
+    test('the principal release is never confirmed as a payment (#138)',
+        () async {
+      stored = {
+        'planned': storedRelease(
+          createdAt: DateTime(2026, 7, 2),
+          status: LoanStatus.payment_submitted,
+        ).toJson(),
+      };
+      paymentDocs = {
+        'pay-planned': Payment()
+          ..id = 'pay-planned'
+          ..loanScheduleId = 'planned'
+          ..createdAt = DateTime(2026, 7, 5)
+          ..status = PaymentStatus.pending,
+      };
+
+      await expectLater(
+        service.confirm(
+          payment: paymentDocs['pay-planned']!,
+          confirmedById: 'teller-1',
+        ),
+        throwsException,
+      );
+      final row = read('planned');
+      expect(row.status, LoanStatus.payment_submitted);
+      expect(row.paymentId, isNull, reason: 'not linked to a payment');
+      expect(paymentDocs['pay-planned']!.status, PaymentStatus.pending);
+      expect(loanStatuses, isEmpty);
     });
 
     test('reject B: the row is unpaid and overdue again, not settled',

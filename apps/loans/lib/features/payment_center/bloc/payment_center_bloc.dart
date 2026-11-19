@@ -98,8 +98,9 @@ class PaymentCenterBloc extends Bloc<PaymentCenterEvent, PaymentCenterState> {
     on<SelectBorrowerEvent>(_handleSelectBorrowerEvent);
     on<RequestOtpEvent>(_handleRequestOtpEvent);
     on<VerifyOtpEvent>(_handleVerifyOtpEvent);
-    // Writes every row before its cash-pool step, which needs the
-    // unmockable cash-pool repository: a test reads the rows it wrote.
+    // Write every row before their cash-pool step, which needs the
+    // unmockable cash-pool repository: a test reads the rows they wrote.
+    on<MakePaymentEvent>(_handleMakePaymentEvent);
     on<MakeOverduePaymentEvent>(_handleMakeOverduePaymentEvent);
   }
 
@@ -578,12 +579,14 @@ class PaymentCenterBloc extends Bloc<PaymentCenterEvent, PaymentCenterState> {
           .toList();
     }
 
-    // Also include any persisted unpaid schedules from Firestore
+    // Also include any persisted unpaid schedules from Firestore, but never
+    // the principal release a rejected submission left unpaid (#138).
     final persistedUnpaid = persistedSchedules
         .where(
           (s) =>
-              s.status == LoanStatus.not_paid ||
-              s.status == LoanStatus.not_paid_overdue,
+              !s.isPrincipalRelease &&
+              (s.status == LoanStatus.not_paid ||
+                  s.status == LoanStatus.not_paid_overdue),
         )
         .toList();
 
@@ -791,6 +794,7 @@ class PaymentCenterBloc extends Bloc<PaymentCenterEvent, PaymentCenterState> {
         throw Exception('A reason is required to waive penalties');
       }
 
+      PaymentConfirmationService.rejectPrincipalRelease([event.schedule]);
       final schedule = event.schedule
         ..paidAt = DateTime.timestamp()
         ..loanId = loan.id;
@@ -949,6 +953,7 @@ class PaymentCenterBloc extends Bloc<PaymentCenterEvent, PaymentCenterState> {
       if (event.waivePenalty && (event.waiveReason?.trim().isEmpty ?? true)) {
         throw Exception('A reason is required to waive penalties');
       }
+      PaymentConfirmationService.rejectPrincipalRelease(event.schedules);
 
       final proof = event.otpVerified
           ? (null, null, await _buildOtpComment(loan))

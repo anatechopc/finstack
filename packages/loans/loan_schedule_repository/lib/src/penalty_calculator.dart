@@ -101,6 +101,7 @@ PenaltyResult previewPenalty({
   List<LoanSchedule> loanRows = const [],
 }) {
   if (!_unpaidStatuses.contains(schedule.status) ||
+      schedule.isPrincipalRelease ||
       schedule.isPlaceholder ||
       loan.allowLatePayments) {
     return PenaltyResult.none;
@@ -217,7 +218,7 @@ LatenessResult _resolveLateness({
   required List<LoanSchedule> loanRows,
   List<LoanSchedule> paidNow = const [],
 }) {
-  if (schedule.isPlaceholder) {
+  if (schedule.isPlaceholder || schedule.isPrincipalRelease) {
     return const LatenessResult(
       daysLate: 0,
       isLate: false,
@@ -416,7 +417,9 @@ double Function(DateTime day) _balanceOn({
 }
 
 bool _isOpenTermBill(LoanSchedule schedule) =>
-    schedule.isOpenTerm && !schedule.isPlaceholder;
+    schedule.isOpenTerm &&
+    !schedule.isPlaceholder &&
+    !schedule.isPrincipalRelease;
 
 bool _sameRow(LoanSchedule a, LoanSchedule b) =>
     identical(a, b) || (a.id != NO_ID && a.id == b.id);

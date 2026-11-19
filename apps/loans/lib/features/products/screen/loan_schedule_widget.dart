@@ -9,6 +9,7 @@ import 'package:loooans/services/loan_calculation_service.dart';
 import 'package:loooans/utils/constants.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
+import 'package:loooans_helpers/data_helpers.dart';
 import 'package:two_dimensional_scrollables/two_dimensional_scrollables.dart';
 
 class LoanScheduleWidget extends StatelessWidget {
@@ -256,6 +257,17 @@ class LoanScheduleWidget extends StatelessWidget {
     ];
   }
 
+  /// Status of a pending application's projected open-term bill: its money
+  /// was never released, so it is neither due nor overdue.
+  static const projectedLabel = 'Projected';
+
+  static bool _isProjected(LoanSchedule schedule, Loan? loan) =>
+      schedule.isOpenTerm &&
+      !schedule.isPlaceholder &&
+      schedule.id == NO_ID &&
+      loan != null &&
+      loan.status == LoanStatus.pending;
+
   /// Borrower-facing status for a schedule row. Shows the real payment state
   /// (Payment submitted / Paid on time / Paid late); anything else (not_paid,
   /// or a loan-level status that leaked onto a persisted schedule) is presented
@@ -270,6 +282,9 @@ class LoanScheduleWidget extends StatelessWidget {
     };
     if (realPaymentStatuses.contains(schedule.status)) {
       return schedule.status.label;
+    }
+    if (_isProjected(schedule, loan)) {
+      return projectedLabel;
     }
     return schedule.lateFrom.isBefore(DateTime.now())
         ? LoanStatus.not_paid_overdue.label

@@ -59,6 +59,7 @@ import 'package:user_loan_view_repository/user_loan_view_repository.dart';
         (s) =>
             bills &&
             !s.isPlaceholder &&
+            !s.isPrincipalRelease &&
             s.status != LoanStatus.paid_on_time &&
             s.status != LoanStatus.paid_late &&
             s.status != LoanStatus.payment_submitted,

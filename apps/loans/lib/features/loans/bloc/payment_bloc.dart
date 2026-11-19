@@ -133,6 +133,7 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
           throw Exception('A reason is required to waive penalties');
         }
 
+        PaymentConfirmationService.rejectPrincipalRelease([event.schedule]);
         final schedule = event.schedule
           ..paidAt = DateTime.timestamp()
           ..loanId = loan.id;
