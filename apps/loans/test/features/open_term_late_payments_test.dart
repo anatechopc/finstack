@@ -42,15 +42,24 @@ import '../helpers/helpers.dart';
 // 30-day step lands an hour off and the cycle falls on the previous calendar
 // day (campaign D11), so these relative scenarios count 9 days, not 8.
 //
-// Rejected submission (review of #143): the borrower submitted on the
-// overdue cycle 2 days before "today" and the lender rejected it. The row
-// computed that day is stored with its id: billed as due that day, 36 days
-// of interest = 600, original due date 8 days before today. The Payment
-// Center must show it as ONE row (the stored one): penalty 900, interest
-// 600 once. Before the fix it also regenerated the cycle: 900 + 900 =
-// 1,800 and 600 + 633.33 of interest (develop: 300 and the same doubled
-// interest). A row stored before #114 has no original due date and counts
-// from its own due date: still one row, 100 + 100 x 2 = 300.
+// Rejected submission (reviews of #143): the borrower submitted on an
+// overdue cycle and the lender rejected it; the row computed that day is
+// stored with its id. Like LoansBloc, the Payment Center now hands every
+// stored row to the engine as a past cycle, so all screens show the same
+// rows and the stored row is never duplicated.
+//   Submitted 2 days ago (paid cycle 38 days ago): stored row billed as due
+//   that day, 36 days of interest = 600, original due date 8 days ago ->
+//   overdue, 100 + 100 x 8 = 900; the next cycle (2 days ago + 30) is
+//   upcoming, 0. (First fix: one row, 900; before it 900 + 900 = 1,800 and
+//   600 + 633.33 interest; develop 300.) A row stored before #114 has no
+//   original due date: 100 + 100 x 2 = 300.
+//   Submitted 45 days ago (paid cycle 80 days ago): stored row billed as due
+//   45 days ago, 35 days of interest = 583.33, original due 50 days ago ->
+//   100 + 100 x 50 = 5,100; next cycle due 45 - 30 = 15 days ago, billed
+//   today, 45 days of interest = 750 -> 100 + 100 x 15 = 1,600; together
+//   6,700, and Pay in full 500 + 500 + 6,700 = 7,700 on every screen. (The
+//   first fix's "after the last paid row" merge showed the Payment Center 1
+//   row, 5,100.)
 
 const lateFee100 = Penalty(id: 'late-fee', name: 'Late fee', amount: 100);
 const daily1pct = Penalty(
@@ -61,7 +70,9 @@ const daily1pct = Penalty(
   frequency: PenaltyFrequency.daily,
 );
 
-final DateTime today = DateUtils.dateOnly(DateTime.now());
+/// Read on every use, so a run that crosses midnight stays consistent with
+/// the engine's own clock.
+DateTime get today => DateUtils.dateOnly(DateTime.now());
 
 DateTime daysFromToday(int days) => DateUtils.addDaysToDate(today, days);
 
@@ -366,6 +377,35 @@ void main() {
       expect(due.remainingPenalty, 0);
     });
 
+    test('a top-up row is not an installment: only the cycle is due', () {
+      final loan = openTermLoan(createdAt: DateTime(2026, 7, 2))
+        ..additionalLoanAmounts = [
+          AdditionalLoanAmount()
+            ..id = 'top-1'
+            ..amount = 2000
+            ..additionalCharges = 0
+            ..advanceCharges = 0
+            ..createdAt = DateTime(2026, 8, 20)
+            ..status = LoanStatus.approved,
+        ];
+      final schedules = clientSchedules(loan);
+      expect(schedules.where((s) => s.isAdditionalLoanAmount), hasLength(1));
+
+      final due = borrowerAmountsDue(
+        schedules: schedules,
+        loan: loan,
+        asOf: sep8,
+      );
+
+      expect(due.unpaid, hasLength(1));
+      expect(due.unpaid.single.isPlaceholder, isFalse);
+      expect(
+        due.remainingTotal,
+        closeTo(due.nextDueAmount, 0.01),
+        reason: "the top-up row's copied amortization is not added",
+      );
+    });
+
     test('a rejected submission: client detail and borrower count 900 once',
         () {
       // Submitted Sep 6 on the cycle due Aug 31, rejected. LoansBloc hands
@@ -410,6 +450,7 @@ void main() {
   group('Payment Center (bloc): overdue open-term row', () {
     late _Loans loans;
     late _Schedules schedules;
+    var loanCreatedDaysAgo = 68;
 
     setUpAll(() {
       registerFallbackValue(Loan());
@@ -418,6 +459,7 @@ void main() {
     setUp(() {
       loans = _Loans();
       schedules = _Schedules();
+      loanCreatedDaysAgo = 68;
       when(
         () => loans.load(
           statements: any(named: 'statements'),
@@ -429,7 +471,7 @@ void main() {
         final statements =
             invocation.namedArguments[#statements] as List<QueryStatement>;
         return statements.first.field == 'user_id'
-            ? [openTermLoan(createdAt: daysFromToday(-68))]
+            ? [openTermLoan(createdAt: daysFromToday(-loanCreatedDaysAgo))]
             : <Loan>[];
       });
       when(
@@ -512,25 +554,33 @@ void main() {
     });
 
     group('after a rejected submission', () {
-      void storedRows({bool storedBefore114 = false}) {
+      /// The paid cycle and a submission on the next cycle that was rejected,
+      /// as Firestore returns them.
+      List<LoanSchedule> storedRows({
+        required int paidDaysAgo,
+        required int submittedDaysAgo,
+        bool storedBefore114 = false,
+      }) =>
+          [
+            paidCycle(daysFromToday(-paidDaysAgo)),
+            rejectedSubmission(
+              paidDue: daysFromToday(-paidDaysAgo),
+              submittedAt: daysFromToday(-submittedDaysAgo)
+                  .add(const Duration(hours: 12)),
+              storedBefore114: storedBefore114,
+            ),
+          ];
+
+      void stubStored(List<LoanSchedule> Function() rows) {
         when(
           () => schedules.allByLoanId(
             loanId: any(named: 'loanId'),
             onlyPaid: any(named: 'onlyPaid'),
           ),
-        ).thenAnswer(
-          (_) async => [
-            paidCycle(daysFromToday(-38)),
-            rejectedSubmission(
-              paidDue: daysFromToday(-38),
-              submittedAt: daysFromToday(-2).add(const Duration(hours: 12)),
-              storedBefore114: storedBefore114,
-            ),
-          ],
-        );
+        ).thenAnswer((_) async => rows());
       }
 
-      double penaltyOf(List<LoanSchedule> rows) => rows.fold<double>(
+      double penaltyOf(Iterable<LoanSchedule> rows) => rows.fold<double>(
             0,
             (sum, r) =>
                 sum +
@@ -541,27 +591,112 @@ void main() {
                 ).penalties.total,
           );
 
-      test('the stored row is the cycle: one row, 900, interest once',
+      Iterable<LoanSchedule> overdueOf(List<LoanSchedule> rows) =>
+          rows.where((r) => r.status == LoanStatus.not_paid_overdue);
+
+      test('the stored row is the overdue cycle: 900, interest once',
           () async {
-        storedRows();
+        stubStored(() => storedRows(paidDaysAgo: 38, submittedDaysAgo: 2));
         final rows = await actionable();
 
-        expect(rows, hasLength(1));
-        expect(rows.single.id, 'sched-2');
-        expect(rows.single.interestCharge, closeTo(600, 0.01));
+        expect(overdueOf(rows).map((r) => r.id), ['sched-2']);
+        expect(rows.first.interestCharge, closeTo(600, 0.01));
         expect(penaltyOf(rows), closeTo(900, 0.01));
+        // The next cycle (2 days ago + 30) is upcoming, as on client detail.
+        expect(rows, hasLength(2));
+        expect(rows.last.status, LoanStatus.not_paid);
+        expect(rows.last.lateFrom, daysFromToday(28));
       });
 
-      test('a row stored before #114 is still one row (300 from its date)',
+      test('a row stored before #114 counts from its own date (300)',
           () async {
-        storedRows(storedBefore114: true);
+        stubStored(
+          () => storedRows(
+            paidDaysAgo: 38,
+            submittedDaysAgo: 2,
+            storedBefore114: true,
+          ),
+        );
         final rows = await actionable();
 
-        expect(rows, hasLength(1));
-        expect(rows.single.id, 'sched-2');
-        expect(rows.single.originalDueAt, isNull);
+        expect(overdueOf(rows).map((r) => r.id), ['sched-2']);
+        expect(rows.first.originalDueAt, isNull);
         expect(penaltyOf(rows), closeTo(300, 0.01));
       });
+
+      test('a rejection more than a term old: the Payment Center, client '
+          'detail and the borrower show the same 2 rows, 6,700', () async {
+        stubStored(() => storedRows(paidDaysAgo: 80, submittedDaysAgo: 45));
+        loanCreatedDaysAgo = 110;
+
+        final paymentCenter = await actionable();
+        expect(overdueOf(paymentCenter), hasLength(2));
+        expect(paymentCenter.first.id, 'sched-2');
+        expect(paymentCenter.first.interestCharge, closeTo(583.33, 0.01));
+        expect(paymentCenter.last.lateFrom, daysFromToday(-15));
+        expect(paymentCenter.last.interestCharge, closeTo(750, 0.01));
+        expect(penaltyOf(paymentCenter), closeTo(6700, 0.01));
+
+        // What LoansBloc computes for client detail and the borrower: every
+        // stored row goes to the engine (loans_bloc.dart, _calculateLoanOpen).
+        final loan = openTermLoan(createdAt: daysFromToday(-110));
+        final clientSchedules = LoanCalculationService.calculateOpenTerm(
+          amount: 10000,
+          date: loan.createdAt,
+          interestRate: 5,
+          term: '1m',
+          companyId: 'co-1',
+          paidSchedules: storedRows(paidDaysAgo: 80, submittedDaysAgo: 45),
+          loan: loan,
+          now: DateTime.now(),
+        ).schedules;
+        final due = borrowerAmountsDue(schedules: clientSchedules, loan: loan);
+
+        expect(
+          due.unpaid.map((r) => r.lateFrom),
+          paymentCenter.map((r) => r.lateFrom),
+        );
+        expect(due.remainingPenalty, closeTo(6700, 0.01));
+        expect(due.remainingTotal, closeTo(7700, 0.01));
+        expect(
+          clientSchedules.fold<double>(
+            0,
+            (sum, s) => sum + previewPenalty(schedule: s, loan: loan).total,
+          ),
+          closeTo(6700, 0.01),
+        );
+      });
+    });
+
+    test('fixed-term rows merge by the day in the business zone (UTC+8)', () {
+      // Every test runs under TZ=UTC, so the zone is passed in. A row stored
+      // for Sep 15 in Manila comes back from Firestore as Sep 14 16:00Z; the
+      // row regenerated on a Manila device reads Sep 15. One cycle.
+      LoanSchedule fixedRow(DateTime dueAt, {String id = NO_ID}) =>
+          LoanSchedule()
+            ..id = id
+            ..dueAt = dueAt
+            ..status = LoanStatus.not_paid
+            ..isOpenTerm = false;
+      const manila = Duration(hours: 8);
+
+      final merged = PaymentCenterBloc.mergeUnpaid(
+        [fixedRow(DateTime.utc(2026, 9, 14, 16), id: 'sched-3')],
+        [fixedRow(DateTime(2026, 9, 15)), fixedRow(DateTime(2026, 10, 15))],
+        utcOffset: manila,
+      );
+      expect(merged.map((s) => s.id), ['sched-3', NO_ID]);
+      expect(merged.last.dueAt, DateTime(2026, 10, 15));
+
+      // 15:59Z is still Sep 14 in Manila: a different cycle.
+      expect(
+        PaymentCenterBloc.mergeUnpaid(
+          [fixedRow(DateTime.utc(2026, 9, 14, 15, 59), id: 'sched-3')],
+          [fixedRow(DateTime(2026, 9, 15))],
+          utcOffset: manila,
+        ),
+        hasLength(2),
+      );
     });
   });
 }
