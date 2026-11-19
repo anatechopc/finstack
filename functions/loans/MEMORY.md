@@ -4,6 +4,12 @@ Log of work done on the loans Cloud Functions (Go backend).
 
 ---
 
+## Fixed-term balance repair tool for #140 (2026-11-19)
+
+Branch `fix/fixed-term-payments-140` (with the app fix). `cmd/repair_fixed_balance`: required `-env dev|stg|prod`; default dry run lists each row a teller payment stored with the principal subtracted twice (teller-paid fixed-term row whose `outstanding_balance` = previous − P − (P − extra) within 0.005; correct = previous − P, chained through earlier rewritten rows; first row's previous = amount + additional_charges − deductions). `-apply` writes a marker `{prefix}repair_runs/{runId}` (before/after per row, `applied` false, then true), rewrites only `outstanding_balance` with a `LastUpdateTime` precondition (a row changed since the read is skipped and reported), leaves `updated_at`; prod also needs `-confirm-prod loooans-prod`. Later paid rows of an affected loan that do not match are listed "review by hand", never written. No trigger fires on loan_schedules updates. Tests: 7 unit (fakes) + 2 emulator (`-tags emulator`, run against a local Firestore emulator jar on a free port: dry run, apply on dev only, stg untouched, precondition). Dry run 2026-11-19: dev PRxL6LHifFWQjITEaQzq row W4PYWSxbNfziUVlJRe7X 3,655.82 → 6,827.91; stg ta3EhKPebk913GDxCGAJ row Khh5ytQT5jypns2qmMv8 74,078.52 → 87,039.26. Not applied anywhere; production not read. Limit: a row paid with principal short of the schedule by more than 0.005 is not matched.
+
+---
+
 ## Report triggers rebuild — campaign Phase 2/3, option (a) in full (2026-09-09)
 
 Branch `fix/report-triggers-108` → develop. Spec: `docs/superpowers/specs/2026-09-09-report-triggers-rebuild.md`. Closes finstack#108 (D5) and the campaign's D1–D8.
