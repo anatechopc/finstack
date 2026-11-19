@@ -6,6 +6,10 @@ class LoanSchedule extends LoanScheduleEntity
     implements BaseModel<LoanScheduleEntity> {
   LoanSchedule() : super();
 
+  /// A row from its stored JSON ([toJson]).
+  factory LoanSchedule.fromJson(Map<String, dynamic> json) =>
+      LoanScheduleEntity.fromJson(json).toLoanSchedule();
+
   factory LoanSchedule.create({
     required DateTime dueAt,
     required String loanId,

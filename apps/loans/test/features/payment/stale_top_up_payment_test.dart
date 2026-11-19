@@ -101,6 +101,7 @@ void main() {
     registerFallbackValue(LoanSchedule());
     registerFallbackValue(Loan());
     registerFallbackValue(Uint8List(0));
+    registerFallbackValue((AdditionalLoanAmount _) => null);
   });
 
   setUp(() async {
@@ -135,6 +136,20 @@ void main() {
           ? real.update(data: data)
           : real.update(data: data, updateAdditionalLoanAmounts: topUps);
     });
+    // Approval and decline write the top-up in a transaction (#149).
+    when(
+      () => loans.transactAdditionalLoanAmount(
+        id: any(named: 'id'),
+        change: any(named: 'change'),
+      ),
+    ).thenAnswer(
+      (i) => real.transactAdditionalLoanAmount(
+        id: i.namedArguments[#id] as String,
+        change: i.namedArguments[#change] as AdditionalLoanAmount? Function(
+          AdditionalLoanAmount,
+        ),
+      ),
+    );
     when(() => users.get(id: any(named: 'id'))).thenAnswer(
       (_) async => User()
         ..id = 'u1'

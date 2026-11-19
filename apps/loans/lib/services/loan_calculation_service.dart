@@ -187,7 +187,9 @@ class LoanCalculationService {
       }.contains(loan.status);
 
   /// Only an approved top-up has released money, so only it moves the
-  /// balance and the bill (#137). A top-up takes effect on its creation day.
+  /// balance and the bill (#137). A top-up takes effect on the day it was
+  /// approved (`effectiveAt`: the creation day for top-ups approved before
+  /// `approved_at` was recorded; review of #149).
   static bool movesBalance(AdditionalLoanAmount topUp) =>
       topUp.status == LoanStatus.approved;
 
@@ -208,8 +210,9 @@ class LoanCalculationService {
   ///   interest shortfall) is added to the first new bill's amount due
   ///   (`amortization`); its `interestCharge` stays the cycle's interest.
   /// - R5: an approved top-up not yet in the stored balance splits its
-  ///   cycle: the old balance up to the top-up day, the new balance from
-  ///   that day on (finstack#117). Days between a top-up and the start of
+  ///   cycle: the old balance up to the top-up day (its approval day), the
+  ///   new balance from that day on (finstack#117). Days between a top-up
+  ///   and the start of
   ///   the first new cycle (the previous bill was paid early) are billed
   ///   with it.
   ///
@@ -262,7 +265,9 @@ class LoanCalculationService {
     final topUps = additionalLoans
         .where(movesBalance)
         .where((topUp) => last == null || !_includesTopUp(last, topUp))
-        .sortedBy((topUp) => topUp.createdAt);
+        // In the order they take effect (finstack#4: processed out of order,
+        // a later top-up overwrote an earlier one's balance).
+        .sortedBy((topUp) => topUp.effectiveAt);
     var nextTopUp = 0;
 
     final monthlyAmortization = calculateMonthlyPaymentSimple(
@@ -284,7 +289,7 @@ class LoanCalculationService {
       var from = cycleStart;
       while (nextTopUp < topUps.length) {
         final topUp = topUps[nextTopUp];
-        final topUpDay = _localDay(topUp.createdAt);
+        final topUpDay = _localDay(topUp.effectiveAt);
         if (topUpDay.isAfter(dueAt)) {
           break;
         }
@@ -433,8 +438,8 @@ class LoanCalculationService {
   /// computed is not in it (review of #146). Top-ups approved before the
   /// approval time was recorded fall back to their creation time.
   static bool _includesTopUp(LoanSchedule row, AdditionalLoanAmount topUp) =>
-      (topUp.approvedAt ?? topUp.createdAt).isBefore(row.createdAt) &&
-      !_localDay(topUp.createdAt).isAfter(_localDay(row.dueAt));
+      topUp.effectiveAt.isBefore(row.createdAt) &&
+      !_localDay(topUp.effectiveAt).isAfter(_localDay(row.dueAt));
 
   /// R4: what paid [row] left unpaid of its amount due, to the centavo. The
   /// amount due is the larger of `amortization` and `interestCharge`: a row
@@ -511,17 +516,18 @@ class LoanCalculationService {
 
       allSchedules.insert(0, principalRelease);
 
-      // Sort by createdAt ascending so older additional loans are processed
-      // first. Processing out of order causes incorrect outstanding balances
-      // because later iterations overwrite earlier schedules' OB values.
+      // Sort by the day each takes effect, ascending, so earlier additional
+      // loans are processed first. Processing out of order causes incorrect
+      // outstanding balances because later iterations overwrite earlier
+      // schedules' OB values (finstack#4).
       final sortedAdditionalLoans =
-          loan.additionalLoanAmounts.sortedBy((a) => a.createdAt);
+          loan.additionalLoanAmounts.sortedBy((a) => a.effectiveAt);
 
       for (final additionalLoanAmount in sortedAdditionalLoans) {
         // The top-up row is shown, not billed (R5 bills the cycle on its due
         // row). It sits before the first bill due on or after its day and
         // shows what the old balance accrued since the row before it.
-        final topUpDay = _localDay(additionalLoanAmount.createdAt);
+        final topUpDay = _localDay(additionalLoanAmount.effectiveAt);
         var index = allSchedules.indexWhere(
           (schedule) =>
               !schedule.isAdditionalLoanAmount &&
@@ -543,7 +549,7 @@ class LoanCalculationService {
           index,
           LoanSchedule.createAdditionalLoan(
             additionalLoanId: additionalLoanAmount.id,
-            createdAt: additionalLoanAmount.createdAt,
+            createdAt: additionalLoanAmount.effectiveAt,
             loanId: loan.id,
             // Only an approved top-up moves the balance (#137).
             outstandingBalance: balanceBefore +

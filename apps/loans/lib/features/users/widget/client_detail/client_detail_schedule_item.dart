@@ -7,6 +7,7 @@ import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/features/products/screen/loan_schedule_widget.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/loan_calculation_service.dart';
+import 'package:loooans/services/top_up_overdue_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
@@ -96,6 +97,8 @@ class ClientDetailScheduleItem extends StatelessWidget {
   bool get _isPayableOpenTermBill =>
       _loanBills &&
       _isUnpaid(schedule) &&
+      // A top-up being approved is paying it (review of #149).
+      !(loan != null && TopUpOverdueService.isClaimedBill(loan!, schedule)) &&
       !loanRows.any(
         (other) =>
             !identical(other, schedule) &&

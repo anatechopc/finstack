@@ -16,6 +16,14 @@ class LoanScheduleRepository implements BaseRepository<LoanSchedule> {
         .then((value) => value.toLoanSchedule());
   }
 
+  /// Writes [data] at its own id (create or overwrite): a retry with the
+  /// same id never adds a second row.
+  Future<LoanSchedule> set({required LoanSchedule data}) async {
+    return _firestoreService
+        .set(data: data.toEntity())
+        .then((value) => value.toLoanSchedule());
+  }
+
   @override
   Future<LoanSchedule> delete({required LoanSchedule data}) async {
     return _firestoreService

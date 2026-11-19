@@ -5,6 +5,10 @@ import 'package:payment_repository/src/model/payment_status.dart';
 class Payment extends PaymentEntity implements BaseModel<PaymentEntity> {
   Payment() : super();
 
+  /// A payment from its stored JSON ([toJson]).
+  factory Payment.fromJson(Map<String, dynamic> json) =>
+      PaymentEntity.fromJson(json).toPayment();
+
   factory Payment.create({
     required String userId,
     required String loanScheduleId,

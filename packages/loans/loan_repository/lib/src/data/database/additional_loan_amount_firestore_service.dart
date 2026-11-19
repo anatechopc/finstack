@@ -26,6 +26,33 @@ final class AdditionalLoanAmountFirestoreService extends BaseFirestoreService<Ad
     return updatedData;
   }
 
+  /// Reads the top-up [id] and writes what [change] returns in one Firestore
+  /// transaction, so two devices cannot both act on the state they read.
+  /// [change] throws to abort (nothing written) or returns null to write
+  /// nothing; it may run more than once when the transaction retries.
+  Future<AdditionalLoanAmountEntity> transact({
+    required String id,
+    required AdditionalLoanAmountEntity? Function(
+      AdditionalLoanAmountEntity current,
+    ) change,
+  }) {
+    return fs.runTransaction((transaction) async {
+      final ref = root.doc(id);
+      final snapshot = await transaction.get(ref);
+      final current = AdditionalLoanAmountEntity.fromJson(
+        snapshot.data()! as Map<String, dynamic>,
+      );
+      final next = change(current);
+      if (next == null) {
+        return current;
+      }
+      next.updatedAt = DateTime.timestamp();
+      transaction.set(ref, next.toJson());
+
+      return next;
+    });
+  }
+
   @override
   Future<AdditionalLoanAmountEntity> delete({required AdditionalLoanAmountEntity data}) async {
     final updatedData = data..deletedAt = DateTime.timestamp();

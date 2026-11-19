@@ -129,6 +129,22 @@ class LoanRepository implements BaseRepository<Loan> {
     });
   }
 
+  /// Reads top-up [id] and writes what [change] returns in one Firestore
+  /// transaction (see `AdditionalLoanAmountFirestoreService.transact`).
+  Future<AdditionalLoanAmount> transactAdditionalLoanAmount({
+    required String id,
+    required AdditionalLoanAmount? Function(AdditionalLoanAmount current)
+        change,
+  }) {
+    return _additionalLoanAmountFirestoreService
+        .transact(
+          id: id,
+          change: (current) =>
+              change(current.toAdditionalLoanAmount())?.toEntity(),
+        )
+        .then((value) => value.toAdditionalLoanAmount());
+  }
+
   /// Writes the loan [data]. Its new top-ups (no id) are added; the top-ups
   /// it already has are written back only with [updateAdditionalLoanAmounts],
   /// for a caller that changes one (approval, decline). A copy loaded before
