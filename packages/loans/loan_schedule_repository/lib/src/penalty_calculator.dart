@@ -388,7 +388,8 @@ PenaltyResult _openTermStretchPenalty({
 
 /// The loan's balance in force on a day, worked out from [row]'s balance
 /// (in force on its due day) and the loan's approved top-ups, each in force
-/// from its own day. Only approved top-ups released money (#137).
+/// from the day it was approved (`effectiveAt`). Only approved top-ups
+/// released money (#137).
 double Function(DateTime day) _balanceOn({
   required LoanSchedule row,
   required Loan loan,
@@ -398,7 +399,7 @@ double Function(DateTime day) _balanceOn({
     for (final topUp in loan.additionalLoanAmounts)
       if (topUp.status == LoanStatus.approved)
         (
-          day: _localDay(topUp.createdAt),
+          day: _localDay(topUp.effectiveAt),
           added: topUp.amount + topUp.additionalCharges
         ),
   ];

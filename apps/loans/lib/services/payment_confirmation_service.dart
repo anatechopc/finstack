@@ -115,28 +115,6 @@ class PaymentConfirmationService {
     }
   }
 
-  /// Saves [payment] and [schedule] (adds a computed row, updates a stored
-  /// one) and links them. Returns the saved payment. Used by the Payment
-  /// Center and by a top-up that pays overdue bills from its proceeds.
-  static Future<Payment> persistPaidSchedule(
-    LoanSchedule schedule,
-    Payment payment, {
-    required LoanScheduleRepository loanScheduleRepository,
-    required PaymentRepository paymentRepository,
-  }) async {
-    final saved = await paymentRepository.add(data: payment);
-    if (schedule.id == NO_ID) {
-      final added = await loanScheduleRepository.add(
-        data: schedule..paymentId = saved.id,
-      );
-      await paymentRepository.update(data: saved..loanScheduleId = added.id);
-    } else {
-      await loanScheduleRepository.update(data: schedule..paymentId = saved.id);
-    }
-
-    return saved;
-  }
-
   /// Pure: on rejection, a schedule reverts to not_paid (or overdue if its
   /// dueAt is already past).
   static LoanStatus revertedStatus({required DateTime dueAt}) {

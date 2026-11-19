@@ -162,13 +162,15 @@ class AdditionalLoanDetailScreen extends StatelessWidget {
         if (additionalLoan == null) {
           return Container();
         }
+        // No second approval or decline while one runs (review of #149).
+        final busy = context.watch<AdditionalLoanBloc>().state.isLoading;
         return Row(
           children: [
             Expanded(
               child: AppWidgets.defaultFilledButton(
                 foregroundColor: AppColors.green2,
                 child: const Text('Approve'),
-                onPressed: () async {
+                onPressed: busy ? null : () async {
                   // Shows a "deduct" top-up's overdue amount on the approval
                   // day; the bloc refuses if it is no longer what was shown.
                   final deduction = await showTopUpApprovalDialog(
@@ -194,7 +196,7 @@ class AdditionalLoanDetailScreen extends StatelessWidget {
               child: AppWidgets.defaultFilledButton(
                 foregroundColor: AppColors.red,
                 child: const Text('Decline'),
-                onPressed: () async {
+                onPressed: busy ? null : () async {
                   final ok = await showDialog<bool>(
                     context: context,
                     builder: (context) {

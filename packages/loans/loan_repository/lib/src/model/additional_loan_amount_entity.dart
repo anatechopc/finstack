@@ -128,6 +128,21 @@ class AdditionalLoanAmountEntity implements BaseEntity {
   @JsonKey(name: 'deducted_payment_ids', defaultValue: <String>[])
   List<String> deductedPaymentIds = [];
 
+  /// When approval claimed the top-up for a deduction: the collection time
+  /// of the bills paid from it. Null until then.
+  @JsonKey(
+    name: 'deducted_at',
+    toJson: handleDateTimeToJson,
+    fromJson: handleDateTimeNullableFromJson,
+  )
+  DateTime? deductedAt;
+
+  /// The deduction claimed at approval, written once in a transaction
+  /// before any bill: per bill `{row, payment}` as their stored JSON, ids
+  /// included. An approval that stopped part way is completed from it.
+  @JsonKey(name: 'deduction_plan', defaultValue: <Map<String, dynamic>>[])
+  List<Map<String, dynamic>> deductionPlan = [];
+
   Map<String, dynamic> toJson() {
     return _$AdditionalLoanAmountEntityToJson(this);
   }
@@ -151,6 +166,8 @@ class AdditionalLoanAmountEntity implements BaseEntity {
         overdueChoice,
         overdueDeduction,
         deductedPaymentIds,
+        deductedAt,
+        deductionPlan,
       ];
 
   @override
@@ -175,6 +192,8 @@ class AdditionalLoanAmountEntity implements BaseEntity {
       ..approvedAt = approvedAt
       ..overdueChoice = overdueChoice
       ..overdueDeduction = overdueDeduction
-      ..deductedPaymentIds = List.of(deductedPaymentIds);
+      ..deductedPaymentIds = List.of(deductedPaymentIds)
+      ..deductedAt = deductedAt
+      ..deductionPlan = List.of(deductionPlan);
   }
 }

@@ -94,8 +94,10 @@ Future<({bool proceed, OverdueChoice? choice})> askTopUpOverdueChoice(
 /// The approval confirmation for [topUp]. For a top-up whose lender chose
 /// "deduct", it shows the overdue amount on the approval day and the cash
 /// released after it; approval is not offered when that amount is more
-/// than the proceeds. Returns the deduction shown (0 when nothing is
-/// deducted), or null when the approver cancels.
+/// than the proceeds. A top-up whose approval stopped while recording its
+/// deduction shows the amount it claimed; approving completes it. Returns
+/// the deduction shown (0 when nothing is deducted), or null when the
+/// approver cancels.
 Future<double?> showTopUpApprovalDialog(
   BuildContext context, {
   required AdditionalLoanAmount topUp,
@@ -103,11 +105,12 @@ Future<double?> showTopUpApprovalDialog(
   required List<LoanSchedule> schedules,
 }) {
   final proceeds = TopUpOverdueService.proceeds(topUp);
-  final deducts = topUp.overdueChoice == OverdueChoice.deduct;
+  final claimed = topUp.deductionPlan.isNotEmpty;
+  final deducts = topUp.overdueChoice == OverdueChoice.deduct && !claimed;
   final overdue = deducts
       ? TopUpOverdueService.overdue(loan: loan, schedules: schedules)
       : null;
-  final deduction = overdue?.amount ?? 0.0;
+  final deduction = claimed ? topUp.overdueDeduction : overdue?.amount ?? 0.0;
   final canApprove = deduction <= proceeds;
 
   return showDialog<double>(
@@ -129,6 +132,9 @@ Future<double?> showTopUpApprovalDialog(
                 const Gap(16),
                 Text(
                   switch ((topUp.overdueChoice!, overdue)) {
+                    _ when claimed => 'An earlier approval stopped while '
+                        'recording ${deduction.toCurrency()} of overdue bills '
+                        'paid from this top-up. Approving completes it.',
                     (OverdueChoice.nextBill, _) =>
                       'The lender chose to add the '
                           'overdue bills to the next bill.',

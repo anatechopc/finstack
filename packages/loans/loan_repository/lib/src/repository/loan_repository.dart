@@ -119,10 +119,29 @@ class LoanRepository implements BaseRepository<Loan> {
     });
   }
 
+  /// Reads top-up [id] and writes what [change] returns in one Firestore
+  /// transaction (see `AdditionalLoanAmountFirestoreService.transact`).
+  Future<AdditionalLoanAmount> transactAdditionalLoanAmount({
+    required String id,
+    required AdditionalLoanAmount? Function(AdditionalLoanAmount current)
+        change,
+  }) {
+    return _additionalLoanAmountFirestoreService
+        .transact(
+          id: id,
+          change: (current) =>
+              change(current.toAdditionalLoanAmount())?.toEntity(),
+        )
+        .then((value) => value.toAdditionalLoanAmount());
+  }
+
+  /// [updateAdditionalLoanAmounts] false writes the loan document only, for
+  /// callers that changed its top-ups through [transactAdditionalLoanAmount].
   @override
   Future<Loan> update({
     required Loan data,
     bool updateView = false,
+    bool updateAdditionalLoanAmounts = true,
   }) async {
     if (updateView) {
       UserLoanViewRepository().updateLoanData(
@@ -132,6 +151,11 @@ class LoanRepository implements BaseRepository<Loan> {
 
     final updatedLoanData =
         await _firestoreService.update(data: data.toEntity());
+
+    if (!updateAdditionalLoanAmounts) {
+      return updatedLoanData.toLoan()
+        ..additionalLoanAmounts = data.additionalLoanAmounts;
+    }
 
     final toUpdateAdditionalLoanAmounts = data.additionalLoanAmounts;
     final addedAdditionalLoanData = <AdditionalLoanAmount>[];

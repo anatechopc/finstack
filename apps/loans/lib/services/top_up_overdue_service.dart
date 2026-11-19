@@ -5,15 +5,17 @@ import 'package:loooans/features/loans/screens/loan_details.dart';
 import 'package:loooans/services/charge_calculator.dart';
 import 'package:loooans/services/loan_calculation_service.dart';
 import 'package:loooans/services/payment_confirmation_service.dart';
+import 'package:loooans_helpers/data_helpers.dart';
 import 'package:payment_repository/payment_repository.dart';
 import 'package:product_repository/product_repository.dart';
 
 /// The owner's soft block for a top-up on an open-term loan with overdue
 /// bills (2026-11-19). Adding the top-up warns the lender with the overdue
 /// amount and records their choice on it; nothing else is written then.
-/// Approval applies a "deduct" choice once: the overdue bills on the
-/// approval day are recorded paid from the top-up's proceeds and the rest
-/// of the proceeds is released.
+/// Approval applies a "deduct" choice once (`AdditionalLoanBloc`: claimed
+/// in a transaction, written at fixed ids, then approved): the overdue
+/// bills on the approval day are recorded paid from the top-up's proceeds
+/// and the rest of the proceeds is released.
 ///
 /// No cash-pool entry is written: the cash pool is the borrower's prepaid
 /// balance, a top-up's proceeds never enter it, and the released cash is
@@ -153,44 +155,82 @@ class TopUpOverdueService {
     return _centavos(total);
   }
 
-  /// Writes [bills] settled by [settle], each with its own confirmed
-  /// payment carrying [comment] (one payment per bill, as the Payment
-  /// Center's overdue payment writes them). Returns the payment ids.
-  Future<List<String>> persist({
+  /// The writes for [bills] settled by [settle], one confirmed payment per
+  /// bill (as the Payment Center's overdue payment makes them), each
+  /// `{row, payment}` as stored JSON. Ids are fixed from [topUp]'s id
+  /// (`<topUpId>-<n>`; a stored row keeps its own id), so writing the plan
+  /// again overwrites the same documents instead of adding new ones. The
+  /// payments share [topUp]'s id as `submission_id`, so Go's paymentCreated
+  /// sends one push for them, not one per bill.
+  static List<Map<String, dynamic>> plan({
     required Loan loan,
+    required AdditionalLoanAmount topUp,
     required List<LoanSchedule> bills,
     required String actorId,
     required String comment,
-  }) async {
-    final paymentIds = <String>[];
-    for (final bill in bills) {
-      final saved = await PaymentConfirmationService.persistPaidSchedule(
-        bill,
-        Payment.create(
-          userId: loan.userId,
-          loanScheduleId: bill.id,
-          loanId: loan.id,
-          // Paid from the top-up's proceeds: the top-up's selfie and
-          // signature are the record, no transfer to prove.
-          bypassPaymentProof: true,
-          comment: comment,
-          confirmedBy: actorId,
-          confirmedAt: DateTime.timestamp(),
-        ),
-        loanScheduleRepository: loanScheduleRepository,
-        paymentRepository: paymentRepository,
-      );
-      paymentIds.add(saved.id);
-    }
+  }) {
+    return [
+      for (var n = 1; n <= bills.length; n++)
+        _planned(loan, topUp, bills[n - 1], '${topUp.id}-$n', actorId, comment),
+    ];
+  }
 
-    return paymentIds;
+  static Map<String, dynamic> _planned(
+    Loan loan,
+    AdditionalLoanAmount topUp,
+    LoanSchedule bill,
+    String id,
+    String actorId,
+    String comment,
+  ) {
+    if (bill.id == NO_ID) {
+      bill.id = id;
+    }
+    bill.paymentId = id;
+    final payment = Payment.create(
+      userId: loan.userId,
+      loanScheduleId: bill.id,
+      loanId: loan.id,
+      // Paid from the top-up's proceeds: the top-up's selfie and signature
+      // are the record, no transfer to prove.
+      bypassPaymentProof: true,
+      comment: comment,
+      confirmedBy: actorId,
+      confirmedAt: DateTime.timestamp(),
+      submissionId: topUp.id,
+    )..id = id;
+
+    return {'row': bill.toJson(), 'payment': payment.toJson()};
+  }
+
+  /// The payment ids of [plan], in bill order.
+  static List<String> paymentIdsOf(List<Map<String, dynamic>> plan) => [
+        for (final entry in plan)
+          (entry['payment'] as Map<String, dynamic>)['id'] as String,
+      ];
+
+  /// The status of the last bill in [plan]: the loan follows it.
+  static LoanStatus lastStatusOf(List<Map<String, dynamic>> plan) =>
+      LoanSchedule.fromJson(plan.last['row'] as Map<String, dynamic>).status;
+
+  /// Writes [plan]: each bill's payment, then its row, at their fixed ids.
+  /// Writing it again (an approval that stopped part way) overwrites the
+  /// documents already written and adds the missing ones.
+  Future<void> write(List<Map<String, dynamic>> plan) async {
+    for (final entry in plan) {
+      await paymentRepository.set(
+        data: Payment.fromJson(entry['payment'] as Map<String, dynamic>),
+      );
+      await loanScheduleRepository.set(
+        data: LoanSchedule.fromJson(entry['row'] as Map<String, dynamic>),
+      );
+    }
   }
 
   static double _centavos(double value) => (value * 100).round() / 100;
 }
 
-/// A top-up action refused before anything was written; [message] is for
-/// the lender.
+/// A top-up approval or decline refused; [message] is for the lender.
 class TopUpRefused implements Exception {
   const TopUpRefused(this.message);
 

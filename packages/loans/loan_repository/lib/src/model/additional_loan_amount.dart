@@ -39,6 +39,11 @@ class AdditionalLoanAmount extends AdditionalLoanAmountEntity
       ..status = status
       ..overdueChoice = overdueChoice;
   }
+  /// When the top-up's money moves the balance: its approval, or its
+  /// creation for top-ups approved before `approved_at` was recorded (and
+  /// for display while pending).
+  DateTime get effectiveAt => approvedAt ?? createdAt;
+
   @override
   AdditionalLoanAmountEntity toEntity() {
     return this;

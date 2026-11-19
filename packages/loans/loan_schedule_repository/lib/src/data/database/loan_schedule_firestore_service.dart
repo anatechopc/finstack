@@ -25,6 +25,14 @@ final class LoanScheduleFirestoreService
     return updatedData;
   }
 
+  /// Writes [data] at its own id, creating or overwriting the document, so
+  /// a retried write with the same id never makes a second one.
+  Future<LoanScheduleEntity> set({required LoanScheduleEntity data}) async {
+    await root.doc(data.id).set(data.toJson());
+
+    return data;
+  }
+
   @override
   Future<LoanScheduleEntity> delete({required LoanScheduleEntity data}) async {
     final updatedData = data..deletedAt = DateTime.timestamp();

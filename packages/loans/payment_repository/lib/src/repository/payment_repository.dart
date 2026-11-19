@@ -16,6 +16,14 @@ class PaymentRepository implements BaseRepository<Payment> {
         .then((value) => value.toPayment());
   }
 
+  /// Writes [data] at its own id (create or overwrite): a retry with the
+  /// same id never adds a second payment.
+  Future<Payment> set({required Payment data}) async {
+    return _firestoreService
+        .set(data: data.toEntity())
+        .then((value) => value.toPayment());
+  }
+
   @override
   Future<Payment> delete({required Payment data}) async {
     return _firestoreService

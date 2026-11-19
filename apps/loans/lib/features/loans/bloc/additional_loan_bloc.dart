@@ -64,8 +64,11 @@ class AdditionalLoanBloc
 
   void _registerHandlers() {
     on<AddLoanAmountEvent>(_handleAddLoanAmountEvent);
+    // One approval at a time: a double tap waits for the first to finish
+    // and then finds the top-up no longer pending.
     on<UpdateAdditionalLoanAmountEvent>(
       _handleUpdateAdditionalLoanAmountEvent,
+      transformer: (events, mapper) => events.asyncExpand(mapper),
     );
   }
 
@@ -195,46 +198,32 @@ class AdditionalLoanBloc
       if (additionalLoanAmount == null) {
         throw Exception('Additional loan amount not found');
       }
-      // A top-up releases its money once: approving it again would move
-      // approved_at and could deduct its overdue bills twice.
-      if (additionalLoanAmount.status != LoanStatus.pending) {
-        throw TopUpRefused(
-          'This additional loan is already '
-          '${additionalLoanAmount.status.label.toLowerCase()}',
-        );
-      }
-      if (additionalLoanAmount.overdueDeduction > 0) {
-        throw const TopUpRefused(
-          'An earlier approval of this additional loan stopped after its '
-          'overdue bills were recorded. Check its payments before approving '
-          'or declining it.',
-        );
-      }
+      _requirePending(additionalLoanAmount);
       final approve = event.status == LoanStatus.approved;
-      final deducted = approve &&
-          additionalLoanAmount.overdueChoice == OverdueChoice.deduct &&
-          await _deductOverdue(
-            loan,
-            additionalLoanAmount,
-            expected: event.expectedDeduction ?? 0,
-          );
-      additionalLoanAmount
-        ..status = event.status
-        // The engine needs to know when the money was released (review of
-        // finstack#146): a bill stored before it does not hold the top-up.
-        // Set after the deducted bills are written, so they do not.
-        ..approvedAt = approve ? DateTime.timestamp() : null;
-      await loanRepository.update(data: loan, updateView: deducted);
-      final released = TopUpOverdueService.proceeds(additionalLoanAmount) -
-          additionalLoanAmount.overdueDeduction;
+      final done =
+          approve && additionalLoanAmount.overdueChoice == OverdueChoice.deduct
+              ? await _approveWithDeduction(
+                  loan,
+                  additionalLoanAmount,
+                  expected: event.expectedDeduction ?? 0,
+                )
+              : await _transact(additionalLoanAmount.id, (current) {
+                  _requirePending(current);
+                  _requireUnclaimed(current);
+                  return current
+                    ..status = event.status
+                    // The engine needs to know when the money was released
+                    // (review of finstack#146).
+                    ..approvedAt = approve ? DateTime.timestamp() : null;
+                });
+      final released =
+          TopUpOverdueService.proceeds(done) - done.overdueDeduction;
       emit(const AdditionalLoanState.loading());
       emit(
         AdditionalLoanState.success(
-          deducted
-              ? 'Approved: '
-                  '${additionalLoanAmount.overdueDeduction.toCurrency()} of '
-                  'overdue bills paid from it, ${released.toCurrency()} '
-                  'to release'
+          done.overdueDeduction > 0
+              ? 'Approved: ${done.overdueDeduction.toCurrency()} of overdue '
+                  'bills paid from it, ${released.toCurrency()} to release'
               : 'Additional loan amount updated successfully',
         ),
       );
@@ -256,17 +245,54 @@ class AdditionalLoanBloc
     }
   }
 
-  /// The lender's "deduct" choice, applied at approval (owner, 2026-11-19):
-  /// the overdue bills on the approval day, what the borrower's "Pay now"
-  /// shows with [topUp] not yet in the balance, are recorded paid from its
-  /// proceeds, collected now, with their penalties. Bills paid since the
-  /// top-up was added are not deducted. No cash-pool entry: the proceeds
-  /// never enter the borrower's prepaid balance.
+  /// Reads top-up [id] and writes what [change] returns in one Firestore
+  /// transaction: two devices (or two taps) cannot both act on the state
+  /// they read.
+  Future<AdditionalLoanAmount> _transact(
+    String id,
+    AdditionalLoanAmount? Function(AdditionalLoanAmount current) change,
+  ) =>
+      loanRepository.transactAdditionalLoanAmount(id: id, change: change);
+
+  /// A top-up is approved or declined once: approving it again would move
+  /// approved_at and could deduct its overdue bills twice.
+  static void _requirePending(AdditionalLoanAmount topUp) {
+    if (topUp.status != LoanStatus.pending) {
+      throw TopUpRefused(
+        'This additional loan is already ${topUp.status.label.toLowerCase()}',
+      );
+    }
+  }
+
+  /// A top-up claimed for a deduction has bills being paid from it: only
+  /// approving it again (which completes the deduction) is allowed.
+  static void _requireUnclaimed(AdditionalLoanAmount topUp) {
+    if (topUp.deductionPlan.isNotEmpty) {
+      throw const TopUpRefused(
+        'An approval of this additional loan is recording its overdue '
+        'bills. Approve it again to complete it.',
+      );
+    }
+  }
+
+  /// The lender's "deduct" choice, applied at approval (owner, 2026-11-19).
   ///
-  /// Throws, writing nothing, when the amount is not [expected] (what the
-  /// approver was shown) or is more than the proceeds. Returns whether
-  /// anything was deducted.
-  Future<bool> _deductOverdue(
+  /// 1. Plan: the overdue bills on the approval day, what the borrower's
+  ///    "Pay now" shows with [topUp] not yet in the balance, settled now
+  ///    with their penalties. Refused, nothing written, unless the amount is
+  ///    [expected] (what the approver was shown) and fits the proceeds.
+  ///    Nothing overdue any more: approved without a deduction.
+  /// 2. Claim, in a transaction: the plan, the amount and the payment ids
+  ///    are written on the pending top-up once; a top-up already claimed
+  ///    (another device, or an approval that stopped part way) keeps its
+  ///    plan and this approval completes it.
+  /// 3. Write the plan's payments and rows at their fixed ids (a retry
+  ///    overwrites them), then approve in a transaction (approved_at after
+  ///    the rows were computed, so the next bill keeps the top-up).
+  ///
+  /// No cash-pool entry: the proceeds never enter the borrower's prepaid
+  /// balance; the released cash is handed over outside the app.
+  Future<AdditionalLoanAmount> _approveWithDeduction(
     Loan loan,
     AdditionalLoanAmount topUp, {
     required double expected,
@@ -277,12 +303,77 @@ class AdditionalLoanBloc
         'Payments are only recorded for self-managed companies',
       );
     }
-    final service = TopUpOverdueService(
+    var claimed = topUp;
+    if (topUp.deductionPlan.isEmpty) {
+      final plan = await _planDeduction(loan, topUp, expected: expected);
+      if (plan == null) {
+        return _transact(topUp.id, (current) {
+          _requirePending(current);
+          _requireUnclaimed(current);
+          return current
+            ..status = LoanStatus.approved
+            ..approvedAt = DateTime.timestamp();
+        });
+      }
+      claimed = await _transact(topUp.id, (current) {
+        _requirePending(current);
+        if (current.deductionPlan.isNotEmpty) {
+          return null;
+        }
+        return current
+          ..overdueDeduction = plan.total
+          ..deductedAt = plan.collectedAt
+          ..deductedPaymentIds = TopUpOverdueService.paymentIdsOf(plan.writes)
+          ..deductionPlan = plan.writes;
+      });
+    }
+    if ((claimed.overdueDeduction - expected).abs() >= 0.005) {
+      throw TopUpRefused(
+        'This additional loan is deducting '
+        '${claimed.overdueDeduction.toCurrency()}, not '
+        '${expected.toCurrency()}. Open the loan again and approve.',
+      );
+    }
+
+    await TopUpOverdueService(
       loanScheduleRepository: loanScheduleRepository,
       paymentRepository: paymentRepository,
+    ).write(claimed.deductionPlan);
+    final done = await _transact(topUp.id, (current) {
+      _requirePending(current);
+      return current
+        ..status = LoanStatus.approved
+        ..approvedAt = DateTime.timestamp();
+    });
+    // The loan follows its last bill paid, as the Payment Center's overdue
+    // payment sets it. The top-up was written by the transactions above.
+    await loanRepository.update(
+      data: loan
+        ..status = TopUpOverdueService.lastStatusOf(claimed.deductionPlan),
+      updateView: true,
+      updateAdditionalLoanAmounts: false,
     );
+
+    return done;
+  }
+
+  /// Step 1 of [_approveWithDeduction]: the bills to pay from [topUp] now
+  /// and their writes, or null when nothing is overdue.
+  Future<
+      ({
+        List<Map<String, dynamic>> writes,
+        double total,
+        DateTime collectedAt,
+      })?> _planDeduction(
+    Loan loan,
+    AdditionalLoanAmount topUp, {
+    required double expected,
+  }) async {
     final now = DateTime.now();
-    final schedules = await service.schedulesOf(
+    final schedules = await TopUpOverdueService(
+      loanScheduleRepository: loanScheduleRepository,
+      paymentRepository: paymentRepository,
+    ).schedulesOf(
       loan,
       product: await _productOf(loan.productId),
       now: now,
@@ -309,7 +400,7 @@ class AdditionalLoanBloc
       );
     }
     if (overdue == null) {
-      return false;
+      return null;
     }
     final proceeds = TopUpOverdueService.proceeds(topUp);
     if (total > proceeds) {
@@ -320,27 +411,23 @@ class AdditionalLoanBloc
       );
     }
 
-    // Recorded before the bills: an approval that stops after writing them
-    // cannot be retried into a second deduction or a full release.
-    topUp.overdueDeduction = total;
-    await loanRepository.update(data: loan);
-    topUp.deductedPaymentIds = await service.persist(
-      loan: loan,
-      bills: overdue.bills,
-      actorId: actorId,
-      comment: '''
+    return (
+      writes: TopUpOverdueService.plan(
+        loan: loan,
+        topUp: topUp,
+        bills: overdue.bills,
+        actorId: actorId,
+        comment: '''
           Paid from additional loan ${topUp.id} (deducted from its proceeds)
           approved by:
           user:id: $actorId
           user:name: ${authService.user.completeNameEasternOrder}
           deducted: $total of $proceeds handed over
-          confirmed_at: ${DateTime.timestamp().toDefaultDateFormatExtended()}''',
+          confirmed_at: ${now.toUtc().toDefaultDateFormatExtended()}''',
+      ),
+      total: total,
+      collectedAt: now,
     );
-    // The loan follows its last bill paid, as the Payment Center's overdue
-    // payment sets it.
-    loan.status = overdue.bills.last.status;
-
-    return true;
   }
 
   /// The loan's product for its charges, or none (no charges) when it

@@ -179,10 +179,13 @@ import 'package:loooans_helpers/data_helpers.dart';
 //        (The fourth review's window dropped each 1-day bill.)
 //   G14q a top-up counts from its approval: 2,000 + 100 created Aug 6,
 //        approved Sep 5, the Aug 31 bill stored Aug 31 on 10,000 -> Sep 30 =
-//        12,100 x 5% + 2,100 x 5% x 25/30 (Aug 6-31, never billed) = 605 +
-//        87.50 = 692.50; Oct 30 605; Nov 29 605 (was 500 each). A top-up
-//        approved before approval times were recorded keeps the old rule
-//        (created before the row -> in it): 500, 500, 500.
+//        10,000 x 5% x 5/30 (Aug 31-Sep 5) + 12,100 x 5% x 25/30 (Sep 5-30)
+//        = 83.33 + 504.17 = 587.50; Oct 30 605; Nov 29 605 (was 500 each).
+//        Review of #149: the balance moves on the approval day, not the
+//        creation day (before: 605 + Aug 6-31's 87.50 = 692.50, interest on
+//        money not yet released). A top-up approved before approval times
+//        were recorded keeps the old rule (created before the row -> in
+//        it): 500, 500, 500.
 //   G14r two bills in ONE submission (Aug 31 and Sep 30, sent Oct 5; 100
 //        once + 0.1% a day of 10,000): the stretch Aug 31 -> Oct 5 = 35 days
 //        -> 100 + 350 = 450, once, in preview and in either confirmation
@@ -1306,7 +1309,7 @@ void main() {
           ],
         );
 
-    test('approved Sep 5, after the Aug 31 bill was stored: 692.50, 605, 605',
+    test('approved Sep 5, after the Aug 31 bill was stored: 587.50, 605, 605',
         () {
       final rows = billsWith(approvedAt: DateTime(2026, 9, 5));
       expect(rows, hasLength(3));
@@ -1314,7 +1317,7 @@ void main() {
         rows[0],
         due: DateTime(2026, 9, 30),
         days: 30,
-        interest: 692.50,
+        interest: 587.50,
       );
       expectBill(rows[1], due: DateTime(2026, 10, 30), days: 30, interest: 605);
       expectBill(rows[2], due: DateTime(2026, 11, 29), days: 30, interest: 605);

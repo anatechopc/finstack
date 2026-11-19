@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
+import 'package:loooans/features/loans/screens/loan_details.dart';
 import 'package:loooans/services/loan_calculation_service.dart';
 import 'package:loooans/services/top_up_overdue_service.dart';
 import 'package:loooans_helpers/data_helpers.dart';
@@ -25,6 +26,14 @@ import 'package:product_repository/product_repository.dart';
 // Seen Oct 1: Sep 16 is 15 days late, Oct 1 is due today. Pay now =
 // 1,000 + 1,000 + (100 + 15 x 40 = 700) = 2,700, the penalty once (R3), on
 // the Sep 16 bill; Oct 1 is paid on time with 0.
+// The balance moves on the approval day (review of #149): 10,000 added
+// Sep 21 and approved Sep 26, seen Oct 1 with the Sep 16 bill unpaid. The
+// Oct 1 bill (Sep 16 - Oct 1) = 40,000 x 5% x 10/30 + 50,000 x 5% x 5/30 =
+// 666.67 + 416.67 = 1,083.33; the stretch penalty on Oct 1 (15 days from
+// Sep 16) = 100 + 10 x 40 (Sep 16-25) + 5 x 50 (Sep 26-30) = 750. Approved
+// the day it was added (Sep 21), or approved before approval times were
+// recorded (from its creation day): 5 x 40,000 + 10 x 50,000 days ->
+// 333.33 + 833.33 = 1,166.67 and 100 + 5 x 40 + 10 x 50 = 800.
 // Proceeds with charges: 10,000 with a 2% deduction (200), a 300 charge
 // collected upfront and a 5% charge added to the balance (500, owed, not
 // cash): 10,000 - 200 - 300 = 9,500; with 1,300 overdue, 8,200 released.
@@ -234,6 +243,47 @@ void main() {
         bills.map((b) => b.interestPayment),
         [closeTo(1000, 0.001), closeTo(1000, 0.001)],
       );
+    });
+  });
+
+  group('a top-up moves the balance from its approval day', () {
+    final oct1 = DateTime(2026, 10, 1, 10);
+
+    ({double bill, double penalty}) onOct1(DateTime? approvedAt) {
+      final loan = loan40k()
+        ..additionalLoanAmounts = [
+          topUp()
+            ..status = LoanStatus.approved
+            ..createdAt = DateTime(2026, 9, 21, 10)
+            ..approvedAt = approvedAt,
+        ];
+      final rows = rowsOn(loan, oct1);
+      final bills = rows.where((r) => !r.isPlaceholder).toList();
+      expect(
+        bills.map((b) => b.dueAt),
+        [DateTime(2026, 9, 16), DateTime(2026, 10)],
+      );
+      final due = borrowerAmountsDue(schedules: rows, loan: loan, asOf: oct1);
+
+      return (bill: bills.last.amortization, penalty: due.nextDuePenalty);
+    }
+
+    test('approved Sep 26: 1,083.33 and a 750 penalty', () {
+      final (:bill, :penalty) = onOct1(DateTime(2026, 9, 26, 10));
+      expect(bill, closeTo(1083.33, 0.01));
+      expect(penalty, closeTo(750, 0.001));
+    });
+
+    test('approved the day it was added: 1,166.67 and 800', () {
+      final (:bill, :penalty) = onOct1(DateTime(2026, 9, 21, 11));
+      expect(bill, closeTo(1166.67, 0.01));
+      expect(penalty, closeTo(800, 0.001));
+    });
+
+    test('approved before approval times were recorded: its creation day', () {
+      final (:bill, :penalty) = onOct1(null);
+      expect(bill, closeTo(1166.67, 0.01));
+      expect(penalty, closeTo(800, 0.001));
     });
   });
 

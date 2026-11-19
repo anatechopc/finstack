@@ -25,7 +25,6 @@ import 'package:loooans/features/users/widget/client_detail/client_detail_dialog
 import 'package:loooans/services/top_up_overdue_service.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
-import 'package:loooans_helpers/data_helpers.dart';
 import 'package:product_repository/product_repository.dart';
 
 class PaymentCenterScreen extends StatelessWidget {
@@ -237,11 +236,7 @@ class _BorrowerContent extends StatelessWidget {
               _showAdditionalAmountDialog(
                 context,
                 loan: group.loan,
-                // Stored rows and the bills computed after them.
-                schedules: [
-                  ...group.storedSchedules,
-                  ...group.actionableSchedules.where((s) => s.id == NO_ID),
-                ],
+                schedules: group.scheduleRows,
               );
             },
           ),
