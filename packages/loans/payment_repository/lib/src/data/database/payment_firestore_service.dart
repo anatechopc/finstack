@@ -25,6 +25,14 @@ final class PaymentFirestoreService
     return updatedData;
   }
 
+  /// Writes [data] at its own id, creating or overwriting the document, so
+  /// a retried write with the same id never makes a second one.
+  Future<PaymentEntity> set({required PaymentEntity data}) async {
+    await root.doc(data.id).set(data.toJson());
+
+    return data;
+  }
+
   @override
   Future<PaymentEntity> delete({required PaymentEntity data}) async {
     final updatedData = data..deletedAt = DateTime.timestamp();

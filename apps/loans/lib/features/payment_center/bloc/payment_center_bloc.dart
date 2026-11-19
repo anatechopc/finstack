@@ -1028,7 +1028,7 @@ class PaymentCenterBloc extends Bloc<PaymentCenterEvent, PaymentCenterState> {
       schedules: event.schedules,
       totalInterest: event.totalInterestPayment,
     );
-    final loanRows = await _openTermLoanRows(loan, event.schedules);
+    final loanRows = await _stretchLoanRows(loan, event.schedules);
 
     final paid = <LoanSchedule>[];
     Payment? lastPayment;
@@ -1087,13 +1087,16 @@ class PaymentCenterBloc extends Bloc<PaymentCenterEvent, PaymentCenterState> {
     return (paid: paid, lastPayment: lastPayment);
   }
 
-  /// The loan's stored rows (without those in [paying]) plus [paying], so an
-  /// open-term penalty is one per overdue stretch (R3). Empty for fixed-term.
-  Future<List<LoanSchedule>> _openTermLoanRows(
+  /// The loan's stored rows (without those in [paying]) plus [paying], so a
+  /// penalty on the balance is one per overdue stretch (R3). Empty for a
+  /// fixed-term loan without one.
+  Future<List<LoanSchedule>> _stretchLoanRows(
     Loan loan,
     List<LoanSchedule> paying,
   ) async {
-    if (paying.isEmpty || !paying.first.isOpenTerm) {
+    if (paying.isEmpty ||
+        !(paying.first.isOpenTerm ||
+            chargesPerStretch(loan, isOpenTerm: false))) {
       return const [];
     }
     final stored = await loanScheduleRepository.allByLoanId(

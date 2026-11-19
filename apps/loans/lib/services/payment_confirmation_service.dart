@@ -168,12 +168,14 @@ class PaymentConfirmationService {
         await loanScheduleRepository.get(id: payment.loanScheduleId);
     rejectPrincipalRelease([schedule]);
     final loan = await loanRepository.get(id: schedule.loanId);
-    // An open-term penalty is one per overdue stretch (R3): rows of the same
-    // submission confirmed before this one are stored with their collection
-    // date, and unpaid earlier bills mark where the stretch starts.
-    final loanRows = schedule.isOpenTerm
-        ? await _loadLoanSchedules(loan.id)
-        : const <LoanSchedule>[];
+    // A penalty on the balance is one per overdue stretch (R3): rows of the
+    // same submission confirmed before this one are stored with their
+    // collection date, and unpaid earlier bills mark where the stretch
+    // starts.
+    final loanRows =
+        schedule.isOpenTerm || chargesPerStretch(loan, isOpenTerm: false)
+            ? await _loadLoanSchedules(loan.id)
+            : const <LoanSchedule>[];
     await settleSubmittedAtTheirTransfer(loanRows, paymentRepository);
 
     // Decided first so a missing waive reason aborts the whole confirmation.

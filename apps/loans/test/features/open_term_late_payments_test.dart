@@ -39,13 +39,16 @@ import '../helpers/helpers.dart';
 // 500 / 1,000).
 // Two missed bills: paid cycle 68 days ago -> bills due 38 and 8 days ago
 // (500 each), +22 current. The stretch runs from the earliest unpaid due
-// date (R3): 100 + 100 x 38 = 3,900 once (per bill it would be 3,900 + 900
-// = 4,800). Fixed dates, seen Oct 5: Aug 31 and Sep 30 missed -> Next
-// payment 500 + 500 + (100 + 100 x 35) = 4,600; Pay in full + Oct 30's 500
-// = 5,100.
+// date (R3): 100 x 38 = 3,800 once, and the flat "Late fee" 100 on each
+// missed bill (owner, 2026-11-19: a flat amount is charged per missed bill)
+// -> 3,900 + 100 = 4,000 (all per bill it would be 3,900 + 900 = 4,800;
+// before the owner's flat-fee decision 3,900). Fixed dates, seen Oct 5:
+// Aug 31 and Sep 30 missed -> Next payment 500 + 500 + (100 + 100 x 35) +
+// 100 = 4,700; Pay in full + Oct 30's 500 = 5,200 (were 4,600 / 5,100).
 // Bulk overdue (two missed): total interest 1,000 pays 500 + 500, penalty
-// [3,900, 0], days late [38, 8]; 700 pays 500 + 200 (the 300 short carries,
-// R4); 400 pays the first bill only and the second stays unpaid.
+// [3,900, 100] (was [3,900, 0]), days late [38, 8]; 700 pays 500 + 200 (the
+// 300 short carries, R4); 400 pays the first bill only and the second stays
+// unpaid.
 //
 // The client-detail row, the borrower table and the Payment Center read the
 // wall clock, so those scenarios are dated relative to today; the payment
@@ -65,8 +68,9 @@ import '../helpers/helpers.dart';
 //   583.33, amount due 500 (the old cap), original due 50 days ago; next
 //   bills -20 (25 days, 416.67, missed) and +10 (500). Stretch from 50
 //   days ago: 100 + 100 x 50 = 5,100 once (per bill 5,100 + 2,100 =
-//   7,200); Pay in full 500 + 416.67 + 500 + 5,100 = 6,516.67 on every
-//   screen.
+//   7,200), plus the flat 100 on the -20 bill = 5,200; Pay in full 500 +
+//   416.67 + 500 + 5,200 = 6,616.67 on every screen (were 5,100 and
+//   6,516.67 before the owner's flat-fee decision).
 //   With a 5,000 top-up 50 days ago (stored 15,000, interest 500, penalty
 //   100 + 1% x 15,000 x 50 = 7,600): the row is shown and confirmed as
 //   stored (#145); the top-up is in its balance, so the next bill (-20, 25
@@ -317,8 +321,8 @@ void main() {
     });
 
     testWidgets(
-        'two missed bills: the penalty once, Make payment on the '
-        'earliest only', (tester) async {
+        'two missed bills: the stretch once, the flat fee on each, Make '
+        'payment on the earliest only', (tester) async {
       final loan = openTermLoan(createdAt: daysFromToday(-98));
       final rows = clientRowsNow(loan, [paidCycle(daysFromToday(-68))]);
       final missed =
@@ -335,7 +339,12 @@ void main() {
         find.textContaining('3,900.00 penalty · 38 days late'),
         findsOneWidget,
       );
-      expect(find.textContaining('penalty'), findsOneWidget);
+      // The flat 100 once is per missed bill (owner, 2026-11-19).
+      expect(
+        find.textContaining('${100.0.toCurrency()} penalty · 8 days late'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('penalty'), findsNWidgets(2));
       final buttons = tester
           .widgetList<OutlinedButton>(
             find.widgetWithText(OutlinedButton, 'Make payment'),
@@ -365,8 +374,9 @@ void main() {
     });
   });
 
-  testWidgets('borrower schedule table: overdue label and the penalty once',
-      (tester) async {
+  testWidgets(
+      'borrower schedule table: overdue label, the stretch once, the flat '
+      'fee on each bill', (tester) async {
     final rows = billsNow(paidDaysAgo: 68);
     await tester.pumpApp(
       LoanScheduleWidget(
@@ -382,7 +392,11 @@ void main() {
 
     expect(find.text(LoanStatus.not_paid_overdue.label), findsNWidgets(2));
     expect(find.textContaining('3,900.00 penalty'), findsOneWidget);
-    expect(find.textContaining('penalty'), findsOneWidget);
+    expect(
+      find.textContaining('${100.0.toCurrency()} penalty'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('penalty'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
   });
 
@@ -461,8 +475,9 @@ void main() {
       expect(find.text('Waive penalties'), findsOneWidget);
     });
 
-    testWidgets('two missed bills paid together: the stretch, once',
-        (tester) async {
+    testWidgets(
+        'two missed bills paid together: the stretch once, the flat fee on '
+        'each', (tester) async {
       final oct5 = DateTime(2026, 10, 5, 12);
       final rows = rowsOn(oct5);
       await pumpSection(
@@ -475,11 +490,13 @@ void main() {
 
       expect(find.text('2 installments'), findsOneWidget);
       // The bills' amount due, not their balances (#142): 500 + 500, and
-      // with the penalty 1,000 + 100 + 3,500 = 4,600 (was 20,000 / 23,600).
+      // with the penalty 1,000 + 100 + 3,500 + the Sep 30 bill's flat 100
+      // (per missed bill, owner 2026-11-19) = 4,700 (was 4,600; before #142
+      // 20,000 / 23,600).
       expect(find.text(1000.toCurrency()), findsOneWidget);
-      expect(find.text(4600.toCurrency()), findsOneWidget);
+      expect(find.text(4700.toCurrency()), findsOneWidget);
       expect(find.text(20000.toCurrency()), findsNothing);
-      expect(find.textContaining('Late fee'), findsOneWidget);
+      expect(find.textContaining('Late fee'), findsNWidgets(2));
       expect(find.textContaining('Daily surcharge'), findsOneWidget);
       expect(find.textContaining('× 35'), findsOneWidget);
       expect(find.textContaining('3,500.00'), findsOneWidget);
@@ -540,7 +557,7 @@ void main() {
       expect(due.remainingTotal, closeTo(1900, 0.01));
     });
 
-    test('two missed bills (seen Oct 5): both owed now, the penalty once', () {
+    test('two missed bills (seen Oct 5): both owed, 3,600 + 100 flat', () {
       final oct5 = DateTime(2026, 10, 5, 12);
       final loan = openTermLoan(createdAt: DateTime(2026, 7, 2));
       final due = borrowerAmountsDue(
@@ -553,10 +570,12 @@ void main() {
         due.payNow.map((s) => DateUtils.dateOnly(s.dueAt)),
         [DateTime(2026, 8, 31), DateTime(2026, 9, 30)],
       );
-      expect(due.nextDuePenalty, closeTo(3600, 0.01));
-      expect(due.nextDueAmount, closeTo(4600, 0.01));
-      expect(due.remainingPenalty, closeTo(3600, 0.01));
-      expect(due.remainingTotal, closeTo(5100, 0.01));
+      // 100 + 100 x 35 on Aug 31 + the Sep 30 bill's flat 100 (per missed
+      // bill, owner 2026-11-19; was 3,600 / 4,600 / 5,100).
+      expect(due.nextDuePenalty, closeTo(3700, 0.01));
+      expect(due.nextDueAmount, closeTo(4700, 0.01));
+      expect(due.remainingPenalty, closeTo(3700, 0.01));
+      expect(due.remainingTotal, closeTo(5200, 0.01));
     });
 
     test('allowed late: 500 due, no penalty', () {
@@ -788,7 +807,8 @@ void main() {
       expect(overdue, hasLength(2));
       expect(
         penaltiesOf(overdue, [paidCycle(daysFromToday(-68))]),
-        [closeTo(3900, 0.01), 0],
+        // The flat 100 once on each missed bill (owner 2026-11-19; was 0).
+        [closeTo(3900, 0.01), closeTo(100, 0.01)],
       );
 
       await tester.pumpApp(
@@ -887,7 +907,8 @@ void main() {
         );
       }
 
-      test('1,000 pays both bills; the penalty is stored once', () async {
+      test('1,000 pays both bills; the stretch once, the flat fee on each',
+          () async {
         await payOverdue(1000);
 
         expect(written, hasLength(2));
@@ -896,7 +917,12 @@ void main() {
           everyElement(LoanStatus.paid_late),
         );
         expect(written.map((r) => r.daysLate), [38, 8]);
-        expect(written.map((r) => r.penalty), [closeTo(3900, 0.01), 0]);
+        // 100 + 3,800 on the first; the flat 100 once on the second too
+        // (per missed bill, owner 2026-11-19; was 0).
+        expect(
+          written.map((r) => r.penalty),
+          [closeTo(3900, 0.01), closeTo(100, 0.01)],
+        );
         expect(written.map((r) => r.interestPayment), [500, 500]);
         expect(written.map((r) => r.originalDueAt), [null, null]);
         expect(
@@ -1177,7 +1203,7 @@ void main() {
 
       test(
           'a rejection more than a term old: the Payment Center, client '
-          'detail and the borrower show the same rows, 5,100 once', () async {
+          'detail and the borrower show the same rows, 5,100 + 100', () async {
         stubStored(() => storedRows(paidDaysAgo: 80, submittedDaysAgo: 45));
         loanCreatedDaysAgo = 110;
 
@@ -1190,7 +1216,12 @@ void main() {
         expect(overdue.last.interestCharge, closeTo(416.67, 0.01));
         expect(paymentCenter.last.lateFrom, daysFromToday(10));
         final stored = storedRows(paidDaysAgo: 80, submittedDaysAgo: 45);
-        expect(penaltiesOf(overdue, stored), [closeTo(5100, 0.01), 0]);
+        // The stretch once; the flat 100 once on the -20 bill too (per
+        // missed bill, owner 2026-11-19; was 0).
+        expect(
+          penaltiesOf(overdue, stored),
+          [closeTo(5100, 0.01), closeTo(100, 0.01)],
+        );
 
         // What LoansBloc computes for client detail and the borrower: every
         // stored row goes to the engine (loans_bloc.dart, _calculateLoanOpen).
@@ -1202,8 +1233,8 @@ void main() {
           due.unpaid.map((r) => r.lateFrom),
           paymentCenter.map((r) => r.lateFrom),
         );
-        expect(due.remainingPenalty, closeTo(5100, 0.01));
-        expect(due.remainingTotal, closeTo(6516.67, 0.01));
+        expect(due.remainingPenalty, closeTo(5200, 0.01));
+        expect(due.remainingTotal, closeTo(6616.67, 0.01));
         expect(
           clientSchedules.fold<double>(
             0,
@@ -1215,7 +1246,7 @@ void main() {
                   loanRows: clientSchedules,
                 ).total,
           ),
-          closeTo(5100, 0.01),
+          closeTo(5200, 0.01),
         );
       });
     });
@@ -1664,9 +1695,12 @@ void main() {
     ]) {
       test(
           'ONE submission of both bills (Oct 5), 100 once + 0.1% a day, '
-          'confirm ${order.join(' then ')}: the stretch once, 450', () async {
-        // Aug 31 -> Oct 5 = 35 days: 100 + 35 x 10 = 450 (second review of
-        // #146: 0, each unconfirmed bill counted as already charged).
+          'confirm ${order.join(' then ')}: the stretch once, 450 + 100',
+          () async {
+        // Aug 31 -> Oct 5 = 35 days: 35 x 10 = 350 once (second review of
+        // #146: 0, each unconfirmed bill counted as already charged), plus
+        // the flat 100 on each bill (per missed bill, owner 2026-11-19; was
+        // 450 in all): the first confirmed 450, the other 100.
         loanPenalties = const [lateFee100, daily01pct];
         seed(recordTransfer: true, together: DateTime(2026, 10, 5, 12));
         for (final id in order) {
@@ -1680,13 +1714,14 @@ void main() {
         expect(read('B').daysLate, 5);
         expect(
           read('A').penalty + read('B').penalty,
-          closeTo(450, 0.01),
+          closeTo(550, 0.01),
         );
         expect(
           read(order.first).penalty,
           closeTo(450, 0.01),
-          reason: 'the first one confirmed carries it',
+          reason: 'the first one confirmed carries the stretch',
         );
+        expect(read(order.last).penalty, closeTo(100, 0.01));
       });
     }
 

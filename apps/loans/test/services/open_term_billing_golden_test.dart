@@ -65,8 +65,10 @@ import 'package:loooans_helpers/data_helpers.dart';
 //   G14e partial catch-up: only the Sep 15 bill paid Oct 2 -> 680 with that
 //        payment; the Sep 30 bill paid Oct 10: the stretch continues from
 //        Oct 2, 8 more days -> 320 (680 + 320 = 1,000 = 25 days x 40).
-//        "100 once" is charged Oct 2 and not again; monthly
-//        ceil(25/30) - ceil(17/30) = 0 more; per installment
+//        With "100 once" too: 780 on Oct 2, then 320 + 100 = 420 on Oct 10
+//        (MOVED 2026-11-19 with #148, was 320: a flat amount is charged per
+//        missed bill, owner's decision; the Sep 30 bill is 10 days late);
+//        monthly ceil(25/30) - ceil(17/30) = 0 more; per installment
 //        ceil(25/15) - ceil(17/15) = 0 more.
 //        Two stretches: Sep 15 paid Sep 20 (5 days) and Sep 30 paid Oct 5
 //        (5 days) -> "100 once" + 5 x 40 = 300 each, 600 in all.
@@ -179,14 +181,20 @@ import 'package:loooans_helpers/data_helpers.dart';
 //        (The fourth review's window dropped each 1-day bill.)
 //   G14q a top-up counts from its approval: 2,000 + 100 created Aug 6,
 //        approved Sep 5, the Aug 31 bill stored Aug 31 on 10,000 -> Sep 30 =
-//        12,100 x 5% + 2,100 x 5% x 25/30 (Aug 6-31, never billed) = 605 +
-//        87.50 = 692.50; Oct 30 605; Nov 29 605 (was 500 each). A top-up
-//        approved before approval times were recorded keeps the old rule
-//        (created before the row -> in it): 500, 500, 500.
+//        10,000 x 5% x 5/30 (Aug 31-Sep 5) + 12,100 x 5% x 25/30 (Sep 5-30)
+//        = 83.33 + 504.17 = 587.50; Oct 30 605; Nov 29 605 (was 500 each).
+//        Review of #149: the balance moves on the approval day, not the
+//        creation day (before: 605 + Aug 6-31's 87.50 = 692.50, interest on
+//        money not yet released). A top-up approved before approval times
+//        were recorded keeps the old rule (created before the row -> in
+//        it): 500, 500, 500.
 //   G14r two bills in ONE submission (Aug 31 and Sep 30, sent Oct 5; 100
 //        once + 0.1% a day of 10,000): the stretch Aug 31 -> Oct 5 = 35 days
-//        -> 100 + 350 = 450, once, in preview and in either confirmation
-//        order (was 0: each unconfirmed bill counted as already charged).
+//        -> 350 once, in preview and in either confirmation order (was 0:
+//        each unconfirmed bill counted as already charged), plus the flat
+//        100 on each bill: Aug 31 450, Sep 30 100, 550 in all (MOVED
+//        2026-11-19 with #148, was 450 + 0: a flat amount is charged per
+//        missed bill, owner's decision).
 
 const daily01 = Penalty(
   id: 'daily',
@@ -639,7 +647,7 @@ void main() {
       });
     }
 
-    test('G14e a partial catch-up continues the stretch: 680 then 320', () {
+    test('G14e a partial catch-up continues the stretch: 780 then 420', () {
       final loan = loanOf(term: '15,30', penalties: const [daily01, once100]);
       final rows = missed(oct2);
       final context = [paidAug30, ...rows];
@@ -661,7 +669,7 @@ void main() {
           asOf: oct10,
           loanRows: context,
         ).total,
-        closeTo(320, 0.01),
+        closeTo(320 + 100, 0.01),
       );
       PaymentConfirmationService.applyLateness(
         schedule: rows[1],
@@ -671,7 +679,11 @@ void main() {
         loanRows: context,
       );
       expect(rows[1].daysLate, 10);
-      expect(rows[1].penalty, closeTo(320, 0.01), reason: 'no second "once"');
+      expect(
+        rows[1].penalty,
+        closeTo(320 + 100, 0.01),
+        reason: 'the stretch adds 320; the flat 100 is per bill',
+      );
     });
 
     test('G14e monthly and per-installment periods are per stretch', () {
@@ -1306,7 +1318,7 @@ void main() {
           ],
         );
 
-    test('approved Sep 5, after the Aug 31 bill was stored: 692.50, 605, 605',
+    test('approved Sep 5, after the Aug 31 bill was stored: 587.50, 605, 605',
         () {
       final rows = billsWith(approvedAt: DateTime(2026, 9, 5));
       expect(rows, hasLength(3));
@@ -1314,7 +1326,7 @@ void main() {
         rows[0],
         due: DateTime(2026, 9, 30),
         days: 30,
-        interest: 692.50,
+        interest: 587.50,
       );
       expectBill(rows[1], due: DateTime(2026, 10, 30), days: 30, interest: 605);
       expectBill(rows[2], due: DateTime(2026, 11, 29), days: 30, interest: 605);
@@ -1326,7 +1338,8 @@ void main() {
     });
   });
 
-  group('G14r two bills in one submission owe the stretch once (450)', () {
+  group('G14r one submission of two bills: 550 (stretch once, fee per bill)',
+      () {
     final oct5 = DateTime(2026, 10, 5, 12);
     final paidAug1 =
         stored(id: 'sched-1', dueAt: DateTime(2026, 8), balance: 10000);
@@ -1347,7 +1360,7 @@ void main() {
               ..collectedAt = oct5,
         ];
 
-    test('preview: 450 on the Aug 31 bill, 0 on the Sep 30 bill', () {
+    test('preview: 450 on the Aug 31 bill, 100 on the Sep 30 bill', () {
       final rows = submittedTogether();
       final context = [paidAug1, ...rows];
 
@@ -1356,7 +1369,7 @@ void main() {
           (r) =>
               previewPenalty(schedule: r, loan: loan, loanRows: context).total,
         ),
-        [closeTo(450, 0.01), 0],
+        [closeTo(450, 0.01), closeTo(100, 0.01)],
       );
       expect(
         resolveLatenessTogether(
@@ -1365,13 +1378,12 @@ void main() {
           collectedAt: oct5,
           loanRows: context,
         ).map((r) => r.penalties.total),
-        [closeTo(450, 0.01), 0],
+        [closeTo(450, 0.01), closeTo(100, 0.01)],
       );
     });
 
     for (final reverse in [false, true]) {
-      test('confirmed ${reverse ? 'Sep 30 first' : 'Aug 31 first'}: 450 once',
-          () {
+      test('confirmed ${reverse ? 'Sep 30 first' : 'Aug 31 first'}: 550', () {
         final rows = submittedTogether();
         final context = [paidAug1, ...rows];
         for (final row in reverse ? rows.reversed : rows) {
@@ -1386,7 +1398,7 @@ void main() {
 
         expect(
           rows.fold<double>(0, (sum, r) => sum + r.penalty),
-          closeTo(450, 0.01),
+          closeTo(550, 0.01),
         );
         expect(rows.map((r) => r.daysLate), [35, 5]);
       });

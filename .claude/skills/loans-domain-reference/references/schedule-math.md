@@ -150,8 +150,10 @@ one row per top-up.
 
 1. **Row 0** (principal release): `dueAt = loan.createdAt`, `principalLoan =
    amount`, `isPlaceholder: true`. Not an installment.
-2. **THE INVARIANT:** top-ups are processed `sortedBy((a) => a.createdAt)`
-   ascending (finstack#4 / PR finstack#33).
+2. **THE INVARIANT:** top-ups are processed `sortedBy((a) => a.effectiveAt)`
+   ascending (finstack#4 / PR finstack#33). `effectiveAt` = `approvedAt ??
+   createdAt`: a top-up moves the balance, the bill and the penalty base from
+   its approval day (review of #149; G14q 692.50 -> 587.50).
 3. **Billing (R5)** happens in `calculateOpenTermSchedules`: only an APPROVED
    top-up moves the balance (#137; a pending or declined row is shown with the
    balance unchanged). A top-up not yet in

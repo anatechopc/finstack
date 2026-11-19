@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
+import 'package:loooans_helpers/data_helpers.dart';
 
 class BorrowerLoanGroup extends Equatable {
   const BorrowerLoanGroup({
@@ -22,6 +23,13 @@ class BorrowerLoanGroup extends Equatable {
   /// payments in the stretch already charged from these.
   final List<LoanSchedule> storedSchedules;
   final List<BorrowerLoanGroup> childLoans;
+
+  /// The stored rows and the bills computed after them, each once (the
+  /// stored unpaid rows are in both lists): what the top-up warning reads.
+  List<LoanSchedule> get scheduleRows => [
+        ...storedSchedules,
+        ...actionableSchedules.where((s) => s.id == NO_ID),
+      ];
 
   @override
   List<Object?> get props => [

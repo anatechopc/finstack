@@ -453,6 +453,7 @@ class ClientDetailLoanBody extends StatelessWidget {
                     interestRate: selectedLoan.interestRate,
                     penalties: selectedLoan.penalties,
                     allowLatePayments: selectedLoan.allowLatePayments,
+                    isOpenTerm: selectedLoan.period == 0,
                   );
                 },
               ),
@@ -501,6 +502,7 @@ class ClientDetailLoanBody extends StatelessWidget {
                 interestRate: selectedLoan.interestRate,
                 penalties: selectedLoan.penalties,
                 allowLatePayments: selectedLoan.allowLatePayments,
+                isOpenTerm: selectedLoan.period == 0,
               );
             },
           ),
