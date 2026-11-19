@@ -5,10 +5,10 @@ import 'package:jiffy/jiffy.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/services/authentication_service.dart';
+import 'package:loooans/services/loan_calculation_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
-import 'package:loooans_helpers/data_helpers.dart';
 
 class ClientDetailScheduleItem extends StatelessWidget {
   const ClientDetailScheduleItem({
@@ -66,6 +66,34 @@ class ClientDetailScheduleItem extends StatelessWidget {
     return LoanStatus.not_paid.label;
   }
 
+  static bool _isUnpaid(LoanSchedule s) =>
+      s.status == LoanStatus.not_paid ||
+      s.status == LoanStatus.not_paid_overdue;
+
+  /// Whether the loan bills open-term cycles at all: a pending, declined,
+  /// settled or bad-debt loan has nothing to pay or penalize.
+  bool get _loanBills {
+    final currentLoan = loan;
+    return currentLoan == null ||
+        LoanCalculationService.billsOpenTerm(currentLoan);
+  }
+
+  /// Open-term bills are paid oldest first: the engine bills only after the
+  /// last stored row, so paying a later computed bill first would drop the
+  /// earlier one. Only the earliest unpaid bill, stored (a rejected
+  /// submission) or computed, can be paid.
+  bool get _isPayableOpenTermBill =>
+      _loanBills &&
+      _isUnpaid(schedule) &&
+      !loanRows.any(
+        (other) =>
+            !identical(other, schedule) &&
+            other.isOpenTerm &&
+            !other.isPlaceholder &&
+            _isUnpaid(other) &&
+            other.dueAt.isBefore(schedule.dueAt),
+      );
+
   String _displayAmount(double amount) {
     if (amount == 0) {
       return '';
@@ -79,7 +107,7 @@ class ClientDetailScheduleItem extends StatelessWidget {
   List<Widget> _penaltyLines() {
     const style = TextStyle(color: AppColors.red2, fontSize: 11);
     final currentLoan = loan;
-    final preview = currentLoan == null
+    final preview = currentLoan == null || (schedule.isOpenTerm && !_loanBills)
         ? PenaltyResult.none
         : previewPenalty(
             schedule: schedule,
@@ -350,23 +378,11 @@ class ClientDetailScheduleItem extends StatelessWidget {
     final user = AuthenticationService.instance.user;
     final isSelfManaged =
         company.managementType == CompanyManagementType.selfManaged;
-    // Computed open-term bills are paid oldest first: the engine bills only
-    // after the last stored row, so paying a later one first would drop the
-    // earlier one from the schedule.
-    final laterThanAnUnpaidBill = schedule.isOpenTerm &&
-        schedule.id == NO_ID &&
-        loanRows.any(
-          (other) =>
-              other.isOpenTerm &&
-              !other.isPlaceholder &&
-              other.id == NO_ID &&
-              other.status == LoanStatus.not_paid &&
-              other.dueAt.isBefore(schedule.dueAt),
-        );
     final showMakePaymentButton = isSelfManaged &&
         (user.isAdmin() || user.isTeller()) &&
-        schedule.status == LoanStatus.not_paid &&
-        !laterThanAnUnpaidBill;
+        (schedule.isOpenTerm && !schedule.isPlaceholder
+            ? _isPayableOpenTermBill
+            : schedule.status == LoanStatus.not_paid);
     final showAdditionalLoanAmountDetailsButton = isSelfManaged &&
         (user.isLoanOfficer() || user.isAdmin()) &&
         schedule.status == LoanStatus.pending &&

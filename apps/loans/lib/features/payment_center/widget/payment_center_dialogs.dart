@@ -159,6 +159,9 @@ Future<void> showPaymentCenterPaymentDialog(
                           PaymentPenaltySection(
                             schedules: [schedule],
                             loan: loan,
+                            loanRows: innerContext
+                                .read<PaymentCenterBloc>()
+                                .loanRowsOf(loan.id),
                           ),
                         ],
                       ),

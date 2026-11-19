@@ -418,6 +418,11 @@ void main() {
       );
 
       expect(find.text('2 installments'), findsOneWidget);
+      // The bills' amount due, not their balances (#142): 500 + 500, and
+      // with the penalty 1,000 + 100 + 3,500 = 4,600 (was 20,000 / 23,600).
+      expect(find.text(1000.toCurrency()), findsOneWidget);
+      expect(find.text(4600.toCurrency()), findsOneWidget);
+      expect(find.text(20000.toCurrency()), findsNothing);
       expect(find.textContaining('Late fee'), findsOneWidget);
       expect(find.textContaining('Daily surcharge'), findsOneWidget);
       expect(find.textContaining('× 35'), findsOneWidget);
@@ -623,6 +628,8 @@ void main() {
           limit: any(named: 'limit'),
           page: any(named: 'page'),
           reset: any(named: 'reset'),
+          includeAdditionalLoanAmounts:
+              any(named: 'includeAdditionalLoanAmounts'),
         ),
       ).thenAnswer((invocation) async {
         final statements =
@@ -751,11 +758,16 @@ void main() {
 
     group('bulk overdue payment (the real handler)', () {
       late List<LoanSchedule> written;
+      late List<Payment> paymentDocs;
+      late List<LoanStatus> loanStatuses;
 
       setUp(() {
         loanCreatedDaysAgo = 98;
         stubStored(() => [paidCycle(daysFromToday(-68))]);
         written = [];
+        paymentDocs = [];
+        loanStatuses = [];
+        var paymentCount = 0;
         when(() => users.get(id: any(named: 'id'))).thenAnswer(
           (_) async => User()
             ..id = 'u1'
@@ -764,15 +776,20 @@ void main() {
             ..emailAddress = 'bea@example.com',
         );
         when(() => payments.add(data: any(named: 'data'))).thenAnswer(
-          (invocation) async =>
-              (invocation.namedArguments[#data] as Payment)..id = 'pay-1',
+          (invocation) async {
+            final payment = (invocation.namedArguments[#data] as Payment)
+              ..id = 'pay-${++paymentCount}';
+            paymentDocs.add(payment);
+            return payment;
+          },
         );
         when(() => payments.update(data: any(named: 'data'))).thenAnswer(
           (invocation) async => invocation.namedArguments[#data] as Payment,
         );
         when(() => schedules.add(data: any(named: 'data'))).thenAnswer(
           (invocation) async {
-            final row = invocation.namedArguments[#data] as LoanSchedule;
+            final row = (invocation.namedArguments[#data] as LoanSchedule)
+              ..id = 'stored-${written.length + 1}';
             written.add(row);
             return row;
           },
@@ -782,9 +799,11 @@ void main() {
             data: any(named: 'data'),
             updateView: any(named: 'updateView'),
           ),
-        ).thenAnswer(
-          (invocation) async => invocation.namedArguments[#data] as Loan,
-        );
+        ).thenAnswer((invocation) async {
+          final loan = invocation.namedArguments[#data] as Loan;
+          loanStatuses.add(loan.status);
+          return loan;
+        });
         when(() => loans.get(id: any(named: 'id'))).thenAnswer(
           (_) async => openTermLoan(createdAt: daysFromToday(-98)),
         );
@@ -795,15 +814,16 @@ void main() {
         final bloc = newBloc()
           ..add(
             MakeOverduePaymentEvent(
-              loan: openTermLoan(createdAt: daysFromToday(-98)),
+              loan: openTermLoan(createdAt: daysFromToday(-98))
+                ..additionalLoanAmounts = List.of(loanTopUps),
               schedules: overdue,
               totalPrincipalPayment: 0,
               totalInterestPayment: totalInterest,
               otpVerified: true,
             ),
           );
-        // The handler writes every row, then stops at the cash-pool step
-        // (its repository cannot be mocked).
+        // The handler writes every row and the loan, then stops at the
+        // cash-pool step (its repository cannot be mocked).
         await bloc.stream.firstWhere(
           (s) =>
               s.status == PaymentCenterStatus.error ||
@@ -822,10 +842,27 @@ void main() {
         expect(written.map((r) => r.daysLate), [38, 8]);
         expect(written.map((r) => r.penalty), [closeTo(3900, 0.01), 0]);
         expect(written.map((r) => r.interestPayment), [500, 500]);
+        expect(written.map((r) => r.originalDueAt), [null, null]);
         expect(
           written.map((r) => DateUtils.dateOnly(r.dueAt)),
           [daysFromToday(-38), daysFromToday(-8)],
         );
+        // One confirmed payment per bill, linked both ways.
+        expect(paymentDocs, hasLength(2));
+        expect(
+          paymentDocs.map((p) => p.status),
+          everyElement(PaymentStatus.confirmed),
+        );
+        expect(
+          paymentDocs.map((p) => p.loanScheduleId),
+          ['stored-1', 'stored-2'],
+        );
+        expect(written.map((r) => r.paymentId), ['pay-1', 'pay-2']);
+        expect(
+          paymentDocs.map((p) => p.confirmedBy),
+          ['teller-1', 'teller-1'],
+        );
+        expect(loanStatuses, [LoanStatus.paid_late]);
       });
 
       test('700 pays 500 + 200: the 300 short carries to the next bill',
@@ -833,6 +870,7 @@ void main() {
         await payOverdue(700);
 
         expect(written.map((r) => r.interestPayment), [500, 200]);
+        expect(loanStatuses, [LoanStatus.paid_late]);
         final next = LoanCalculationService.calculateOpenTermSchedules(
           amount: 10000,
           date: daysFromToday(-98),
@@ -845,12 +883,75 @@ void main() {
         expect(next.amortization, closeTo(800, 0.01));
       });
 
-      test('400 pays the first bill only; the second stays unpaid', () async {
+      test('400 pays the first bill only; the loan stays overdue', () async {
         await payOverdue(400);
 
         expect(written, hasLength(1));
         expect(written.single.interestPayment, 400);
         expect(written.single.penalty, closeTo(3900, 0.01));
+        expect(paymentDocs, hasLength(1));
+        expect(
+          loanStatuses,
+          [LoanStatus.not_paid_overdue],
+          reason: 'the earliest bill still unpaid (was paid_late)',
+        );
+      });
+
+      test(
+          'with a top-up: both screens bill the same, and the next bill '
+          'keeps it (605, not 500)', () async {
+        // Top-up 2,000 + 100 fifty days ago (#135): the -38 bill = 10,000 x
+        // 5% x 18/30 + 12,100 x 5% x 12/30 = 300 + 242 = 542; the -8 bill =
+        // 12,100 x 5% = 605; after both are paid the +22 bill is 605.
+        loanTopUps = [
+          AdditionalLoanAmount()
+            ..id = 'top-1'
+            ..amount = 2000
+            ..additionalCharges = 100
+            ..advanceCharges = 0
+            ..createdAt = daysFromToday(-50)
+            ..status = LoanStatus.approved,
+        ];
+        final overdue = overdueOf(await actionable()).toList();
+        verify(
+          () => loans.load(
+            statements: any(named: 'statements'),
+            limit: any(named: 'limit'),
+            page: any(named: 'page'),
+            reset: any(named: 'reset'),
+            includeAdditionalLoanAmounts:
+                any(named: 'includeAdditionalLoanAmounts', that: isTrue),
+          ),
+        ).called(greaterThan(0));
+        expect(
+          overdue.map((r) => r.interestCharge.toStringAsFixed(2)),
+          ['542.00', '605.00'],
+        );
+
+        final loan = openTermLoan(createdAt: daysFromToday(-98))
+          ..additionalLoanAmounts = List.of(loanTopUps);
+        final clientDetail =
+            clientRowsNow(loan, [paidCycle(daysFromToday(-68))])
+                .where((r) => r.id == NO_ID && !r.isPlaceholder)
+                .take(2);
+        expect(
+          clientDetail.map((r) => (r.outstandingBalance, r.interestCharge)),
+          overdue.map((r) => (r.outstandingBalance, r.interestCharge)),
+        );
+
+        await payOverdue(542 + 605);
+        expect(written.map((r) => r.outstandingBalance), [12100, 12100]);
+        final next = LoanCalculationService.calculateOpenTerm(
+          amount: 10000,
+          date: daysFromToday(-98),
+          interestRate: 5,
+          term: '1m',
+          companyId: 'co-1',
+          paidSchedules: [paidCycle(daysFromToday(-68)), ...written],
+          loan: loan,
+        ).schedules.last;
+        expect(DateUtils.dateOnly(next.dueAt), daysFromToday(22));
+        expect(next.interestCharge, closeTo(605, 0.01));
       });
     });
 
@@ -1038,6 +1139,365 @@ void main() {
         ),
         hasLength(2),
       );
+    });
+  });
+
+  group('review of #146: payable rows and loan status', () {
+    setUp(() {
+      AuthenticationService.instance
+        ..user = (User()
+          ..id = 'teller-1'
+          ..userRole = UserRole.admin)
+        ..company = (Company()
+          ..id = 'co-1'
+          ..managementType = CompanyManagementType.selfManaged);
+    });
+
+    Future<List<OutlinedButton>> pumpButtons(
+      WidgetTester tester,
+      Loan loan,
+      List<LoanSchedule> rows,
+    ) async {
+      tester.view
+        ..physicalSize = const Size(2400, 800)
+        ..devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpApp(
+        Scaffold(
+          body: Column(
+            children: [
+              for (final row in rows.where((r) => !r.isPlaceholder))
+                ClientDetailScheduleItem(
+                  index: 2,
+                  schedule: row,
+                  onMakePayment: (_) {},
+                  loan: loan,
+                  loanRows: rows,
+                ),
+            ],
+          ),
+        ),
+      );
+
+      return tester
+          .widgetList<OutlinedButton>(
+            find.widgetWithText(OutlinedButton, 'Make payment'),
+          )
+          .toList();
+    }
+
+    testWidgets('a rejected stored row is payable; the bill after it waits',
+        (tester) async {
+      // Rejected submission (due 2 days ago, cycle due 8 days ago) and the
+      // scheduled +22 bill computed after it.
+      final loan = openTermLoan(createdAt: daysFromToday(-68));
+      final rows = clientRowsNow(loan, [
+        paidCycle(daysFromToday(-38)),
+        rejectedSubmission(
+          paidDue: daysFromToday(-38),
+          submittedAt: daysFromToday(-2).add(const Duration(hours: 12)),
+        ),
+      ]);
+      final buttons = await pumpButtons(tester, loan, rows);
+
+      // Rows with a button: the rejected stored row and the computed bill
+      // (the paid row has none).
+      expect(buttons, hasLength(2));
+      expect(buttons[0].onPressed, isNotNull, reason: 'the rejected row');
+      expect(buttons[1].onPressed, isNull, reason: 'the later computed bill');
+    });
+
+    testWidgets('a settled loan: no bill, no Make payment, no penalty',
+        (tester) async {
+      final loan = openTermLoan(createdAt: daysFromToday(-68))
+        ..status = LoanStatus.completed;
+      final rows = clientRowsNow(loan, [
+        paidCycle(daysFromToday(-38)),
+        rejectedSubmission(
+          paidDue: daysFromToday(-38),
+          submittedAt: daysFromToday(-2).add(const Duration(hours: 12)),
+        ),
+      ]);
+      expect(rows.where((r) => r.id == NO_ID && !r.isPlaceholder), isEmpty);
+
+      final buttons = await pumpButtons(tester, loan, rows);
+      expect(buttons.map((b) => b.onPressed), everyElement(isNull));
+      expect(find.textContaining('penalty'), findsNothing);
+    });
+  });
+
+  group('Payment Center (bloc): loan status and rows', () {
+    late _Loans loans;
+    late _Schedules schedules;
+    var status = LoanStatus.approved;
+
+    setUpAll(() {
+      registerFallbackValue(Loan());
+    });
+
+    setUp(() {
+      loans = _Loans();
+      schedules = _Schedules();
+      status = LoanStatus.approved;
+      when(
+        () => loans.load(
+          statements: any(named: 'statements'),
+          limit: any(named: 'limit'),
+          page: any(named: 'page'),
+          reset: any(named: 'reset'),
+          includeAdditionalLoanAmounts:
+              any(named: 'includeAdditionalLoanAmounts'),
+        ),
+      ).thenAnswer((invocation) async {
+        final statements =
+            invocation.namedArguments[#statements] as List<QueryStatement>;
+        return statements.first.field == 'user_id'
+            ? [openTermLoan(createdAt: daysFromToday(-68))..status = status]
+            : <Loan>[];
+      });
+      when(
+        () => schedules.allByLoanId(
+          loanId: any(named: 'loanId'),
+          onlyPaid: any(named: 'onlyPaid'),
+        ),
+      ).thenAnswer((_) async => [paidCycle(daysFromToday(-38))]);
+    });
+
+    Future<PaymentCenterBloc> selected() async {
+      final auth = _Auth();
+      when(() => auth.company).thenReturn(Company()..id = 'co-1');
+      final bloc = PaymentCenterBloc.withDependencies(
+        userRepository: _Users(),
+        loanRepository: loans,
+        loanScheduleRepository: schedules,
+        paymentRepository: _Payments(),
+        storageRepository: _Storage(),
+        authService: auth,
+      )..add(SelectBorrowerEvent(borrower: User()..id = 'u1'));
+      addTearDown(bloc.close);
+      await bloc.stream.firstWhere(
+        (s) => s.status == PaymentCenterStatus.borrowerSelected,
+      );
+      return bloc;
+    }
+
+    test('the single-payment path gets the stored and listed rows', () async {
+      final bloc = await selected();
+      final rows = bloc.loanRowsOf('loan-1');
+
+      expect(rows.map((r) => r.id), ['sched-1', NO_ID, NO_ID]);
+      expect(
+        rows.skip(1).map((r) => DateUtils.dateOnly(r.dueAt)),
+        [daysFromToday(-8), daysFromToday(22)],
+      );
+    });
+
+    for (final inactive in [
+      LoanStatus.pending,
+      LoanStatus.declined,
+      LoanStatus.completed,
+      LoanStatus.bad_debt,
+    ]) {
+      test('a ${inactive.name} loan lists nothing to pay', () async {
+        status = inactive;
+        final bloc = await selected();
+
+        expect(bloc.state.borrowerLoans.single.actionableSchedules, isEmpty);
+      });
+    }
+  });
+
+  group('borrower submissions on an open-term loan (the real confirm)', () {
+    // Bills A (due Aug 31) and B (due Sep 30) of the G13 loan (10,000 at 5%,
+    // paid cycle Aug 1; 100 once + 1% a day). A was submitted Sep 8, B on
+    // Oct 8. Each is settled at its own transfer: A is 8 days late (900), B
+    // is 8 days late (900), in either order of confirmation: 1,800 (review
+    // of #146: B first charged 3,900 + 900 = 4,800, because the submitted A
+    // still counted as unpaid).
+    final sep8 = DateTime(2026, 9, 8, 12);
+    final oct8 = DateTime(2026, 10, 8, 12);
+    late Map<String, Map<String, dynamic>> stored;
+    late Map<String, Payment> paymentDocs;
+    late List<LoanStatus> loanStatuses;
+    late PaymentConfirmationService service;
+
+    LoanSchedule read(String id) =>
+        LoanScheduleEntity.fromJson(stored[id]!).toLoanSchedule();
+
+    void seed({required bool recordTransfer}) {
+      final bills = LoanCalculationService.calculateOpenTermSchedules(
+        amount: 10000,
+        date: DateTime(2026, 7, 2),
+        interestRate: 5,
+        term: '1m',
+        companyId: 'co-1',
+        paidSchedules: [paidCycle(DateTime(2026, 8))],
+        now: oct8,
+      ).schedules;
+      LoanSchedule submitted(LoanSchedule bill, String id, DateTime at) => bill
+        ..id = id
+        ..loanId = 'loan-1'
+        ..status = LoanStatus.payment_submitted
+        ..paymentId = 'pay-$id'
+        ..collectedAt = recordTransfer ? at : null;
+
+      stored = {
+        'sched-1': paidCycle(DateTime(2026, 8)).toJson(),
+        'A': submitted(bills[0], 'A', sep8).toJson(),
+        'B': submitted(bills[1], 'B', oct8).toJson(),
+      };
+      paymentDocs = {
+        for (final (id, at) in [('A', sep8), ('B', oct8)])
+          'pay-$id': Payment()
+            ..id = 'pay-$id'
+            ..loanScheduleId = id
+            ..createdAt = at
+            ..status = PaymentStatus.pending,
+      };
+    }
+
+    setUpAll(() {
+      registerFallbackValue(Loan());
+      registerFallbackValue(LoanSchedule());
+      registerFallbackValue(Payment());
+    });
+
+    setUp(() {
+      final schedules = _Schedules();
+      final loans = _Loans();
+      final payments = _Payments();
+      loanStatuses = [];
+      when(() => schedules.get(id: any(named: 'id'))).thenAnswer(
+        (invocation) async => read(invocation.namedArguments[#id] as String),
+      );
+      when(
+        () => schedules.load(
+          statements: any(named: 'statements'),
+          limit: any(named: 'limit'),
+          page: any(named: 'page'),
+          reset: any(named: 'reset'),
+        ),
+      ).thenAnswer((_) async => [for (final id in stored.keys) read(id)]);
+      when(() => schedules.update(data: any(named: 'data'))).thenAnswer(
+        (invocation) async {
+          final row = invocation.namedArguments[#data] as LoanSchedule;
+          stored[row.id] = row.toJson();
+          return row;
+        },
+      );
+      when(() => loans.get(id: any(named: 'id'))).thenAnswer(
+        (_) async => openTermLoan(createdAt: DateTime(2026, 7, 2)),
+      );
+      when(
+        () => loans.update(
+          data: any(named: 'data'),
+          updateView: any(named: 'updateView'),
+        ),
+      ).thenAnswer((invocation) async {
+        final loan = invocation.namedArguments[#data] as Loan;
+        loanStatuses.add(loan.status);
+        return loan;
+      });
+      when(() => payments.get(id: any(named: 'id'))).thenAnswer(
+        (invocation) async =>
+            paymentDocs[invocation.namedArguments[#id] as String]!,
+      );
+      when(() => payments.update(data: any(named: 'data'))).thenAnswer(
+        (invocation) async => invocation.namedArguments[#data] as Payment,
+      );
+      service = PaymentConfirmationService(
+        loanScheduleRepository: schedules,
+        loanRepository: loans,
+        paymentRepository: payments,
+      );
+    });
+
+    for (final recordTransfer in [true, false]) {
+      for (final order in [
+        ['A', 'B'],
+        ['B', 'A'],
+      ]) {
+        test(
+            'confirm ${order.join(' then ')}'
+            '${recordTransfer ? '' : ' (rows submitted before the transfer '
+                'time was recorded)'}: 900 + 900', () async {
+          seed(recordTransfer: recordTransfer);
+          for (final id in order) {
+            await service.confirm(
+              payment: paymentDocs['pay-$id']!,
+              confirmedById: 'teller-1',
+            );
+          }
+
+          for (final id in ['A', 'B']) {
+            final row = read(id);
+            expect(row.status, LoanStatus.paid_late, reason: id);
+            expect(row.daysLate, 8, reason: id);
+            expect(row.penalty, closeTo(900, 0.01), reason: id);
+            expect(row.paymentId, 'pay-$id');
+            expect(paymentDocs['pay-$id']!.status, PaymentStatus.confirmed);
+          }
+          expect(loanStatuses, [LoanStatus.paid_late, LoanStatus.paid_late]);
+        });
+      }
+    }
+
+    test(
+        'the preview equals the charge: B owes 900 before and after it is '
+        'submitted', () {
+      seed(recordTransfer: true);
+      final loan = openTermLoan(createdAt: DateTime(2026, 7, 2));
+      final rows = [for (final id in stored.keys) read(id)];
+      final unpaidB = read('B')
+        ..status = LoanStatus.not_paid
+        ..paymentId = null
+        ..collectedAt = null;
+
+      expect(
+        previewPenalty(
+          schedule: unpaidB,
+          loan: loan,
+          asOf: oct8,
+          loanRows: [rows[0], rows[1], unpaidB],
+        ).total,
+        closeTo(900, 0.01),
+        reason: 'the borrower before submitting (was 0 behind the submitted A)',
+      );
+      expect(
+        resolveLatenessTogether(
+          schedules: [read('B')],
+          loan: loan,
+          collectedAt: oct8,
+          loanRows: rows,
+        ).single.penalties.total,
+        closeTo(900, 0.01),
+        reason: 'the Payment Center card (was 3,900)',
+      );
+    });
+
+    test('reject B: the row is unpaid and overdue again, not settled',
+        () async {
+      seed(recordTransfer: true);
+      await service.reject(
+        payment: paymentDocs['pay-B']!,
+        confirmedById: 'teller-1',
+        reason: 'wrong amount',
+      );
+
+      final row = read('B');
+      expect(row.status, LoanStatus.not_paid_overdue);
+      expect(row.paymentId, isNull);
+      expect(row.paidAt, isNull);
+      expect(row.collectedAt, isNull);
+      expect(paymentDocs['pay-B']!.status, PaymentStatus.rejected);
+      expect(loanStatuses, [LoanStatus.not_paid_overdue]);
+
+      // Confirming A afterwards still charges A's own 8 days.
+      await service.confirm(
+        payment: paymentDocs['pay-A']!,
+        confirmedById: 'teller-1',
+      );
+      expect(read('A').penalty, closeTo(900, 0.01));
     });
   });
 }

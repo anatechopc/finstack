@@ -53,13 +53,11 @@ class _PaymentPenaltySectionState extends State<PaymentPenaltySection> {
       for (var i = 0; i < widget.schedules.length; i++)
         (schedule: widget.schedules[i], lateness: latenesses[i]),
     ];
+    // Each bill's amount due: an open-term bill's includes a carried
+    // shortfall (R4); its balance is not owed now (#142).
     final amountDue = results.fold<double>(
       0,
-      (sum, r) =>
-          sum +
-          (r.schedule.isOpenTerm
-              ? r.schedule.outstandingBalance
-              : r.schedule.amortization),
+      (sum, r) => sum + r.schedule.amortization,
     );
     final penaltyTotal = results.fold<double>(
       0,

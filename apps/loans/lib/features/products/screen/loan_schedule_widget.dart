@@ -5,6 +5,7 @@ import 'package:gap/gap.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
+import 'package:loooans/services/loan_calculation_service.dart';
 import 'package:loooans/utils/constants.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
@@ -224,7 +225,9 @@ class LoanScheduleWidget extends StatelessWidget {
     List<LoanSchedule> loanRows,
   ) {
     const style = TextStyle(color: AppColors.red2, fontSize: 11);
-    final preview = loan == null
+    // A pending, declined, settled or bad-debt open-term loan owes nothing.
+    final preview = loan == null ||
+            (schedule.isOpenTerm && !LoanCalculationService.billsOpenTerm(loan))
         ? PenaltyResult.none
         : previewPenalty(schedule: schedule, loan: loan, loanRows: loanRows);
 
