@@ -132,9 +132,11 @@ figures (40,000; bills Sep 15 and Sep 30 paid Oct 2): 0.1%/day 680, 10%/month
   into Mar 2 / May 1).
 - `'15d'` → creation day + 15k; anything else → creation day + 30k (local
   creation day). A stored bill whose cycle date (`original_due_at ?? due_at`)
-  is within one day of a scheduled date is that bill (no 1-day bills from
-  rows dated in UTC); a row further away (an old clamp row) does not move the
-  schedule.
+  is off the schedule by one day is the scheduled bill a day after it (no
+  1-day bills from rows dated in UTC); a row on a scheduled date never absorbs
+  the next one (salary days a day apart, `'15,16'`, `'1,30'` after Feb 28,
+  keep their 1-day bill); a row further away (an old clamp row) does not move
+  the schedule.
 - All days are local calendar days (creation day, stored rows, top-ups, today),
   and interest days are counted in calendar days, so the same loan reads the
   same on a UTC and a Manila device and a daylight-saving change cannot drop a

@@ -164,7 +164,7 @@ Notes:
 - G5d and G4c run through the S2 seam (2026-09-08). Since the owner rules
   R1-R5 (2026-11-19, G14) an overdue bill keeps its date and bills its own
   cycle; the one-month cap G4c pinned (campaign D12, finstack#120) is gone.
-- **G14** (`test/services/open_term_billing_golden_test.dart`, 48 scenarios)
+- **G14** (`test/services/open_term_billing_golden_test.dart`, 51 scenarios)
   pins R1-R5 with the owner's numbers; its derivations are at the top of the
   file. Run it under `TZ=Asia/Manila` too (G14m compares zones). Since the
   #146 review the engine counts days in calendar days, so G5 and G5b pass
