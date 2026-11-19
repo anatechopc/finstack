@@ -122,7 +122,10 @@ Future<void> showPaymentCenterPaymentDialog(
                                     (value) {
                                       if (value == null) return null;
                                       final parsed = double.parse(value);
-                                      if (parsed <= 0) {
+                                      // Read-only on a fixed-term row; a
+                                      // remainder row bills no interest
+                                      // (#152).
+                                      if (parsed <= 0 && schedule.isOpenTerm) {
                                         return 'Amount should be greater than 0';
                                       }
                                       return null;
@@ -350,7 +353,10 @@ Future<void> showOverduePaymentDialog(
                                     (value) {
                                       if (value == null) return null;
                                       final parsed = double.parse(value);
-                                      if (parsed <= 0) {
+                                      // Read-only on fixed-term rows; a
+                                      // remainder row bills no interest
+                                      // (#152).
+                                      if (parsed <= 0 && isOpenTerm) {
                                         return 'Amount should be greater than 0';
                                       }
                                       return null;

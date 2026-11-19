@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
+import 'package:loooans/services/loan_calculation_service.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:payment_repository/payment_repository.dart';
 
@@ -281,19 +282,22 @@ class PaymentConfirmationService {
     );
   }
 
-  /// True when a fixed-term loan has all of its scheduled payments paid.
+  /// True when a fixed-term loan has all of its scheduled payments paid and
+  /// a paid row left no principal owed (#152: a short payment leaves a
+  /// remainder, so the count alone is not enough).
   /// Open-term loans (period == 0) are indefinite and never "fully paid" here.
   /// 15-day-term loans have twice the period's number of schedules.
   bool _fixedTermFullyPaid(Loan loan, List<LoanSchedule> schedules) {
     if (loan.period == 0) return false;
-    final paidCount = schedules
+    final paid = schedules
         .where(
           (s) =>
               s.status == LoanStatus.paid_on_time ||
               s.status == LoanStatus.paid_late,
         )
-        .length;
+        .toList();
     final expectedSchedules = loan.period * (loan.term == '15d' ? 2 : 1);
-    return paidCount >= expectedSchedules;
+    return paid.length >= expectedSchedules &&
+        !paid.every(LoanCalculationService.leavesPrincipal);
   }
 }

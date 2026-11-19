@@ -76,6 +76,12 @@ class LoanCalculationService {
   /// Calculates loan schedules for fixed-term loans.
   ///
   /// P = (Pv*R) / [1 - (1 + R)^(-n)]
+  ///
+  /// Resuming after the stored [paidSchedules] (owner, 2026-11-19, #152):
+  /// the next bill is the amortization plus the principal the last stored
+  /// row left unpaid, and the last bill clears the whole balance, rounding
+  /// included. When every bill is stored and the last one left principal
+  /// owed, one more row bills it: due on the last due date, no interest.
   static LoanCalculationResult calculateFixedTerm({
     required double amount,
     required int monthsToPay,
@@ -87,13 +93,21 @@ class LoanCalculationService {
   }) {
     final schedules = <LoanSchedule>[];
     var totalLoanPayment = 0.0;
-    paidSchedules.sortBy((sched) => sched.dueAt);
+    // A remainder row shares the last due date; the balance only falls, so
+    // the lower balance is the later row.
+    paidSchedules.sortByCompare(
+      (sched) => sched,
+      (a, b) => a.dueAt != b.dueAt
+          ? a.dueAt.compareTo(b.dueAt)
+          : b.outstandingBalance.compareTo(a.outstandingBalance),
+    );
     var monthlyInterestRate = interestRate / 100;
     var outstandingBalance = amount;
     var numOfPayments = monthsToPay;
     var nextMonthDate = Jiffy.parseFromDateTime(date).startOf(Unit.day);
 
     var loanMonthlyAmortization = 0.0;
+    var carry = 0.0;
 
     if (paidSchedules.isEmpty) {
       loanMonthlyAmortization = amount.calculateMonthlyPayment(
@@ -104,6 +118,7 @@ class LoanCalculationService {
     } else {
       loanMonthlyAmortization = paidSchedules.first.amortization;
       outstandingBalance = paidSchedules.last.outstandingBalance;
+      carry = _principalShortfall(paidSchedules.last);
       nextMonthDate = Jiffy.parseFromMillisecondsSinceEpoch(
         paidSchedules.last.dueAt.millisecondsSinceEpoch,
       ).startOf(Unit.day);
@@ -132,8 +147,13 @@ class LoanCalculationService {
     for (var i = 1; i <= numOfPayments; i++) {
       final beginningBalance = outstandingBalance;
       final interestPayment = outstandingBalance * monthlyInterestRate;
-      final monthlyAmort =
-          min(loanMonthlyAmortization, beginningBalance + interestPayment);
+      final monthlyAmort = i == numOfPayments
+          ? beginningBalance + interestPayment
+          : min(
+              loanMonthlyAmortization + carry,
+              beginningBalance + interestPayment,
+            );
+      carry = 0;
       final principalPayment = monthlyAmort - interestPayment;
       outstandingBalance -= principalPayment;
       _log
@@ -148,8 +168,7 @@ class LoanCalculationService {
       final schedule = LoanSchedule.create(
         dueAt: nextMonthDate.dateTime,
         outstandingBalance: outstandingBalance,
-        amortization:
-            min(loanMonthlyAmortization, beginningBalance + interestPayment),
+        amortization: monthlyAmort,
         principalPayment: principalPayment,
         interestCharge: interestPayment,
         loanId: 'loanId:$i',
@@ -167,6 +186,25 @@ class LoanCalculationService {
       } else {
         nextMonthDate = nextMonthDate.add(days: 15);
       }
+    }
+
+    final last = paidSchedules.lastOrNull;
+    if (numOfPayments <= 0 &&
+        last != null &&
+        _isPaid(last) &&
+        leavesPrincipal(last)) {
+      final remainder = LoanSchedule.create(
+        dueAt: last.dueAt,
+        outstandingBalance: 0,
+        amortization: last.outstandingBalance,
+        principalPayment: last.outstandingBalance,
+        interestCharge: 0,
+        loanId: 'loanId:1',
+        interestDayMultiplier: 0,
+        companyId: companyId,
+      );
+      totalLoanPayment += remainder.amortization;
+      schedules.add(remainder);
     }
 
     return LoanCalculationResult(
@@ -448,15 +486,34 @@ class LoanCalculationService {
   /// interest payment counts: a borrower submission records none (0) and is
   /// paid in full.
   static double _interestShortfall(LoanSchedule row) {
-    final isPaid = row.status == LoanStatus.paid_on_time ||
-        row.status == LoanStatus.paid_late;
-    if (!isPaid || !row.isOpenTerm || row.interestPayment <= 0) {
+    if (!_isPaid(row) || !row.isOpenTerm || row.interestPayment <= 0) {
       return 0;
     }
     final amountDue = max(row.amortization, row.interestCharge);
 
     return max(0, ((amountDue - row.interestPayment) * 100).round()) / 100;
   }
+
+  /// #152: the principal paid fixed-term [row] left unpaid of its bill
+  /// (`amortization - interestCharge`), to the centavo. A row not paid
+  /// yet (submitted or rejected) is still owed itself and carries nothing.
+  static double _principalShortfall(LoanSchedule row) {
+    if (!_isPaid(row)) {
+      return 0;
+    }
+    final billed = row.amortization - row.interestCharge;
+
+    return max(0, ((billed - row.principalPayment) * 100).round()) / 100;
+  }
+
+  /// Whether fixed-term [row] leaves principal owed (#152): more than half
+  /// a centavo, so display rounding never keeps a loan open.
+  static bool leavesPrincipal(LoanSchedule row) =>
+      row.outstandingBalance > 0.005;
+
+  static bool _isPaid(LoanSchedule row) =>
+      row.status == LoanStatus.paid_on_time ||
+      row.status == LoanStatus.paid_late;
 
   /// Calculates open-term loan with additional loan amounts and creates
   /// the full schedule list including paid schedules and placeholders.

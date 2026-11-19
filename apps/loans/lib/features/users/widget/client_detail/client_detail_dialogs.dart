@@ -223,7 +223,9 @@ Future<void> showMakePaymentDialog(
 
                               final tempParsed = double.parse(value);
 
-                              if (tempParsed <= 0) {
+                              // Read-only on a fixed-term row; a remainder
+                              // row bills no interest (#152).
+                              if (tempParsed <= 0 && schedule.isOpenTerm) {
                                 return 'Amount should be greater than 0';
                               }
 

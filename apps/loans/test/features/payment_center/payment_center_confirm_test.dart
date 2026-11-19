@@ -238,7 +238,12 @@ void main() {
         reset: any(named: 'reset'),
       ),
     ).thenAnswer(
-      (_) async => [sched()..status = LoanStatus.paid_on_time],
+      // A paid final row holds the balance after it: 0 (#152).
+      (_) async => [
+        sched()
+          ..status = LoanStatus.paid_on_time
+          ..outstandingBalance = 0,
+      ],
     );
 
     await svc.confirm(payment: pay(), confirmedById: 'lender-1');
@@ -268,7 +273,13 @@ void main() {
         page: any(named: 'page'),
         reset: any(named: 'reset'),
       ),
-    ).thenAnswer((_) async => [sched()..status = LoanStatus.paid_on_time]);
+    ).thenAnswer(
+      (_) async => [
+        sched()
+          ..status = LoanStatus.paid_on_time
+          ..outstandingBalance = 0,
+      ],
+    );
 
     await svc.completeLoanIfFullyPaid('loan-1');
 
