@@ -5,9 +5,11 @@ import 'package:gap/gap.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
+import 'package:loooans/services/loan_calculation_service.dart';
 import 'package:loooans/utils/constants.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
+import 'package:loooans_helpers/data_helpers.dart';
 import 'package:two_dimensional_scrollables/two_dimensional_scrollables.dart';
 
 class LoanScheduleWidget extends StatelessWidget {
@@ -97,6 +99,7 @@ class LoanScheduleWidget extends StatelessWidget {
           schedule: schedules[index],
           index: index,
           loan: loan,
+          loanRows: schedules,
         );
       },
       separatorBuilder: (context, index) {
@@ -122,6 +125,7 @@ class LoanScheduleWidget extends StatelessWidget {
     required LoanSchedule schedule,
     int index = 0,
     Loan? loan,
+    List<LoanSchedule> loanRows = const [],
   }) {
     final trailingText = !schedule.isOpenTerm
         ? context.read<LoansBloc>().monthlyAmortization
@@ -146,7 +150,7 @@ class LoanScheduleWidget extends StatelessWidget {
               fontSize: 12,
             ),
           ),
-          ..._penaltyLines(schedule, loan),
+          ..._penaltyLines(schedule, loan, loanRows),
         ],
       ),
       isThreeLine: true,
@@ -184,7 +188,7 @@ class LoanScheduleWidget extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-              ..._penaltyLines(schedule, loan),
+              ..._penaltyLines(schedule, loan, schedules),
             ],
           ),
         );
@@ -214,12 +218,19 @@ class LoanScheduleWidget extends StatelessWidget {
   }
 
   /// Running penalty on an unpaid row, or the charged/waived amount on a
-  /// paid one.
-  static List<Widget> _penaltyLines(LoanSchedule schedule, Loan? loan) {
+  /// paid one. An open-term penalty is one per overdue stretch, shown on its
+  /// earliest unpaid bill ([loanRows] are the loan's listed rows).
+  static List<Widget> _penaltyLines(
+    LoanSchedule schedule,
+    Loan? loan,
+    List<LoanSchedule> loanRows,
+  ) {
     const style = TextStyle(color: AppColors.red2, fontSize: 11);
-    final preview = loan == null
+    // A pending, declined, settled or bad-debt open-term loan owes nothing.
+    final preview = loan == null ||
+            (schedule.isOpenTerm && !LoanCalculationService.billsOpenTerm(loan))
         ? PenaltyResult.none
-        : previewPenalty(schedule: schedule, loan: loan);
+        : previewPenalty(schedule: schedule, loan: loan, loanRows: loanRows);
 
     return [
       if (preview.total > 0)
@@ -246,6 +257,17 @@ class LoanScheduleWidget extends StatelessWidget {
     ];
   }
 
+  /// Status of a pending application's projected open-term bill: its money
+  /// was never released, so it is neither due nor overdue.
+  static const projectedLabel = 'Projected';
+
+  static bool _isProjected(LoanSchedule schedule, Loan? loan) =>
+      schedule.isOpenTerm &&
+      !schedule.isPlaceholder &&
+      schedule.id == NO_ID &&
+      loan != null &&
+      loan.status == LoanStatus.pending;
+
   /// Borrower-facing status for a schedule row. Shows the real payment state
   /// (Payment submitted / Paid on time / Paid late); anything else (not_paid,
   /// or a loan-level status that leaked onto a persisted schedule) is presented
@@ -260,6 +282,9 @@ class LoanScheduleWidget extends StatelessWidget {
     };
     if (realPaymentStatuses.contains(schedule.status)) {
       return schedule.status.label;
+    }
+    if (_isProjected(schedule, loan)) {
+      return projectedLabel;
     }
     return schedule.lateFrom.isBefore(DateTime.now())
         ? LoanStatus.not_paid_overdue.label

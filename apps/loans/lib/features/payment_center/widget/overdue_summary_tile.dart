@@ -7,7 +7,8 @@ import 'package:loooans/widgets/app_widgets.dart';
 
 /// A consolidated tile that summarizes multiple overdue schedules.
 ///
-/// For open-term loans: shows the summed interest charges.
+/// For open-term loans: shows the summed amounts due (each bill's interest
+/// plus any carried shortfall, owner rule R4).
 /// For fixed-term loans: shows the summed amortization (total payable).
 class OverdueSummaryTile extends StatelessWidget {
   const OverdueSummaryTile({
@@ -42,7 +43,7 @@ class OverdueSummaryTile extends StatelessWidget {
 
     final totalInterest = overdueSchedules.fold<double>(
       0,
-      (sum, s) => sum + s.interestCharge,
+      (sum, s) => sum + (isOpenTerm ? s.amortization : s.interestCharge),
     );
 
     final totalPrincipal = isOpenTerm

@@ -20,9 +20,17 @@ final _log = Logger('additional_loan_bloc');
 class AdditionalLoanBloc
     extends Bloc<AdditionalLoanEvent, AdditionalLoanState> {
   AdditionalLoanBloc(BuildContext context)
-      : loanRepository = context.read<LoanRepository>(),
-        storageRepository = context.read<StorageRepository>(),
-        super(const AdditionalLoanState()) {
+      : this.withDependencies(
+          loanRepository: context.read<LoanRepository>(),
+          storageRepository: context.read<StorageRepository>(),
+        );
+
+  /// Test seam: the repositories without a widget tree.
+  @visibleForTesting
+  AdditionalLoanBloc.withDependencies({
+    required this.loanRepository,
+    required this.storageRepository,
+  }) : super(const AdditionalLoanState()) {
     on<AddLoanAmountEvent>(_handleAddLoanAmountEvent);
     on<UpdateAdditionalLoanAmountEvent>(
       _handleUpdateAdditionalLoanAmountEvent,
@@ -148,8 +156,18 @@ class AdditionalLoanBloc
       if (additionalLoanAmount == null) {
         throw Exception('Additional loan amount not found');
       }
-      additionalLoanAmount.status = event.status;
-      await loanRepository.update(data: loan);
+      additionalLoanAmount
+        ..status = event.status
+        // The engine needs to know when the money was released (review of
+        // finstack#146): a bill stored before it does not hold the top-up.
+        ..approvedAt = event.status == LoanStatus.approved
+            ? DateTime.timestamp()
+            : null;
+      // Freshly loaded, and it changes the top-up: write it back.
+      await loanRepository.update(
+        data: loan,
+        updateAdditionalLoanAmounts: true,
+      );
       emit(const AdditionalLoanState.loading());
       emit(
         const AdditionalLoanState.success(

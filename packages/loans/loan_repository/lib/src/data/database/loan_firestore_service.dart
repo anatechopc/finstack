@@ -5,7 +5,9 @@ import 'package:loan_repository/src/model/loan_entity.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 
 final class LoanFirestoreService extends BaseFirestoreService<LoanEntity> {
-  LoanFirestoreService() {
+  LoanFirestoreService({FirebaseFirestore? firestore})
+      : super(firestore: firestore) {
+    if (firestore != null) return;
     FirebaseFirestore.instance.settings = const Settings(
       persistenceEnabled: true,
       cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,

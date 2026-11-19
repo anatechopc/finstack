@@ -209,6 +209,7 @@ class _BorrowerContent extends StatelessWidget {
                 loan: group.loan,
                 overdueSchedules: overdueSchedules,
                 userId: borrower.id,
+                loanRows: group.storedSchedules,
               );
             },
             onNewLoan: () {

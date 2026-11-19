@@ -46,6 +46,11 @@ extension ReportsBlocExtensionSoa on ReportsBloc {
         companyId: loan.companyId,
       );
 
+      // A pending, declined, settled or bad-debt loan bills nothing new.
+      if (!LoanCalculationService.billsOpenTerm(loan)) {
+        schedules.clear();
+      }
+
       // do post updates here for
       schedules.addAll(paidSchedules);
       final otherLoans = await _getOtherLoans(

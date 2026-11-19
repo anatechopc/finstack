@@ -215,7 +215,12 @@ class LoanCardWidget extends StatelessWidget {
                     .map(
                       (schedule) => PayableTileWidget(
                         schedule: schedule,
-                        readOnly: readOnly,
+                        // Open-term bills are paid oldest first: the engine
+                        // bills only after the last stored row, so the next
+                        // bill waits for the overdue ones.
+                        readOnly: readOnly ||
+                            (schedule.isOpenTerm &&
+                                overdueSchedules.isNotEmpty),
                         onPay: () => onPay(schedule),
                       ),
                     )

@@ -159,6 +159,9 @@ Future<void> showPaymentCenterPaymentDialog(
                           PaymentPenaltySection(
                             schedules: [schedule],
                             loan: loan,
+                            loanRows: innerContext
+                                .read<PaymentCenterBloc>()
+                                .loanRowsOf(loan.id),
                           ),
                         ],
                       ),
@@ -228,17 +231,21 @@ Future<void> showPaymentCenterPaymentDialog(
 }
 
 /// Shows the overdue payment dialog for consolidated overdue schedules.
-/// Pre-fills with summed interest/principal from all overdue schedules.
+/// Pre-fills with summed interest/principal from all overdue schedules: on
+/// open-term bills the amount due, which includes a carried shortfall
+/// (owner rule R4). [loanRows] are the loan's stored rows: an open-term
+/// penalty is one per overdue stretch.
 Future<void> showOverduePaymentDialog(
   BuildContext context, {
   required Loan loan,
   required List<LoanSchedule> overdueSchedules,
   required String userId,
+  List<LoanSchedule> loanRows = const [],
 }) {
   final isOpenTerm = overdueSchedules.first.isOpenTerm;
   final totalInterest = overdueSchedules.fold<double>(
     0,
-    (sum, s) => sum + s.interestCharge,
+    (sum, s) => sum + (isOpenTerm ? s.amortization : s.interestCharge),
   );
   final totalPrincipal = isOpenTerm
       ? 0.0
@@ -380,6 +387,7 @@ Future<void> showOverduePaymentDialog(
                           PaymentPenaltySection(
                             schedules: overdueSchedules,
                             loan: loan,
+                            loanRows: loanRows,
                           ),
                         ],
                       ),

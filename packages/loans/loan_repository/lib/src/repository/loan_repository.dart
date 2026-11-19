@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_repository/src/data/database/additional_loan_amount_firestore_service.dart';
 import 'package:loan_repository/src/data/database/loan_firestore_service.dart';
@@ -14,6 +16,14 @@ class LoanRepository implements BaseRepository<Loan> {
         _realtimeDatabaseService = LoanRealtimeDatabaseService(),
         _additionalLoanAmountFirestoreService =
             AdditionalLoanAmountFirestoreService();
+
+  /// On [firestore] (a fake in tests) instead of the app's Firestore.
+  @visibleForTesting
+  LoanRepository.withFirestore(FirebaseFirestore firestore)
+      : _firestoreService = LoanFirestoreService(firestore: firestore),
+        _realtimeDatabaseService = LoanRealtimeDatabaseService(),
+        _additionalLoanAmountFirestoreService =
+            AdditionalLoanAmountFirestoreService(firestore: firestore);
 
   late final LoanFirestoreService _firestoreService;
   late final AdditionalLoanAmountFirestoreService
@@ -119,10 +129,16 @@ class LoanRepository implements BaseRepository<Loan> {
     });
   }
 
+  /// Writes the loan [data]. Its new top-ups (no id) are added; the top-ups
+  /// it already has are written back only with [updateAdditionalLoanAmounts],
+  /// for a caller that changes one (approval, decline). A copy loaded before
+  /// a top-up was approved would otherwise reset it to pending, and an
+  /// unapproved top-up is not billed (review of finstack#149).
   @override
   Future<Loan> update({
     required Loan data,
     bool updateView = false,
+    bool updateAdditionalLoanAmounts = false,
   }) async {
     if (updateView) {
       UserLoanViewRepository().updateLoanData(
@@ -142,6 +158,8 @@ class LoanRepository implements BaseRepository<Loan> {
           data: additionalLoanAmount.toEntity(),
         );
         addedAdditionalLoanData.add(addedAdditionalLoanAmount.toAdditionalLoanAmount());
+      } else if (!updateAdditionalLoanAmounts) {
+        addedAdditionalLoanData.add(additionalLoanAmount);
       } else {
         final updatedAdditionalLoanAmount = await _additionalLoanAmountFirestoreService.update(
           data: additionalLoanAmount.toEntity(),

@@ -100,6 +100,17 @@ class AdditionalLoanAmountEntity implements BaseEntity {
   )
   late LoanStatus status;
 
+  /// When the top-up was approved (its money released). Null on top-ups not
+  /// approved yet and on those approved before this field existed. The
+  /// open-term engine reads it to tell whether a stored bill already holds
+  /// the top-up (review of finstack#146).
+  @JsonKey(
+    name: 'approved_at',
+    toJson: handleDateTimeToJson,
+    fromJson: handleDateTimeNullableFromJson,
+  )
+  DateTime? approvedAt;
+
   Map<String, dynamic> toJson() {
     return _$AdditionalLoanAmountEntityToJson(this);
   }
@@ -119,6 +130,7 @@ class AdditionalLoanAmountEntity implements BaseEntity {
         uploadedFilesUrls,
         loanId,
         status,
+        approvedAt,
       ];
 
   @override
@@ -139,6 +151,7 @@ class AdditionalLoanAmountEntity implements BaseEntity {
       ..uploadedFilesUrls = uploadedFilesUrls
       ..selfiePhotoUrl = selfiePhotoUrl
       ..signatureUrl = signatureUrl
-      ..status = status;
+      ..status = status
+      ..approvedAt = approvedAt;
   }
 }

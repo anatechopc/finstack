@@ -13,11 +13,24 @@ import 'package:loooans_helpers/data_helpers.dart';
 // Golden scenario set G13 — late payments on open-term loans (finstack#114).
 // Every number below was derived on paper BEFORE the test was written.
 //
-// The open-term engine bills an overdue cycle as due today, so interest
-// accrues to today (G4c, unchanged here). Since #114 the computed row also
-// keeps the cycle's own due date as `originalDueAt`, and lateness counts
-// from it (`LoanSchedule.lateFrom`). Before #114 days late was always 0 on
-// such a row, so every "before" figure below is 0.
+// #114 kept the cycle's own due date as `originalDueAt` on a row the engine
+// billed as due today, and counted lateness from it (`LoanSchedule.lateFrom`).
+// Since the owner's rules R1-R5 (2026-11-19, G14) an overdue bill keeps its
+// own due date, so `originalDueAt` stays null on new rows and only the
+// INTEREST figures below moved (R1/R2: one cycle per bill, no accrual to
+// today); every penalty figure is unchanged. Moved, old -> new:
+//   G13a/b/e row due Sep 8 -> Aug 31, interest 633.33 (38 days) -> 500.00
+//        (30 days), originalDueAt Aug 31 -> none (lateFrom still Aug 31)
+//   G13d row due Sep 16 -> Aug 30, interest 533.33 (32 days) -> 250.00
+//        (15 days), amount due 500 -> 250; the Sep 15 bill (16 days,
+//        266.67) is now its own row, and paying both together still owes
+//        2,000 once (R3; per bill it would be 2,000 + 300 = 2,300)
+//   G13e the stored row is due_at Aug 31 without original_due_at; a row
+//        stored by #114's clamp (due_at Sep 8, original_due_at Aug 31)
+//        still reads back as 8 days, and one without original_due_at
+//        counts from its due_at
+// Before #114 days late was always 0 on such a row, so every "before"
+// figure below is 0.
 //
 // Loan: open term, 10,000 at 5% a month, created Jul 2 2026, one paid cycle
 // due Aug 1 2026 (balance 10,000). Penalties are the G12 company defaults
@@ -26,34 +39,26 @@ import 'package:loooans_helpers/data_helpers.dart';
 // D7), here 10,000.
 //
 //   G13a '1m', seen Sep 8 2026 noon, late payments NOT allowed:
-//        next due = Aug 1 + 30 d = Aug 31 <= Sep 8, so the row is billed as
-//        due Sep 8 with originalDueAt Aug 31;
-//        interest for 38 days = 10,000 x 5% x 38/30 = 633.33;
-//        amortization min(500, 633.33) = 500 (G4c, owned by #120);
+//        next due = Aug 1 + 30 d = Aug 31 < Sep 8: a missed bill, due Aug 31;
+//        interest for 30 days = 10,000 x 5% = 500 = amount due;
 //        days late Aug 31 -> Sep 8 = 8;
 //        once 100 + daily 1% x 10,000 = 100 a day x 8 = 800       -> 900
 //        (before: 0 days, 0)
 //   G13b the same loan with late payments allowed: 8 days recorded, none
 //        charged, paid_on_time; the preview is 0 (as fixed-term P3)
 //   G13c on time: seen Aug 15 -> due Aug 31, no originalDueAt, 0;
-//        seen ON Aug 31 at noon -> the clamp keeps the same date, so still
-//        no originalDueAt, 0 days, 0
+//        seen ON Aug 31 at noon -> due today, not late: 0 days, 0
 //   G13d salary days '15,30', paid cycle due Aug 15, seen Sep 16 noon,
 //        penalties 100 once + 1% daily + 100 per installment:
-//        next due = Aug 30 (the second salary day) <= Sep 16, billed Sep 16
-//        with originalDueAt Aug 30;
-//        interest for 32 days = 10,000 x 5% x 32/30 = 533.33; amortization
-//        500; days late Aug 30 -> Sep 16 = 17;
+//        bills Aug 30 (15 days, 250.00) and Sep 15 (16 days, 266.67) are
+//        missed, Sep 30 (250.00) is current; days late Aug 30 -> Sep 16 = 17;
 //        once 100 + daily 100 x 17 = 1,700
 //        + per installment 100 x ceil(17/15) = 200                  -> 2,000
 //        (a 30-day term would give ceil(17/30) = 1 -> 1,900)
 //   G13e the teller confirms the G13a row, collected Sep 8: paid_late,
-//        days_late 8, penalty 900; the stored document carries
-//        original_due_at = Aug 31 beside due_at = Sep 8, and reading it back
-//        gives 8 days again; a document written before #114 has no
-//        original_due_at and counts from due_at
-//   G13f collected Sep 5 (after Aug 31, before the Sep 8 billing date):
-//        5 days -> 100 + 500 = 600 (before: Sep 5 is before Sep 8, 0)
+//        days_late 8, penalty 900, stored with due_at Aug 31; reading it
+//        back gives 8 days again
+//   G13f collected Sep 5 (after Aug 31): 5 days -> 100 + 500 = 600
 //   G13g the principal-release placeholder row (due on the creation date,
 //        Jul 2; balance 0) is not an installment: previews 0 and confirms
 //        paid_on_time with 0 days and 0 (before: the flat "100 once" was
@@ -87,6 +92,7 @@ Loan openTermLoan({
     Loan()
       ..id = 'loan-1'
       ..createdAt = loanCreated
+      ..status = LoanStatus.approved
       ..period = 0
       ..term = term
       ..additionalChargeUpfrontCollection = 0
@@ -113,8 +119,8 @@ LoanSchedule paidCycle(DateTime dueAt) => LoanSchedule()
   ..advanceInterestPayments = 0
   ..interestDayMultiplier = 1;
 
-/// The next open-term row as the app computes it on [now].
-LoanSchedule nextRow({
+/// The open-term bills as the app computes them on [now].
+List<LoanSchedule> billsOn({
   required DateTime now,
   String term = '1m',
   DateTime? paidDueAt,
@@ -127,19 +133,28 @@ LoanSchedule nextRow({
       companyId: 'co-1',
       paidSchedules: [paidCycle(paidDueAt ?? DateTime(2026, 8))],
       now: now,
-    ).schedules.single;
+    ).schedules;
+
+/// The first bill after the paid cycle (the missed one when overdue).
+LoanSchedule nextRow({
+  required DateTime now,
+  String term = '1m',
+  DateTime? paidDueAt,
+}) =>
+    billsOn(now: now, term: term, paidDueAt: paidDueAt).first;
 
 void main() {
   final sep8 = DateTime(2026, 9, 8, 12);
 
   group('G13 open-term lateness counts from the cycle due date', () {
-    test('G13a not allowed late: 8 days late, 900, billing unchanged', () {
+    test('G13a not allowed late: 8 days late, 900, the bill keeps its date',
+        () {
       final row = nextRow(now: sep8);
 
-      expect(DateUtils.dateOnly(row.dueAt), DateTime(2026, 9, 8));
-      expect(row.originalDueAt, DateTime(2026, 8, 31));
+      expect(DateUtils.dateOnly(row.dueAt), DateTime(2026, 8, 31));
+      expect(row.originalDueAt, isNull);
       expect(row.lateFrom, DateTime(2026, 8, 31));
-      expect(row.interestCharge, closeTo(633.33, 0.01));
+      expect(row.interestCharge, closeTo(500, 0.01));
       expect(row.amortization, closeTo(500, 0.01));
       expect(row.outstandingBalance, closeTo(10000, 0.01));
 
@@ -209,30 +224,44 @@ void main() {
 
     test('G13d salary days "15,30": 17 days late, 2,000', () {
       final sep16 = DateTime(2026, 9, 16, 12);
-      final row = nextRow(
+      final rows = billsOn(
         now: sep16,
         term: '15,30',
         paidDueAt: DateTime(2026, 8, 15),
       );
+      final row = rows.first;
 
-      expect(DateUtils.dateOnly(row.dueAt), DateTime(2026, 9, 16));
-      expect(row.originalDueAt, DateTime(2026, 8, 30));
-      expect(row.interestCharge, closeTo(533.33, 0.01));
-      expect(row.amortization, closeTo(500, 0.01));
+      expect(DateUtils.dateOnly(row.dueAt), DateTime(2026, 8, 30));
+      expect(row.originalDueAt, isNull);
+      expect(row.interestCharge, closeTo(250, 0.01));
+      expect(row.amortization, closeTo(250, 0.01));
+      expect(DateUtils.dateOnly(rows[1].dueAt), DateTime(2026, 9, 15));
+      expect(rows[1].interestCharge, closeTo(266.67, 0.01));
 
-      final lateness = resolveLateness(
-        schedule: row,
-        loan: openTermLoan(
-          term: '15,30',
-          penalties: const [lateFee100, daily1pct, perInstallment100],
-        ),
-        collectedAt: sep16,
+      final loan = openTermLoan(
+        term: '15,30',
+        penalties: const [lateFee100, daily1pct, perInstallment100],
       );
+      final lateness =
+          resolveLateness(schedule: row, loan: loan, collectedAt: sep16);
       expect(lateness.daysLate, 17);
       expect(lateness.penalties.lines[1].amount, closeTo(1700, 0.01));
       expect(lateness.penalties.lines[2].periods, 2);
       expect(lateness.penalties.lines[2].amount, closeTo(200, 0.01));
       expect(lateness.penalties.total, closeTo(2000, 0.01));
+
+      // Both missed bills paid together still owe 2,000 once (R3).
+      final together = resolveLatenessTogether(
+        schedules: rows.sublist(0, 2),
+        loan: loan,
+        collectedAt: sep16,
+        loanRows: rows,
+      );
+      expect(together.map((r) => r.daysLate), [17, 1]);
+      expect(
+        together.fold<double>(0, (sum, r) => sum + r.penalties.total),
+        closeTo(2000, 0.01),
+      );
     });
   });
 
@@ -254,27 +283,36 @@ void main() {
       expect(row.penalties, [lateFee100, daily1pct]);
 
       final json = row.toJson();
-      expect(
-        json['original_due_at'],
-        DateTime(2026, 8, 31).millisecondsSinceEpoch,
-      );
-      expect(json['due_at'], DateTime(2026, 9, 8).millisecondsSinceEpoch);
+      expect(json['original_due_at'], isNull);
+      expect(json['due_at'], DateTime(2026, 8, 31).millisecondsSinceEpoch);
       expect(json['days_late'], 8);
       expect(json['penalty'], closeTo(900, 0.01));
 
       final stored = LoanScheduleEntity.fromJson(json).toLoanSchedule();
-      // Documents come back as UTC instants; compare the instant.
-      expect(
-        stored.originalDueAt?.millisecondsSinceEpoch,
-        DateTime(2026, 8, 31).millisecondsSinceEpoch,
-      );
       expect(
         resolveLateness(schedule: stored, loan: loan, collectedAt: sep8)
             .daysLate,
         8,
       );
 
-      final writtenBefore114 = Map<String, dynamic>.of(json)
+      // A row stored by #114's clamp still reads back as 8 days late, and
+      // one written before #114 (no original_due_at) counts from due_at.
+      final clampRow = Map<String, dynamic>.of(json)
+        ..['due_at'] = DateTime(2026, 9, 8).millisecondsSinceEpoch
+        ..['original_due_at'] = DateTime(2026, 8, 31).millisecondsSinceEpoch;
+      final fromClamp = LoanScheduleEntity.fromJson(clampRow).toLoanSchedule();
+      // Documents come back as UTC instants; compare the instant.
+      expect(
+        fromClamp.originalDueAt?.millisecondsSinceEpoch,
+        DateTime(2026, 8, 31).millisecondsSinceEpoch,
+      );
+      expect(
+        resolveLateness(schedule: fromClamp, loan: loan, collectedAt: sep8)
+            .daysLate,
+        8,
+      );
+
+      final writtenBefore114 = Map<String, dynamic>.of(clampRow)
         ..remove('original_due_at');
       final old =
           LoanScheduleEntity.fromJson(writtenBefore114).toLoanSchedule();
@@ -318,8 +356,16 @@ void main() {
         previewPenalty(schedule: placeholder, loan: loan, asOf: sep8).total,
         0,
       );
+      final missed =
+          schedules.firstWhere((s) => s.id == NO_ID && !s.isPlaceholder);
+      expect(DateUtils.dateOnly(missed.dueAt), DateTime(2026, 8, 31));
       expect(
-        previewPenalty(schedule: schedules.last, loan: loan, asOf: sep8).total,
+        previewPenalty(
+          schedule: missed,
+          loan: loan,
+          asOf: sep8,
+          loanRows: schedules,
+        ).total,
         closeTo(900, 0.01),
       );
 

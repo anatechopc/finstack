@@ -100,16 +100,13 @@ class _PendingSubmissionCardState extends State<_PendingSubmissionCard> {
     final originalUrl = firstPhoto?.original;
     final displayUrl = firstPhoto?.thumbnail ?? originalUrl;
     final bankDetailsId = submission.payments.first.paidToBankDetailsId;
-    final penalty = submission.schedules.fold<double>(
-      0,
-      (sum, s) =>
-          sum +
-          previewPenalty(
-            schedule: s,
-            loan: submission.loan,
-            asOf: submission.payments.first.createdAt,
-          ).total,
-    );
+    // An open-term penalty is one per overdue stretch (owner rule R3).
+    final penalty = resolveLatenessTogether(
+      schedules: submission.schedules,
+      loan: submission.loan,
+      collectedAt: submission.payments.first.createdAt,
+      loanRows: submission.loanRows,
+    ).fold<double>(0, (sum, r) => sum + r.penalties.total);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -316,6 +313,7 @@ class _PendingSubmissionCardState extends State<_PendingSubmissionCard> {
         schedules: submission.schedules,
         loan: submission.loan,
         initialCollectedAt: submission.payments.first.createdAt,
+        loanRows: submission.loanRows,
       ),
       const Gap(12),
       Row(

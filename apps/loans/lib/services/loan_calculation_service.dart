@@ -5,7 +5,6 @@ import 'package:jiffy/jiffy.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/utils/extensions.dart';
-import 'package:loooans_helpers/data_helpers.dart';
 import 'package:loooans_helpers/logging_helpers.dart';
 
 class LoanCalculationResult {
@@ -177,14 +176,52 @@ class LoanCalculationService {
     );
   }
 
-  /// Calculates loan schedules for open-term loans.
+  /// Whether an open-term [loan] bills cycles: a pending, declined,
+  /// completed (settled) or bad-debt loan gets no new bills, no penalty and
+  /// no "Make payment" (review of #146).
+  static bool billsOpenTerm(Loan loan) => !const {
+        LoanStatus.pending,
+        LoanStatus.declined,
+        LoanStatus.completed,
+        LoanStatus.bad_debt,
+      }.contains(loan.status);
+
+  /// Only an approved top-up has released money, so only it moves the
+  /// balance and the bill (#137). A top-up takes effect on its creation day.
+  static bool movesBalance(AdditionalLoanAmount topUp) =>
+      topUp.status == LoanStatus.approved;
+
+  /// Calculates the open-term bills owed after the loan's last stored row.
   ///
-  /// Note: 1 month = 30 days (even if in a month there are 31 or 28 days)
+  /// Owner rules R1-R5 (2026-11-14 to 2026-11-19; golden set G14):
+  /// - R1: a bill keeps its scheduled date. `'1m'` and `'15d'` bills fall
+  ///   every 30 or 15 calendar days from [date] (the loan's local creation
+  ///   day), the way the first bill always did; a stored bill within one
+  ///   day of a scheduled date counts as that bill; salary-day terms (`'D1,D2'`) fall
+  ///   on the next salary day after the previous bill (the month's last day
+  ///   when the salary day does not exist). Never from today or from a
+  ///   payment date (finstack#144). All days are local calendar days.
+  /// - R2: every bill due before today is its own row, followed by the first
+  ///   bill due today or later. Each row bills its own cycle: no interest
+  ///   accrued to today, no one-month cap (finstack#120).
+  /// - R4: what the last stored row left unpaid of its amount due (an
+  ///   interest shortfall) is added to the first new bill's amount due
+  ///   (`amortization`); its `interestCharge` stays the cycle's interest.
+  /// - R5: an approved top-up not yet in the stored balance splits its
+  ///   cycle: the old balance up to the top-up day, the new balance from
+  ///   that day on (finstack#117). Days between a top-up and the start of
+  ///   the first new cycle (the previous bill was paid early) are billed
+  ///   with it.
   ///
-  /// [now] is the clock used to clamp a past due date to today (the row
-  /// keeps the past date as `originalDueAt`) and, for
-  /// `'D1,D2'` terms, to pick the next salary day when the start date is on
-  /// neither. Defaults to the wall clock; tests pass a fixed date.
+  /// Note: 1 month = 30 days (even if in a month there are 31 or 28 days).
+  /// Interest runs from the last stored row's `dueAt`, where its interest
+  /// ended. A row stored by the old clamp is dated the day it was computed
+  /// (its cycle date is in `originalDueAt`), so the first new bill counts
+  /// its days from that date to the next scheduled date after it.
+  ///
+  /// [paidSchedules] are the loan's stored rows, of any status; neither the
+  /// list nor its rows are changed (finstack#145). [now] decides which bills
+  /// are already due; it defaults to the wall clock, tests pass a fixed date.
   static ({
     List<LoanSchedule> schedules,
     double totalLoanPayment,
@@ -198,159 +235,229 @@ class LoanCalculationService {
     List<LoanSchedule> paidSchedules = const [],
     bool forSoa = false,
     DateTime? now,
+    List<AdditionalLoanAmount> additionalLoans = const [],
   }) {
-    final clientLoanSchedules = <LoanSchedule>[];
     final monthlyInterestRate = interestRate / 100;
-    var outstandingBalance = amount;
-    var totalLoanPayment = 0.0;
-    var monthlyAmortization = 0.0;
-    const numOfPayments = 1;
-    var nextDate = Jiffy.parseFromDateTime(date).startOf(Unit.day);
-    final clock = Jiffy.parseFromDateTime(now ?? DateTime.now());
-    paidSchedules.sortBy((sched) => sched.dueAt);
+    // The principal release approval stores for app-managed companies is
+    // not a bill: continuing from it (balance 0) would bill 0 (#138).
+    final last = paidSchedules
+        .where((sched) => !sched.isPrincipalRelease)
+        .sortedBy((sched) => sched.dueAt)
+        .lastOrNull;
+    final lastBill = last == null ? null : _localDay(last.lateFrom);
+    final start = _localDay(date);
+    // A stored row dated a day off the schedule (a first bill the old engine
+    // dated on the creation day's UTC date, or a row written in another
+    // zone) is the scheduled bill a day after it: no 1-day bill. A row ON a
+    // scheduled date never absorbs the next one (salary days a day apart:
+    // '15,16', '1,30' after Feb 28), and a row further away (an old clamp
+    // row) does not move the schedule (reviews of #146).
+    final offSchedule = lastBill != null &&
+        !_isScheduledDate(term: term, start: start, day: lastBill);
+    final today = _localDay(now ?? DateTime.now());
 
-    if (paidSchedules.isNotEmpty) {
-      outstandingBalance = paidSchedules.last.outstandingBalance;
-      final lastPaidLoanSchedule = paidSchedules.last;
+    var balance = last?.outstandingBalance ?? amount;
+    var cycleStart = last == null ? start : _localDay(last.dueAt);
+    var carry = last == null ? 0.0 : _interestShortfall(last);
+    final topUps = additionalLoans
+        .where(movesBalance)
+        .where((topUp) => last == null || !_includesTopUp(last, topUp))
+        .sortedBy((topUp) => topUp.createdAt);
+    var nextTopUp = 0;
 
-      if (lastPaidLoanSchedule.paidAt != null) {
-        nextDate = Jiffy.parseFromMillisecondsSinceEpoch(
-          lastPaidLoanSchedule.dueAt.millisecondsSinceEpoch,
-        ).startOf(Unit.day);
-      } else {
-        _log.warning(
-          'loan schedules last payment date should not be null. '
-          'Are you sure this is intentional?',
-        );
-        nextDate = Jiffy.parseFromMillisecondsSinceEpoch(
-          lastPaidLoanSchedule.dueAt.millisecondsSinceEpoch,
-        ).startOf(Unit.day);
-      }
-    }
-
-    if (term.contains(',')) {
-      final nextDay = nextDate.date;
-      final splitTerm = term.split(',');
-      final tempFirstSalaryDay = int.parse(splitTerm[0]);
-      final tempSecondSalaryDay = int.parse(splitTerm[1]);
-      final firstSalaryDay = min(tempFirstSalaryDay, tempSecondSalaryDay);
-      final secondSalaryDay = max(tempFirstSalaryDay, tempSecondSalaryDay);
-
-      if (nextDay == firstSalaryDay) {
-        nextDate = Jiffy.parseFromDateTime(
-          DateTime(nextDate.year, nextDate.month, secondSalaryDay),
-        ).startOf(Unit.day);
-      } else if (nextDay == secondSalaryDay) {
-        nextDate = nextDate.add(months: 1);
-        nextDate = Jiffy.parseFromDateTime(
-          DateTime(nextDate.year, nextDate.month, firstSalaryDay),
-        ).startOf(Unit.day);
-      } else {
-        final nowDay = clock.date;
-
-        if (nowDay < firstSalaryDay) {
-          nextDate = Jiffy.parseFromDateTime(
-            DateTime(clock.year, clock.month, firstSalaryDay),
-          ).startOf(Unit.day);
-        } else if (nowDay < secondSalaryDay) {
-          nextDate = Jiffy.parseFromDateTime(
-            DateTime(clock.year, clock.month, secondSalaryDay),
-          ).startOf(Unit.day);
-        } else {
-          nextDate = Jiffy.parseFromDateTime(
-            DateTime(clock.year, clock.month, firstSalaryDay),
-          ).startOf(Unit.day).add(months: 1);
-        }
-      }
-    } else if (term == '15d') {
-      nextDate = nextDate.add(days: 15);
-    } else {
-      nextDate = nextDate.add(days: 30);
-    }
-
-    // An overdue cycle is billed as due today so interest accrues to today.
-    // Its own due date is kept on the row: lateness counts from it
-    // (finstack#114).
-    DateTime? originalDueAt;
-    if (nextDate.isSameOrBefore(clock)) {
-      final today = clock.startOf(Unit.day);
-      if (nextDate.isBefore(today)) {
-        originalDueAt = nextDate.dateTime;
-      }
-      nextDate = today;
-    }
-
-    final loanMonthlyAmortization = calculateMonthlyPaymentSimple(
-      outstandingBalance: outstandingBalance,
+    final monthlyAmortization = calculateMonthlyPaymentSimple(
+      outstandingBalance: balance,
       monthlyInterestRate: monthlyInterestRate,
     );
+    _log.finest('loan amortization: $monthlyAmortization');
 
-    _log.finest('loan amortization: $loanMonthlyAmortization');
-
-    monthlyAmortization = loanMonthlyAmortization;
-    totalLoanPayment = double.infinity;
-    _log
-      ..finest('totalLoanPayment: $totalLoanPayment')
-      ..finest('---------------------------------------------------');
-    for (var i = 1; i <= numOfPayments; i++) {
-      var interestDayMultiplier = 1.0;
-      var lastDate = Jiffy.parseFromDateTime(date).startOf(Unit.day);
-
-      if (paidSchedules.isNotEmpty) {
-        lastDate = Jiffy.parseFromDateTime(
-          paidSchedules[paidSchedules.length - 1].dueAt,
-        ).startOf(Unit.day);
+    final schedules = <LoanSchedule>[];
+    for (final dueAt in _openTermDueDates(
+      term: term,
+      start: start,
+      after: cycleStart,
+    )) {
+      if (offSchedule && _days(lastBill, dueAt) <= 1) {
+        continue;
       }
+      var interestCharge = 0.0;
+      var from = cycleStart;
+      while (nextTopUp < topUps.length) {
+        final topUp = topUps[nextTopUp];
+        final topUpDay = _localDay(topUp.createdAt);
+        if (topUpDay.isAfter(dueAt)) {
+          break;
+        }
+        final added = topUp.amount + topUp.additionalCharges;
+        if (topUpDay.isBefore(cycleStart)) {
+          // The previous bill was paid early, before this top-up: its days
+          // up to that bill's due date were never billed (R5).
+          interestCharge +=
+              added * monthlyInterestRate * _days(topUpDay, cycleStart) / 30;
+        } else {
+          interestCharge +=
+              balance * monthlyInterestRate * _days(from, topUpDay) / 30;
+          from = topUpDay;
+        }
+        balance += added;
+        nextTopUp++;
+      }
+      interestCharge += balance * monthlyInterestRate * _days(from, dueAt) / 30;
+      final interestDayMultiplier = _days(cycleStart, dueAt) / 30;
 
-      final diffDays = nextDate
-          .diff(
-            lastDate,
-            unit: Unit.day,
-          )
-          .abs();
-
-      interestDayMultiplier = (diffDays / 30).abs();
-
-      final beginningBalance = outstandingBalance;
-      final interestCharge =
-          outstandingBalance * monthlyInterestRate * interestDayMultiplier;
       _log
-        ..finest('month: $i')
-        ..finest('date: ${nextDate.format()}')
-        ..finest('monthly: $monthlyAmortization')
+        ..finest('date: ${dueAt.format()}')
         ..finest('interestCharge: $interestCharge')
         ..finest('interestDayMultiplier: $interestDayMultiplier')
-        ..finest('principalPayment: 0')
-        ..finest('outstandingBalance: $outstandingBalance')
-        ..finest('beginningBalance: $beginningBalance')
+        ..finest('carried shortfall: $carry')
+        ..finest('outstandingBalance: $balance')
         ..finest('---------------------------------------------------');
-      final schedule = LoanSchedule.create(
-        dueAt: nextDate.dateTime,
-        outstandingBalance: outstandingBalance,
-        amortization: min(
-          min(loanMonthlyAmortization, beginningBalance + interestCharge),
-          interestCharge,
+      schedules.add(
+        LoanSchedule.create(
+          dueAt: dueAt.dateTime,
+          outstandingBalance: balance,
+          amortization: interestCharge + carry,
+          principalPayment: 0,
+          interestCharge: interestCharge,
+          loanId: 'loanId:${schedules.length + 1}',
+          isOpenTerm: true,
+          interestDayMultiplier: interestDayMultiplier,
+          companyId: companyId,
         ),
-        principalPayment: 0,
-        interestCharge: interestCharge,
-        loanId: 'loanId:$i',
-        isOpenTerm: true,
-        interestDayMultiplier: interestDayMultiplier,
-        companyId: companyId,
-      )..originalDueAt = originalDueAt;
-
-      clientLoanSchedules.add(schedule);
+      );
+      carry = 0;
+      cycleStart = dueAt;
+      // The bill due today or later is the current one; never dropped.
+      if (!dueAt.isBefore(today)) {
+        break;
+      }
     }
 
     return (
-      schedules: clientLoanSchedules,
-      totalLoanPayment: totalLoanPayment,
+      schedules: schedules,
+      // Sentinel: an open-term loan has no fixed total.
+      totalLoanPayment: double.infinity,
       monthlyAmortization: monthlyAmortization,
     );
   }
 
+  /// R1: the scheduled bill dates after [after], in order, one at a time.
+  /// `'D1,D2'` are the salary days of each month (the month's last day when
+  /// one does not exist); `'15d'` steps 15 calendar days from [start] (the
+  /// local creation day), anything else 30. Calendar days, so a
+  /// daylight-saving change cannot move a date (campaign D11).
+  static Iterable<Jiffy> _openTermDueDates({
+    required String term,
+    required Jiffy start,
+    required Jiffy after,
+  }) sync* {
+    if (term.contains(',')) {
+      yield* _salaryDueDates(term: term, after: after);
+      return;
+    }
+
+    final step = term == '15d' ? 15 : 30;
+    Jiffy billOn(int cycle) => Jiffy.parseFromDateTime(
+          DateTime(start.year, start.month, start.date + step * cycle),
+        );
+    var cycle = 1;
+    while (!billOn(cycle).isAfter(after)) {
+      cycle++;
+    }
+    for (;; cycle++) {
+      yield billOn(cycle);
+    }
+  }
+
+  /// The salary days of each month after [after] (`'15,30'`: the 15th and
+  /// the 30th, or the month's last day when it has no 30th).
+  static Iterable<Jiffy> _salaryDueDates({
+    required String term,
+    required Jiffy after,
+  }) sync* {
+    final splitTerm = term.split(',');
+    final tempFirstSalaryDay = int.parse(splitTerm[0]);
+    final tempSecondSalaryDay = int.parse(splitTerm[1]);
+    final salaryDays = [
+      min(tempFirstSalaryDay, tempSecondSalaryDay),
+      max(tempFirstSalaryDay, tempSecondSalaryDay),
+    ];
+    var previous = after;
+    for (var month = after.month;; month++) {
+      final lastDay = DateTime(after.year, month + 1, 0).day;
+      for (final salaryDay in salaryDays) {
+        final dueAt = Jiffy.parseFromDateTime(
+          DateTime(after.year, month, min(salaryDay, lastDay)),
+        );
+        if (dueAt.isAfter(previous)) {
+          yield dueAt;
+          previous = dueAt;
+        }
+      }
+    }
+  }
+
+  /// Whether [day] is one of the loan's scheduled bill dates.
+  static bool _isScheduledDate({
+    required String term,
+    required Jiffy start,
+    required Jiffy day,
+  }) {
+    final dayBefore = Jiffy.parseFromDateTime(
+      DateTime(day.year, day.month, day.date - 1),
+    );
+    final next =
+        _openTermDueDates(term: term, start: start, after: dayBefore).first;
+
+    return _days(day, next) == 0;
+  }
+
+  /// Start of [dateTime]'s calendar day on this device. Stored dates come
+  /// back in UTC.
+  static Jiffy _localDay(DateTime dateTime) =>
+      Jiffy.parseFromDateTime(dateTime.toLocal()).startOf(Unit.day);
+
+  /// Calendar days from [from] to [to]: a daylight-saving change on the way
+  /// cannot make a day 23 hours and drop it (campaign D11).
+  static int _days(Jiffy from, Jiffy to) =>
+      DateTime.utc(to.year, to.month, to.date)
+          .difference(DateTime.utc(from.year, from.month, from.date))
+          .inDays;
+
+  /// Whether stored [row]'s balance already holds [topUp]: the row was
+  /// computed after the top-up, and the top-up is not after the row's due
+  /// day. (Rows from before R1 were never dated before the day they were
+  /// computed, so for them only the first condition decides.)
+  ///
+  /// A top-up counts from its approval: one still pending when the row was
+  /// computed is not in it (review of #146). Top-ups approved before the
+  /// approval time was recorded fall back to their creation time.
+  static bool _includesTopUp(LoanSchedule row, AdditionalLoanAmount topUp) =>
+      (topUp.approvedAt ?? topUp.createdAt).isBefore(row.createdAt) &&
+      !_localDay(topUp.createdAt).isAfter(_localDay(row.dueAt));
+
+  /// R4: what paid [row] left unpaid of its amount due, to the centavo. The
+  /// amount due is the larger of `amortization` and `interestCharge`: a row
+  /// from the old clamp (also written by app builds not yet updated)
+  /// charged more interest than the one month it asked for. Only a recorded
+  /// interest payment counts: a borrower submission records none (0) and is
+  /// paid in full.
+  static double _interestShortfall(LoanSchedule row) {
+    final isPaid = row.status == LoanStatus.paid_on_time ||
+        row.status == LoanStatus.paid_late;
+    if (!isPaid || !row.isOpenTerm || row.interestPayment <= 0) {
+      return 0;
+    }
+    final amountDue = max(row.amortization, row.interestCharge);
+
+    return max(0, ((amountDue - row.interestPayment) * 100).round()) / 100;
+  }
+
   /// Calculates open-term loan with additional loan amounts and creates
   /// the full schedule list including paid schedules and placeholders.
+  ///
+  /// Returns new rows only for the bills and placeholders; the stored rows
+  /// in [paidSchedules] are listed as they are, never changed (#145).
   static LoanCalculationResult calculateOpenTerm({
     required double amount,
     required DateTime date,
@@ -362,11 +469,7 @@ class LoanCalculationService {
     Loan? loan,
     DateTime? now,
   }) {
-    final allSchedules = <LoanSchedule>[];
-    var totalLoanPayment = 0.0;
-    var monthlyAmortization = 0.0;
-
-    final (:schedules, totalLoanPayment: tlp, monthlyAmortization: ma) =
+    final (:schedules, :totalLoanPayment, :monthlyAmortization) =
         calculateOpenTermSchedules(
       amount: amount,
       date: date,
@@ -376,17 +479,22 @@ class LoanCalculationService {
       companyId: companyId,
       paidSchedules: paidSchedules,
       now: now,
+      additionalLoans: loan?.additionalLoanAmounts ?? const [],
     );
 
-    final tempClientLoanSchedules = <LoanSchedule>[];
-    tempClientLoanSchedules
-      ..addAll(paidSchedules)
-      ..addAll(schedules);
-    totalLoanPayment = tlp;
-    monthlyAmortization = ma;
+    final allSchedules = [
+      ...paidSchedules.sortedBy((sched) => sched.dueAt),
+      // A declined, settled or bad-debt loan bills nothing new; a pending
+      // application shows its projected first bill, which nothing counts as
+      // owed (no penalty, no "Make payment", not in any total).
+      if (loan == null || billsOpenTerm(loan))
+        ...schedules
+      else if (loan.status == LoanStatus.pending)
+        ...schedules.take(1),
+    ];
 
     if (loan != null) {
-      final firstSchedule = LoanSchedule.create(
+      final principalRelease = LoanSchedule.create(
         dueAt: loan.createdAt,
         loanId: loan.id,
         outstandingBalance: 0,
@@ -401,108 +509,52 @@ class LoanCalculationService {
         principalLoan: amount,
       );
 
-      tempClientLoanSchedules.insert(0, firstSchedule);
+      allSchedules.insert(0, principalRelease);
 
       // Sort by createdAt ascending so older additional loans are processed
       // first. Processing out of order causes incorrect outstanding balances
       // because later iterations overwrite earlier schedules' OB values.
-      final sortedAdditionalLoans = loan.additionalLoanAmounts
-          .sortedBy((a) => a.createdAt);
+      final sortedAdditionalLoans =
+          loan.additionalLoanAmounts.sortedBy((a) => a.createdAt);
 
       for (final additionalLoanAmount in sortedAdditionalLoans) {
-        var index = -1;
-        var lastLoanSchedule =
-            tempClientLoanSchedules.sublist(1).firstWhereOrNull((schedule) {
-          if (Jiffy.parseFromDateTime(schedule.createdAt).isSameOrAfter(
-            Jiffy.parseFromDateTime(additionalLoanAmount.createdAt),
-          )) {
-            return true;
-          }
-          return false;
-        });
-
-        if (lastLoanSchedule == null) {
-          index = tempClientLoanSchedules.length;
-          lastLoanSchedule = tempClientLoanSchedules.last;
-        } else {
-          index = tempClientLoanSchedules.indexOf(lastLoanSchedule);
+        // The top-up row is shown, not billed (R5 bills the cycle on its due
+        // row). It sits before the first bill due on or after its day and
+        // shows what the old balance accrued since the row before it.
+        final topUpDay = _localDay(additionalLoanAmount.createdAt);
+        var index = allSchedules.indexWhere(
+          (schedule) =>
+              !schedule.isAdditionalLoanAmount &&
+              !_localDay(schedule.dueAt).isBefore(topUpDay),
+          1,
+        );
+        if (index == -1) {
+          index = allSchedules.length;
         }
 
-        LoanSchedule additionalSchedule;
-        if (Jiffy.parseFromDateTime(lastLoanSchedule.dueAt).isSame(
-          Jiffy.parseFromDateTime(additionalLoanAmount.createdAt),
-        )) {
-          additionalSchedule = LoanSchedule.createAdditionalLoan(
+        final previous = allSchedules[index - 1];
+        final balanceBefore = identical(previous, principalRelease)
+            ? amount
+            : previous.outstandingBalance;
+        final interestDayMultiplier =
+            max(0, _days(_localDay(previous.dueAt), topUpDay)) / 30;
+
+        allSchedules.insert(
+          index,
+          LoanSchedule.createAdditionalLoan(
             additionalLoanId: additionalLoanAmount.id,
             createdAt: additionalLoanAmount.createdAt,
             loanId: loan.id,
-            outstandingBalance: (lastLoanSchedule.outstandingBalance) +
-                additionalLoanAmount.amount +
-                additionalLoanAmount.additionalCharges,
-            principalPayment: lastLoanSchedule.principalPayment,
-            interestCharge: lastLoanSchedule.interestCharge,
-            amortization: lastLoanSchedule.amortization,
-            interestDayMultiplier: lastLoanSchedule.interestDayMultiplier,
-            companyId: companyId,
-            isOpenTerm: true,
-            isPlaceholder: true,
-            advanceInterestPayments: additionalLoanAmount.advanceCharges,
-            principalLoan: additionalLoanAmount.amount,
-            status: additionalLoanAmount.status,
-          );
-
-          tempClientLoanSchedules.setAll(index, [additionalSchedule]);
-        } else {
-          num diffDays = 0;
-
-          if (lastLoanSchedule.id == NO_ID &&
-              !lastLoanSchedule.isPlaceholder) {
-            if (index > 0) {
-              final priorSchedule = tempClientLoanSchedules[index - 1];
-              final priorScheduleDate =
-                  Jiffy.parseFromDateTime(priorSchedule.dueAt);
-              final additionalLoanDate =
-                  Jiffy.parseFromDateTime(additionalLoanAmount.createdAt);
-
-              if (additionalLoanDate.isSame(priorScheduleDate)) {
-                diffDays = 0;
-              } else {
-                diffDays = additionalLoanDate
-                    .diff(priorScheduleDate, unit: Unit.day)
-                    .abs();
-              }
-            } else {
-              _log.warning(
-                'Cannot calculate diff days for additional loan: '
-                'Index is 0 therefore there is a problem creating '
-                'tempClientLoanSchedules. Developers, please check.',
-              );
-              diffDays = 0;
-            }
-          } else {
-            diffDays =
-                Jiffy.parseFromDateTime(additionalLoanAmount.createdAt)
-                    .diff(
-                      Jiffy.parseFromDateTime(lastLoanSchedule.dueAt),
-                      unit: Unit.day,
-                    )
-                    .abs();
-          }
-
-          final interestDayMultiplier = (diffDays / 30).abs();
-          final interestCharge = lastLoanSchedule.outstandingBalance *
-              (interestRate / 100) *
-              interestDayMultiplier;
-          additionalSchedule = LoanSchedule.createAdditionalLoan(
-            additionalLoanId: additionalLoanAmount.id,
-            createdAt: additionalLoanAmount.createdAt,
-            loanId: loan.id,
-            outstandingBalance: (lastLoanSchedule.outstandingBalance) +
-                additionalLoanAmount.amount +
-                additionalLoanAmount.additionalCharges,
-            principalPayment: lastLoanSchedule.principalPayment,
-            interestCharge: interestCharge,
-            amortization: lastLoanSchedule.amortization,
+            // Only an approved top-up moves the balance (#137).
+            outstandingBalance: balanceBefore +
+                (movesBalance(additionalLoanAmount)
+                    ? additionalLoanAmount.amount +
+                        additionalLoanAmount.additionalCharges
+                    : 0),
+            principalPayment: 0,
+            interestCharge:
+                balanceBefore * (interestRate / 100) * interestDayMultiplier,
+            amortization: 0,
             interestDayMultiplier: interestDayMultiplier,
             companyId: companyId,
             isOpenTerm: true,
@@ -510,16 +562,10 @@ class LoanCalculationService {
             advanceInterestPayments: additionalLoanAmount.advanceCharges,
             principalLoan: additionalLoanAmount.amount,
             status: additionalLoanAmount.status,
-          );
-
-          tempClientLoanSchedules.insert(index, additionalSchedule);
-          lastLoanSchedule
-            ..outstandingBalance = additionalSchedule.outstandingBalance
-            ..interestCharge = additionalSchedule.interestCharge;
-        }
+          ),
+        );
       }
     }
-    allSchedules.addAll(tempClientLoanSchedules);
 
     return LoanCalculationResult(
       schedules: allSchedules,

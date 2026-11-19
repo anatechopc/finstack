@@ -119,11 +119,13 @@ Future<Uint8List?> showSignatureDialog(
   );
 }
 
-/// Shows the make payment dialog for a loan schedule.
+/// Shows the make payment dialog for a loan schedule. [loanRows] are the
+/// loan's listed rows: an open-term penalty is one per overdue stretch.
 Future<void> showMakePaymentDialog(
   BuildContext context, {
   required LoanSchedule schedule,
   required String userId,
+  List<LoanSchedule> loanRows = const [],
 }) {
   String? selectedPaymentOption;
 
@@ -255,6 +257,7 @@ Future<void> showMakePaymentDialog(
                   PaymentPenaltySection(
                     schedules: [schedule],
                     loan: context.read<LoansBloc>().selectedLoan,
+                    loanRows: loanRows,
                   ),
                 ],
               ),
@@ -419,6 +422,7 @@ By clicking 'Proceed,' you acknowledge that the payment will be covered by the c
                                       .read<LoansBloc>()
                                       .selectedLoan,
                                   schedule: schedule,
+                                  loanRows: loanRows,
                                   interestPayment: key.currentState!
                                           .value['interest_payment']
                                       as String,
@@ -517,6 +521,7 @@ By clicking 'Proceed,' you acknowledge that the payment will be covered by the c
                                   .read<LoansBloc>()
                                   .selectedLoan,
                               schedule: schedule,
+                              loanRows: loanRows,
                               interestPayment: key.currentState!
                                       .value['interest_payment']
                                   as String,
@@ -573,6 +578,7 @@ By clicking 'Proceed,' you acknowledge that the payment will be covered by the c
                                 .read<LoansBloc>()
                                 .selectedLoan,
                             schedule: schedule,
+                            loanRows: loanRows,
                             interestPayment: key.currentState!
                                 .value['interest_payment'] as String,
                             payment: key.currentState!
