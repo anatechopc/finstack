@@ -78,9 +78,31 @@ void main() {
         frequency: PenaltyFrequency.monthly,
       );
 
-      expect(fixed.amountLabel, '${100.0.toCurrency()} / day');
-      expect(fixed.chipLabel, 'Late fee · ${100.0.toCurrency()} / day');
-      expect(pct.amountLabel, '2% / month');
+      expect(fixed.amountLabel(), '${100.0.toCurrency()}, per day');
+      expect(fixed.chipLabel(), 'Late fee · ${100.0.toCurrency()}, per day');
+      expect(
+        pct.amountLabel(isOpenTerm: false),
+        '2% of the missed bill, per month',
+      );
+    });
+  });
+
+  group('penaltyFromFields "Based on"', () {
+    test('kept for a percentage, dropped for a flat amount', () {
+      final pct = penaltyFromFields({
+        'amount': '0.1%',
+        'name': 'Surcharge',
+        'frequency': PenaltyFrequency.daily,
+        'based_on': PenaltyBase.outstandingBalance,
+      });
+      final fixed = penaltyFromFields({
+        'amount': '100',
+        'name': 'Late fee',
+        'based_on': PenaltyBase.outstandingBalance,
+      });
+
+      expect(pct.basedOn, PenaltyBase.outstandingBalance);
+      expect(fixed.basedOn, isNull);
     });
   });
 }

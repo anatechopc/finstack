@@ -12,6 +12,8 @@ import 'package:loooans_helpers/loooans_helpers.dart';
 ///
 /// `amount` is the raw text; a trailing `%` means percentage, the same
 /// convention as charges. `frequency` is a [PenaltyFrequency] or absent.
+/// `based_on` is a [PenaltyBase]; it is kept only for a percentage (a flat
+/// amount is charged as entered).
 Penalty penaltyFromFields(Map<String, dynamic> fields) {
   final amountStr = (fields['amount'] as String).trim();
   final isPercentage = amountStr.endsWith('%');
@@ -27,6 +29,7 @@ Penalty penaltyFromFields(Map<String, dynamic> fields) {
     isPercentage: isPercentage,
     frequency:
         (fields['frequency'] as PenaltyFrequency?) ?? PenaltyFrequency.once,
+    basedOn: isPercentage ? fields['based_on'] as PenaltyBase? : null,
   );
 }
 
@@ -54,72 +57,122 @@ String? validatePenaltyAmount(String? value) {
 
 /// Shared "add a penalty" dialog used by the company defaults section and the
 /// add-product wizard. Resolves to the new [Penalty], or null when dismissed.
+///
+/// "Based on" (owner, 2026-11-19) shows only for a percentage. It starts on
+/// the missed bill; picking "Per day" selects the outstanding balance, which
+/// the lender can change.
 Future<Penalty?> showPenaltyDialog(BuildContext context) {
   return showDialog<Penalty>(
     context: context,
     builder: (context) {
       final key = GlobalKey<FormBuilderState>(debugLabel: 'penalty_dialog');
+      var isPercentage = false;
 
       return AlertDialog(
         title: const Text('Penalty'),
         backgroundColor: AppColors.green1,
+        scrollable: true,
         content: FormBuilder(
           key: key,
           child: Container(
             width: double.infinity,
             constraints: const BoxConstraints(maxWidth: 500),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                AppWidgets.defaultFormBuilderTextField(
-                  name: 'amount',
-                  label: 'Amount',
-                  helperText: 'Allowed: amount or percentage (e.g 100, 3.5%)',
-                  validator: FormBuilderValidators.compose([
-                    FormBuilderValidators.required(),
-                    validatePenaltyAmount,
-                  ]),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(
-                      RegExp('^[0-9]*[.]?[0-9]*[%]?'),
+            child: StatefulBuilder(
+              builder: (context, setState) => Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AppWidgets.defaultFormBuilderTextField(
+                    name: 'amount',
+                    label: 'Amount',
+                    helperText:
+                        'Allowed: amount or percentage (e.g 100, 3.5%)',
+                    validator: FormBuilderValidators.compose([
+                      FormBuilderValidators.required(),
+                      validatePenaltyAmount,
+                    ]),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(
+                        RegExp('^[0-9]*[.]?[0-9]*[%]?'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      final percentage = value?.trim().endsWith('%') ?? false;
+                      if (percentage != isPercentage) {
+                        setState(() => isPercentage = percentage);
+                      }
+                    },
+                  ),
+                  const Gap(16),
+                  AppWidgets.defaultFormBuilderTextField(
+                    name: 'name',
+                    label: 'Name',
+                    validator: FormBuilderValidators.required(),
+                  ),
+                  const Gap(16),
+                  AppWidgets.defaultFormBuilderTextField(
+                    name: 'description',
+                    label: 'Description',
+                  ),
+                  const Gap(16),
+                  FormBuilderDropdown<PenaltyFrequency>(
+                    name: 'frequency',
+                    initialValue: PenaltyFrequency.once,
+                    decoration: const InputDecoration(labelText: 'Frequency'),
+                    items: PenaltyFrequency.values
+                        .map(
+                          (frequency) => DropdownMenuItem(
+                            value: frequency,
+                            child: Text(frequency.label),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (frequency) {
+                      if (frequency == PenaltyFrequency.daily) {
+                        key.currentState?.fields['based_on']
+                            ?.didChange(PenaltyBase.outstandingBalance);
+                      }
+                    },
+                  ),
+                  // Kept mounted while hidden so its choice survives an
+                  // amount edit; a flat amount saves no base.
+                  Visibility(
+                    visible: isPercentage,
+                    maintainState: true,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 16),
+                      child: FormBuilderRadioGroup<PenaltyBase>(
+                        name: 'based_on',
+                        initialValue: PenaltyBase.missedBill,
+                        decoration:
+                            const InputDecoration(labelText: 'Based on'),
+                        orientation: OptionsOrientation.vertical,
+                        activeColor: AppColors.black,
+                        options: PenaltyBase.values
+                            .map(
+                              (base) => FormBuilderFieldOption(
+                                value: base,
+                                child: Text(base.label),
+                              ),
+                            )
+                            .toList(),
+                      ),
                     ),
-                  ],
-                ),
-                const Gap(16),
-                AppWidgets.defaultFormBuilderTextField(
-                  name: 'name',
-                  label: 'Name',
-                  validator: FormBuilderValidators.required(),
-                ),
-                const Gap(16),
-                AppWidgets.defaultFormBuilderTextField(
-                  name: 'description',
-                  label: 'Description',
-                ),
-                const Gap(16),
-                FormBuilderDropdown<PenaltyFrequency>(
-                  name: 'frequency',
-                  initialValue: PenaltyFrequency.once,
-                  decoration: const InputDecoration(labelText: 'Frequency'),
-                  items: PenaltyFrequency.values
-                      .map(
-                        (frequency) => DropdownMenuItem(
-                          value: frequency,
-                          child: Text(frequency.label),
-                        ),
-                      )
-                      .toList(),
-                ),
-                const Gap(8),
-                const Text(
-                  'Percentages apply to the installment amount. Daily and '
-                  'monthly penalties multiply by how late the payment is; '
-                  '"Per installment" follows the product\'s loan term '
-                  '(monthly or twice a month). A started period counts in '
-                  'full.',
-                  style: TextStyle(fontSize: 10),
-                ),
-              ],
+                  ),
+                  const Gap(8),
+                  const Text(
+                    'A percentage of the missed bill is charged on each late '
+                    "bill for that bill's own days late. A percentage of the "
+                    'outstanding balance is charged once for the loan while '
+                    'any bill is late. A flat amount is charged as entered: '
+                    'per late bill on fixed-term loans, once for the loan on '
+                    'open-term loans. Daily and monthly penalties multiply by '
+                    'how late the payment is; "Per installment" follows the '
+                    "product's loan term (monthly or twice a month). A "
+                    'started period counts in full.',
+                    style: TextStyle(fontSize: 10),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

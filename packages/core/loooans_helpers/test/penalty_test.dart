@@ -70,6 +70,72 @@ void main() {
     });
   });
 
+  group('Penalty.basedOn', () {
+    test('serializes as based_on and round-trips', () {
+      for (final (base, value) in [
+        (PenaltyBase.missedBill, 'missed_bill'),
+        (PenaltyBase.outstandingBalance, 'outstanding_balance'),
+      ]) {
+        final penalty = Penalty(
+          id: 'p',
+          name: 'Surcharge',
+          amount: 10,
+          isPercentage: true,
+          basedOn: base,
+        );
+
+        final json = penalty.toJson();
+
+        expect(json['based_on'], value);
+        expect(Penalty.fromJson(json), penalty);
+      }
+    });
+
+    test('null is not written; missing or unknown reads as null', () {
+      const penalty = Penalty(id: 'p', name: 'Late fee', amount: 100);
+
+      expect(penalty.toJson().containsKey('based_on'), isFalse);
+      expect(
+        Penalty.fromJson(const {'id': 'p', 'name': 'A', 'amount': 1}).basedOn,
+        isNull,
+      );
+      expect(
+        Penalty.fromJson(const {
+          'id': 'p',
+          'name': 'A',
+          'amount': 1,
+          'based_on': 'principal',
+        }).basedOn,
+        isNull,
+      );
+    });
+
+    test('baseFor: null keeps the loan type default; a flat amount ignores it',
+        () {
+      const legacy = Penalty(id: 'p', name: 'A', amount: 1, isPercentage: true);
+      expect(legacy.baseFor(isOpenTerm: false), PenaltyBase.missedBill);
+      expect(legacy.baseFor(isOpenTerm: true), PenaltyBase.outstandingBalance);
+
+      const onBill = Penalty(
+        id: 'p',
+        name: 'A',
+        amount: 1,
+        isPercentage: true,
+        basedOn: PenaltyBase.missedBill,
+      );
+      expect(onBill.baseFor(isOpenTerm: true), PenaltyBase.missedBill);
+
+      const flat = Penalty(
+        id: 'p',
+        name: 'A',
+        amount: 100,
+        basedOn: PenaltyBase.missedBill,
+      );
+      expect(flat.baseFor(isOpenTerm: true), PenaltyBase.outstandingBalance);
+      expect(flat.baseFor(isOpenTerm: false), PenaltyBase.missedBill);
+    });
+  });
+
   group('PenaltyFrequency.periods', () {
     test('once is a single period whenever late', () {
       expect(PenaltyFrequency.once.periods(1), 1);

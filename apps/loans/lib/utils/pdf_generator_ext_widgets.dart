@@ -87,7 +87,7 @@ pw.Widget _quotationWidget({
           (penalty) {
             return _quotationItem(
               title: 'Penalty if paid late: ${penalty.name}',
-              detail: penalty.amountLabel,
+              detail: penalty.amountLabel(isOpenTerm: loan.period == 0),
             );
           },
         ),

@@ -335,14 +335,23 @@ extension DurationExtension on Duration {
 }
 
 extension PenaltyLabels on Penalty {
-  /// e.g. "₱100.00 / day" or "2.0% / month".
-  String get amountLabel {
-    final amountStr = isPercentage
-        ? '${amount % 1 == 0 ? amount.toInt() : amount}%'
-        : amount.toCurrency();
-    return '$amountStr ${frequency.suffix}';
+  /// e.g. "₱100.00, per day", "10% of the missed bill, once" or "0.1% of
+  /// the balance, per day". [isOpenTerm] is the loan type; a penalty saved
+  /// without a "Based on" choice shows that type's default base, and both
+  /// when the type is not known (company defaults).
+  String amountLabel({bool? isOpenTerm}) {
+    if (!isPercentage) {
+      return '${amount.toCurrency()}, ${frequency.suffix}';
+    }
+
+    final base = basedOn == null && isOpenTerm == null
+        ? 'of the missed bill (fixed term) or the balance (open term)'
+        : baseFor(isOpenTerm: isOpenTerm ?? false).phrase;
+    return '${amount % 1 == 0 ? amount.toInt() : amount}% $base, '
+        '${frequency.suffix}';
   }
 
-  /// e.g. "Late fee · ₱100.00 / day".
-  String get chipLabel => '$name · $amountLabel';
+  /// e.g. "Late fee · ₱100.00, per day".
+  String chipLabel({bool? isOpenTerm}) =>
+      '$name · ${amountLabel(isOpenTerm: isOpenTerm)}';
 }
