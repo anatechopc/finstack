@@ -15,6 +15,7 @@ class PendingSubmission extends Equatable {
     required this.loan,
     required this.schedules,
     this.totalAmount,
+    this.loanRows = const [],
   });
 
   final String submissionId;
@@ -29,7 +30,12 @@ class PendingSubmission extends Equatable {
   /// loading. Null when amounts were unavailable.
   final double? totalAmount;
 
+  /// Every stored row of the loan. An open-term penalty is one per overdue
+  /// stretch (owner rule R3); these tell where it starts and what was
+  /// already charged.
+  final List<LoanSchedule> loanRows;
+
   @override
   List<Object?> get props =>
-      [submissionId, payments, loan, schedules, totalAmount];
+      [submissionId, payments, loan, schedules, totalAmount, loanRows];
 }

@@ -8,6 +8,7 @@ import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
+import 'package:loooans_helpers/data_helpers.dart';
 
 class ClientDetailScheduleItem extends StatelessWidget {
   const ClientDetailScheduleItem({
@@ -17,8 +18,13 @@ class ClientDetailScheduleItem extends StatelessWidget {
     this.onReviewPayment,
     this.isHeader = false,
     this.loan,
+    this.loanRows = const [],
     super.key,
   });
+
+  /// Every row of the loan as listed. An open-term penalty is one per
+  /// overdue stretch, shown on its earliest unpaid bill (owner rule R3).
+  final List<LoanSchedule> loanRows;
 
   final int index;
   final LoanSchedule schedule;
@@ -75,7 +81,11 @@ class ClientDetailScheduleItem extends StatelessWidget {
     final currentLoan = loan;
     final preview = currentLoan == null
         ? PenaltyResult.none
-        : previewPenalty(schedule: schedule, loan: currentLoan);
+        : previewPenalty(
+            schedule: schedule,
+            loan: currentLoan,
+            loanRows: loanRows,
+          );
     final daysLateNow = calculateDaysLate(
       dueAt: schedule.lateFrom,
       collectedAt: DateTime.now(),
@@ -340,9 +350,23 @@ class ClientDetailScheduleItem extends StatelessWidget {
     final user = AuthenticationService.instance.user;
     final isSelfManaged =
         company.managementType == CompanyManagementType.selfManaged;
+    // Computed open-term bills are paid oldest first: the engine bills only
+    // after the last stored row, so paying a later one first would drop the
+    // earlier one from the schedule.
+    final laterThanAnUnpaidBill = schedule.isOpenTerm &&
+        schedule.id == NO_ID &&
+        loanRows.any(
+          (other) =>
+              other.isOpenTerm &&
+              !other.isPlaceholder &&
+              other.id == NO_ID &&
+              other.status == LoanStatus.not_paid &&
+              other.dueAt.isBefore(schedule.dueAt),
+        );
     final showMakePaymentButton = isSelfManaged &&
         (user.isAdmin() || user.isTeller()) &&
-        schedule.status == LoanStatus.not_paid;
+        schedule.status == LoanStatus.not_paid &&
+        !laterThanAnUnpaidBill;
     final showAdditionalLoanAmountDetailsButton = isSelfManaged &&
         (user.isLoanOfficer() || user.isAdmin()) &&
         schedule.status == LoanStatus.pending &&

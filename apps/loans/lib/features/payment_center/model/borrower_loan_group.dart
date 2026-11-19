@@ -8,6 +8,7 @@ class BorrowerLoanGroup extends Equatable {
     required this.productName,
     required this.loanType,
     this.actionableSchedules = const [],
+    this.storedSchedules = const [],
     this.childLoans = const [],
   });
 
@@ -15,6 +16,11 @@ class BorrowerLoanGroup extends Equatable {
   final String productName;
   final String loanType;
   final List<LoanSchedule> actionableSchedules;
+
+  /// Every stored row of the loan. An open-term penalty is one per overdue
+  /// stretch (owner rule R3); the payment dialog reads what earlier
+  /// payments in the stretch already charged from these.
+  final List<LoanSchedule> storedSchedules;
   final List<BorrowerLoanGroup> childLoans;
 
   @override
@@ -23,6 +29,7 @@ class BorrowerLoanGroup extends Equatable {
         productName,
         loanType,
         actionableSchedules,
+        storedSchedules,
         childLoans,
       ];
 }

@@ -96,11 +96,13 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
     DateTime? collectedAt,
     bool waivePenalty = false,
     String? waiveReason,
+    List<LoanSchedule> loanRows = const [],
   }) {
     add(
       PayLoanScheduleEvent(
         loan: loan,
         schedule: schedule,
+        loanRows: loanRows,
         payment: double.parse(payment),
         interestPayment: double.parse(interestPayment),
         fileName: fileName,
@@ -197,6 +199,7 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
           actorId: authService.user.id,
           waivePenalty: event.waivePenalty,
           waiveReason: event.waiveReason,
+          loanRows: event.loanRows,
         );
 
         final tempPayment = Payment.create(

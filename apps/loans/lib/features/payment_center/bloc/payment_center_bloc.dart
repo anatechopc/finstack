@@ -356,6 +356,7 @@ class PaymentCenterBloc
               loan: loan,
               schedules: schedulesBySubmission[entry.key] ?? const [],
               totalAmount: amountBySubmission[entry.key],
+              loanRows: persistedSchedules,
             ),
           )
           .toList();
@@ -389,7 +390,8 @@ class PaymentCenterBloc
             loan: child,
             productName: childProduct?.loanType ?? 'Unknown',
             loanType: childProduct?.loanType ?? 'Unknown',
-            actionableSchedules: childSchedules,
+            actionableSchedules: childSchedules.actionable,
+            storedSchedules: childSchedules.stored,
           ));
         }
       }
@@ -398,7 +400,8 @@ class PaymentCenterBloc
         loan: parent,
         productName: product?.loanType ?? 'Unknown',
         loanType: product?.loanType ?? 'Unknown',
-        actionableSchedules: schedules,
+        actionableSchedules: schedules.actionable,
+        storedSchedules: schedules.stored,
         childLoans: childGroups,
       ));
     }
@@ -412,7 +415,8 @@ class PaymentCenterBloc
           loan: child,
           productName: product?.loanType ?? 'Unknown',
           loanType: product?.loanType ?? 'Unknown',
-          actionableSchedules: schedules,
+          actionableSchedules: schedules.actionable,
+          storedSchedules: schedules.stored,
         ));
       }
     } else {
@@ -426,7 +430,8 @@ class PaymentCenterBloc
           loan: orphan,
           productName: product?.loanType ?? 'Unknown',
           loanType: product?.loanType ?? 'Unknown',
-          actionableSchedules: schedules,
+          actionableSchedules: schedules.actionable,
+          storedSchedules: schedules.stored,
         ));
       }
     }
@@ -479,8 +484,11 @@ class PaymentCenterBloc
   /// For open-term loans: generates the next payable schedule using
   /// [LoanCalculationService.calculateOpenTerm].
   ///
-  /// Returns all overdue schedules + the next upcoming unpaid schedule.
-  Future<List<LoanSchedule>> _getActionableSchedules(
+  /// Returns all overdue schedules + the next upcoming unpaid schedule, and
+  /// the loan's stored rows (an open-term penalty is one per overdue
+  /// stretch, so the payment dialog needs what was already charged).
+  Future<({List<LoanSchedule> actionable, List<LoanSchedule> stored})>
+      _getActionableSchedules(
     Loan loan,
     Product? product,
   ) async {
@@ -488,7 +496,7 @@ class PaymentCenterBloc
     if (loan.status == LoanStatus.completed ||
         loan.status == LoanStatus.declined ||
         loan.status == LoanStatus.bad_debt) {
-      return [];
+      return (actionable: <LoanSchedule>[], stored: <LoanSchedule>[]);
     }
 
     // Fetch persisted schedules from Firestore
@@ -589,10 +597,13 @@ class PaymentCenterBloc
         .where((s) => s.status == LoanStatus.not_paid)
         .toList();
 
-    return [
-      ...overdue,
-      if (upcoming.isNotEmpty) upcoming.first,
-    ];
+    return (
+      actionable: [
+        ...overdue,
+        if (upcoming.isNotEmpty) upcoming.first,
+      ],
+      stored: persistedSchedules,
+    );
   }
 
   Future<void> _handleClearBorrowerEvent(
@@ -962,9 +973,41 @@ class PaymentCenterBloc
           confirmed_at: ${DateTime.timestamp().toDefaultDateFormatExtended()}''';
       }
 
+      // Open-term bills are paid oldest first with the interest entered
+      // (owner rule R4): a bill that gets nothing stays unpaid and a short
+      // one carries the rest to the next bill.
+      final interestShares = PaymentConfirmationService.splitOpenTermInterest(
+        schedules: event.schedules,
+        totalInterest: event.totalInterestPayment,
+      );
+      final paying = [
+        for (var i = 0; i < event.schedules.length; i++)
+          if (!event.schedules[i].isOpenTerm || interestShares[i] > 0)
+            (schedule: event.schedules[i], interestShare: interestShares[i]),
+      ];
+      if (paying.isEmpty) {
+        throw Exception('Nothing to pay');
+      }
+
+      // An open-term penalty is one per overdue stretch (R3): the first
+      // late bill of this payment carries it, and the stored rows tell what
+      // earlier payments in the stretch already charged.
+      final loanRows = event.schedules.first.isOpenTerm
+          ? [
+              ...(await loanScheduleRepository.allByLoanId(
+                loanId: loan.id,
+                onlyPaid: false,
+              ))
+                  .where(
+                (stored) => !event.schedules.any((s) => s.id == stored.id),
+              ),
+              ...event.schedules,
+            ]
+          : const <LoanSchedule>[];
+
       // Process each overdue schedule
       Payment? lastPayment;
-      for (final schedule in event.schedules) {
+      for (final (:schedule, :interestShare) in paying) {
         schedule
           ..paidAt = DateTime.timestamp()
           ..loanId = loan.id;
@@ -976,12 +1019,12 @@ class PaymentCenterBloc
           actorId: authService.user.id,
           waivePenalty: event.waivePenalty,
           waiveReason: event.waiveReason,
+          loanRows: loanRows,
         );
 
         // Distribute payment proportionally per schedule
-        final interestPayment = schedule.isOpenTerm
-            ? schedule.interestCharge
-            : schedule.interestPayment;
+        final interestPayment =
+            schedule.isOpenTerm ? interestShare : schedule.interestPayment;
         final principalPayment = schedule.principalPayment;
 
         if (!schedule.isOpenTerm) {
@@ -1033,8 +1076,8 @@ class PaymentCenterBloc
         }
       }
 
-      // Update loan status with the last schedule's status
-      final lastStatus = event.schedules.last.status;
+      // Update loan status with the last paid schedule's status
+      final lastStatus = paying.last.schedule.status;
       await loanRepository.update(
         data: loan..status = lastStatus,
         updateView: true,
@@ -1060,7 +1103,7 @@ class PaymentCenterBloc
       emit(state.copyWith(
         status: PaymentCenterStatus.paymentSuccess,
         message:
-            'Successfully paid ${event.schedules.length} overdue schedule(s)',
+            'Successfully paid ${paying.length} overdue schedule(s)',
         isLoading: false,
       ));
 
