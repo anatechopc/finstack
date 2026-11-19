@@ -96,6 +96,35 @@ class PaymentConfirmationService {
     }
   }
 
+  /// Records a teller payment of [interestPayment] and [principalPayment] on
+  /// [schedule] with the balance left after it. Every teller path (client
+  /// detail, Payment Center single and bulk) routes through here.
+  ///
+  /// A fixed-term row already holds the balance after its scheduled
+  /// principal, so only the difference from that principal moves it (#140:
+  /// subtracting the whole payment again under-billed the rest of the
+  /// schedule). Principal above the schedule is the row's extra payment. An
+  /// open-term row holds the balance before the payment.
+  static void recordTellerPayment(
+    LoanSchedule schedule, {
+    required double interestPayment,
+    required double principalPayment,
+  }) {
+    if (schedule.isOpenTerm) {
+      schedule.outstandingBalance -= principalPayment - schedule.extraPayment;
+    } else {
+      final extraPayment = principalPayment - schedule.principalPayment;
+      if (extraPayment > 0.0) {
+        schedule.extraPayment = extraPayment;
+      }
+      schedule.outstandingBalance -= extraPayment;
+    }
+
+    schedule
+      ..interestPayment = interestPayment
+      ..principalPayment = principalPayment;
+  }
+
   /// A submitted open-term bill is settled, for the overdue stretch, at its
   /// transfer (review of #146): rows submitted before submissions recorded
   /// it on the row get it from their payment here, in memory.

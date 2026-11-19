@@ -214,19 +214,13 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
           confirmedAt: DateTime.timestamp(),
         );
 
-        if (!schedule.isOpenTerm) {
-          final extraPayment = event.payment - schedule.principalPayment;
-          if (extraPayment > 0.0) {
-            schedule
-              ..extraPayment = extraPayment
-              ..outstandingBalance -= extraPayment;
-          }
-        }
+        PaymentConfirmationService.recordTellerPayment(
+          schedule,
+          interestPayment: event.interestPayment,
+          principalPayment: event.payment,
+        );
 
         schedule
-          ..interestPayment = event.interestPayment
-          ..principalPayment = event.payment
-          ..outstandingBalance -= (event.payment - schedule.extraPayment)
           ..loanId = loan.id
           ..status = status;
 
