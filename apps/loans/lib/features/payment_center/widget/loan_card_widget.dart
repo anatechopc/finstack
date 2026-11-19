@@ -7,6 +7,7 @@ import 'package:loooans/features/payment_center/bloc/payment_center_bloc.dart';
 import 'package:loooans/features/payment_center/model/borrower_loan_group.dart';
 import 'package:loooans/features/payment_center/widget/overdue_summary_tile.dart';
 import 'package:loooans/features/payment_center/widget/payable_tile_widget.dart';
+import 'package:loooans/services/top_up_overdue_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 
@@ -197,7 +198,12 @@ class LoanCardWidget extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: OverdueSummaryTile(
                 overdueSchedules: overdueSchedules,
-                readOnly: readOnly,
+                // No Pay while a top-up being approved is paying them
+                // (review of #149).
+                readOnly: readOnly ||
+                    overdueSchedules.any(
+                      (s) => TopUpOverdueService.isClaimedBill(loan, s),
+                    ),
                 onPay: () {
                   if (onPayOverdue != null) {
                     onPayOverdue!(overdueSchedules);
@@ -220,7 +226,8 @@ class LoanCardWidget extends StatelessWidget {
                         // bill waits for the overdue ones.
                         readOnly: readOnly ||
                             (schedule.isOpenTerm &&
-                                overdueSchedules.isNotEmpty),
+                                overdueSchedules.isNotEmpty) ||
+                            TopUpOverdueService.isClaimedBill(loan, schedule),
                         onPay: () => onPay(schedule),
                       ),
                     )

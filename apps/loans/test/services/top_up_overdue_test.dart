@@ -287,6 +287,56 @@ void main() {
     });
   });
 
+  group('a stored plan against the stored rows', () {
+    test('paid or submitted by another payment: stale; by the plan: written',
+        () {
+      final loan = loan40k();
+      final bill = rowsOn(loan, sep21).firstWhere((r) => !r.isPlaceholder);
+      final plan = TopUpOverdueService.plan(
+        loan: loan,
+        topUp: topUp(),
+        bills: [LoanSchedule.fromJson(bill.toJson())],
+        actorId: 'officer-1',
+        comment: 'test',
+      );
+      LoanSchedule stored(LoanStatus status, String paymentId) =>
+          LoanSchedule.fromJson(bill.toJson())
+            ..id = 'row-x'
+            ..status = status
+            ..paymentId = paymentId;
+
+      expect(
+        TopUpOverdueService.check(plan, const []),
+        (stale: false, written: false),
+      );
+      expect(
+        TopUpOverdueService.check(plan, [
+          stored(LoanStatus.payment_submitted, 'borrower-pay'),
+        ]),
+        (stale: true, written: false),
+      );
+      expect(
+        TopUpOverdueService.check(plan, [
+          stored(LoanStatus.paid_late, 'teller-pay'),
+        ]),
+        (stale: true, written: false),
+      );
+      expect(
+        TopUpOverdueService.check(plan, [
+          stored(LoanStatus.paid_late, 'topup-1-1'),
+        ]),
+        (stale: false, written: true),
+      );
+      // A rejected submission is unpaid again: nothing paid it.
+      expect(
+        TopUpOverdueService.check(plan, [
+          stored(LoanStatus.not_paid_overdue, 'borrower-pay'),
+        ]),
+        (stale: false, written: false),
+      );
+    });
+  });
+
   group('proceeds and the cash released', () {
     test('no charges: 10,000 - 1,300 = 8,700 released', () {
       final proceeds = TopUpOverdueService.proceeds(topUp());

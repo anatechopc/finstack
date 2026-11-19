@@ -335,6 +335,7 @@ class AdditionalLoanBloc
       );
     }
 
+    await _refuseStalePlan(loan, claimed);
     await TopUpOverdueService(
       loanScheduleRepository: loanScheduleRepository,
       paymentRepository: paymentRepository,
@@ -355,6 +356,54 @@ class AdditionalLoanBloc
     );
 
     return done;
+  }
+
+  /// A plan whose bills were paid by another payment since it was made
+  /// (a teller took the cash while the approval was stopped) is never
+  /// written: its amounts were worked out before that payment, which may
+  /// have paid principal or left a shortfall for the next bill, and the
+  /// approver confirmed a release that no longer holds. With none of its
+  /// rows written the claim is released, so the next approval works the
+  /// amount out again (or the top-up can be declined); with some written
+  /// it is left for an admin. Either way nothing more is paid from it.
+  Future<void> _refuseStalePlan(
+    Loan loan,
+    AdditionalLoanAmount claimed,
+  ) async {
+    final (:stale, :written) = TopUpOverdueService.check(
+      claimed.deductionPlan,
+      await loanScheduleRepository.allByLoanId(
+        loanId: loan.id,
+        onlyPaid: false,
+      ),
+    );
+    if (!stale) {
+      return;
+    }
+    if (written) {
+      throw TopUpRefused(
+        'While an approval of this additional loan was stopped, some of its '
+        'overdue bills were paid from it and others by another payment. It '
+        'cannot be completed or declined here: an admin needs to check '
+        'payments ${claimed.deductedPaymentIds.join(', ')}.',
+      );
+    }
+    await _transact(claimed.id, (current) {
+      _requirePending(current);
+      if (current.deductedAt != claimed.deductedAt) {
+        return null;
+      }
+      return current
+        ..deductionPlan = []
+        ..deductedPaymentIds = []
+        ..overdueDeduction = 0
+        ..deductedAt = null;
+    });
+    throw const TopUpRefused(
+      'The overdue bills were paid by another payment while this approval '
+      'was stopped, so nothing was deducted. Open the loan again and '
+      'approve: the overdue amount is worked out again.',
+    );
   }
 
   /// Step 1 of [_approveWithDeduction]: the bills to pay from [topUp] now

@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:company_repository/company_repository.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:loan_repository/loan_repository.dart';
 // Top-ups are read back through this entity, which the package does not
@@ -13,7 +14,10 @@ import 'package:loooans/features/loans/bloc/additional_loan_bloc.dart';
 import 'package:loooans/features/loans/screens/loan_details.dart';
 import 'package:loooans/features/loans/widget/top_up_overdue_dialogs.dart';
 import 'package:loooans/features/payment_center/bloc/payment_center_bloc.dart';
+import 'package:loooans/features/payment_center/model/borrower_loan_group.dart';
+import 'package:loooans/features/payment_center/widget/loan_card_widget.dart';
 import 'package:loooans/features/products/requirement_temp_container.dart';
+import 'package:loooans/features/users/widget/client_detail/client_detail_schedule_item.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/loan_calculation_service.dart';
 import 'package:loooans/services/top_up_overdue_service.dart';
@@ -154,8 +158,11 @@ class _Store {
   bool viewUpdated = false;
   int paymentWrites = 0;
 
-  /// The n-th payment write (1-based) throws.
+  int rowWrites = 0;
+
+  /// The n-th payment or row write (1-based) throws.
   int? failPaymentWrite;
+  int? failRowWrite;
   Duration delay = Duration.zero;
 
   AdditionalLoanAmount topUp([String id = 'topup-1']) => topUpFrom(topUps[id]!);
@@ -279,6 +286,9 @@ void main() {
         (invocation) async {
           await Future<void>.delayed(store.delay);
           final row = invocation.namedArguments[#data] as LoanSchedule;
+          if (++store.rowWrites == store.failRowWrite) {
+            throw Exception('network down');
+          }
           store.rows[row.id] = roundTrip(row);
           store.log.add('row ${row.id}');
           return row;
@@ -391,8 +401,8 @@ void main() {
       // The claim comes before any payment or row; approval after them.
       expect(store.log, [
         'top-up pending claimed',
-        'payment topup-1-1',
         'row topup-1-1',
+        'payment topup-1-1',
         'top-up approved claimed',
         'loan paid_late',
       ]);
@@ -672,9 +682,9 @@ void main() {
 
     group('an approval that stops part way is completed by the next', () {
       test(
-          'stopped at the first payment: claimed, nothing paid; decline '
+          'stopped at the first write: claimed, nothing paid; decline '
           'refused; approving again completes it', () async {
-        store.failPaymentWrite = 1;
+        store.failRowWrite = 1;
 
         final failed = await approve(expected: 1300);
         expect(failed.status, AdditionalLoanStatus.error);
@@ -707,7 +717,7 @@ void main() {
           'stopped after bill 1 of 2: the retry writes bill 2 and '
           'overwrites bill 1, no duplicates', () async {
         store = _Store(loanCreatedDaysAgo: 35, topUp: pendingTopUp())
-          ..failPaymentWrite = 2;
+          ..failRowWrite = 2;
 
         final failed = await approve(expected: 2900);
         expect(failed.status, AdditionalLoanStatus.error);
@@ -741,6 +751,281 @@ void main() {
           ['topup-1', 'topup-1'],
         );
       });
+    });
+  });
+
+  group('a stored plan whose bills were paid elsewhere is never written', () {
+    // Shares the bloc group's fakes through a small copy of its set-up.
+    late _Store store;
+
+    AdditionalLoanBloc blocOn(_Store store) {
+      final loans = _Loans();
+      final schedules = _Schedules();
+      final payments = _Payments();
+      when(() => loans.get(id: any(named: 'id')))
+          .thenAnswer((_) async => store.loan());
+      when(
+        () => loans.transactAdditionalLoanAmount(
+          id: any(named: 'id'),
+          change: any(named: 'change'),
+        ),
+      ).thenAnswer((invocation) async {
+        final id = invocation.namedArguments[#id] as String;
+        final change = invocation.namedArguments[#change]
+            as AdditionalLoanAmount? Function(AdditionalLoanAmount);
+        final next = change(store.topUp(id));
+        if (next != null) {
+          store.topUps[id] = next.toJson();
+        }
+        return store.topUp(id);
+      });
+      when(
+        () => loans.update(
+          data: any(named: 'data'),
+          updateView: any(named: 'updateView'),
+          updateAdditionalLoanAmounts:
+              any(named: 'updateAdditionalLoanAmounts'),
+        ),
+      ).thenAnswer((invocation) async {
+        final loan = invocation.namedArguments[#data] as Loan;
+        store.loanStatus = loan.status;
+        return loan;
+      });
+      when(
+        () => schedules.allByLoanId(
+          loanId: any(named: 'loanId'),
+          onlyPaid: any(named: 'onlyPaid'),
+        ),
+      ).thenAnswer(
+        (_) async => [
+          for (final row in [...store.storedBefore, ...store.rows.values])
+            roundTrip(row),
+        ],
+      );
+      when(() => schedules.set(data: any(named: 'data'))).thenAnswer(
+        (invocation) async {
+          final row = invocation.namedArguments[#data] as LoanSchedule;
+          if (++store.rowWrites == store.failRowWrite) {
+            throw Exception('network down');
+          }
+          store.rows[row.id] = roundTrip(row);
+          return row;
+        },
+      );
+      when(() => payments.set(data: any(named: 'data'))).thenAnswer(
+        (invocation) async {
+          final payment = invocation.namedArguments[#data] as Payment;
+          store.payments[payment.id] = payment;
+          return payment;
+        },
+      );
+      final bloc = AdditionalLoanBloc.withDependencies(
+        authService: officer(),
+        loanRepository: loans,
+        storageRepository: _Storage(),
+        loanScheduleRepository: schedules,
+        paymentRepository: payments,
+      );
+      addTearDown(bloc.close);
+      return bloc;
+    }
+
+    Future<AdditionalLoanState> approveOn(
+      _Store store, {
+      required double expected,
+    }) {
+      final bloc = blocOn(store)
+        ..updateAdditionalLoanAmount(
+          loanId: 'loan-1',
+          additionalLoanAmountId: 'topup-1',
+          status: LoanStatus.approved,
+          expectedDeduction: expected,
+        );
+      return bloc.stream.firstWhere(
+        (s) =>
+            s.status == AdditionalLoanStatus.success ||
+            s.status == AdditionalLoanStatus.error,
+      );
+    }
+
+    /// A teller's payment of the bill due [daysAgo] days ago, stored.
+    LoanSchedule tellerPaid(Loan loan, int daysAgo) =>
+        clientRows(loan).firstWhere(
+          (r) =>
+              !r.isPlaceholder &&
+              DateUtils.isSameDay(r.dueAt, daysFromToday(-daysAgo)),
+        )
+          ..id = 'teller-row'
+          ..status = LoanStatus.paid_late
+          ..paidAt = DateTime.now()
+          ..collectedAt = DateTime.now()
+          ..paymentId = 'teller-pay'
+          ..interestPayment = 1000
+          ..penalty = 300;
+
+    test(
+        'nothing of the plan written: the claim is released, nothing is '
+        'deducted, the next approval works it out again', () async {
+      store = _Store(topUp: pendingTopUp())..failRowWrite = 1;
+      expect(
+        (await approveOn(store, expected: 1300)).status,
+        AdditionalLoanStatus.error,
+      );
+      expect(store.topUp().deductionPlan, hasLength(1));
+      // A teller takes the borrower's cash for the planned bill.
+      store.storedBefore.add(tellerPaid(store.loan(), 5));
+
+      final refused = await approveOn(store, expected: 1300);
+      expect(refused.status, AdditionalLoanStatus.error);
+      expect(refused.message, contains('paid by another payment'));
+      expect(store.rows, isEmpty);
+      expect(store.payments, isEmpty);
+      final released = store.topUp();
+      expect(released.status, LoanStatus.pending);
+      expect(released.deductionPlan, isEmpty);
+      expect(released.overdueDeduction, 0);
+      expect(released.deductedPaymentIds, isEmpty);
+
+      // Nothing is overdue now: approved with the full release.
+      final state = await approveOn(store, expected: 0);
+      expect(state.status, AdditionalLoanStatus.success, reason: state.message);
+      expect(store.rows, isEmpty);
+      expect(store.payments, isEmpty);
+      expect(store.topUp().status, LoanStatus.approved);
+      expect(store.topUp().overdueDeduction, 0);
+    });
+
+    test('part of the plan written: refused for an admin, nothing more paid',
+        () async {
+      store = _Store(loanCreatedDaysAgo: 35, topUp: pendingTopUp())
+        ..failRowWrite = 2;
+      expect(
+        (await approveOn(store, expected: 2900)).status,
+        AdditionalLoanStatus.error,
+      );
+      expect(store.rows.keys, ['topup-1-1']);
+      // A teller takes the cash for the second planned bill.
+      store.storedBefore.add(
+        roundTrip(store.rows['topup-1-1']!)
+          ..id = 'teller-row'
+          ..dueAt = daysFromToday(-5)
+          ..paymentId = 'teller-pay',
+      );
+
+      final refused = await approveOn(store, expected: 2900);
+      expect(refused.status, AdditionalLoanStatus.error);
+      expect(refused.message, contains('an admin needs to check'));
+      expect(store.rows.keys, ['topup-1-1']);
+      expect(store.payments.keys, ['topup-1-1']);
+      expect(store.topUp().status, LoanStatus.pending);
+      expect(store.topUp().overdueDeduction, 2900);
+    });
+  });
+
+  group('while a top-up is claimed its planned bills take no payment', () {
+    /// [loan] with a pending top-up claimed to pay its D-5 bill.
+    Loan claimedLoan() {
+      final loan = loan40k();
+      final bill = roundTrip(
+        clientRows(loan).firstWhere((r) => !r.isPlaceholder),
+      );
+      final topUp = pendingTopUp();
+      topUp
+        ..overdueDeduction = 1300
+        ..deductionPlan = TopUpOverdueService.plan(
+          loan: loan,
+          topUp: topUp,
+          bills: [bill],
+          actorId: 'officer-1',
+          comment: 'test',
+        );
+      return loan..additionalLoanAmounts = [topUp];
+    }
+
+    test('the claimed bill, and only it', () {
+      final loan = claimedLoan();
+      final rows = clientRows(loan).where((r) => !r.isPlaceholder).toList();
+
+      expect(
+        rows.map((r) => TopUpOverdueService.isClaimedBill(loan, r)),
+        [true, false],
+      );
+      expect(TopUpOverdueService.isClaimedBill(loan40k(), rows.first), isFalse);
+    });
+
+    testWidgets('client detail: no Make payment on the claimed bill',
+        (tester) async {
+      AuthenticationService.instance
+        ..user = (User()
+          ..id = 'teller-1'
+          ..userRole = UserRole.admin)
+        ..company = (Company()
+          ..id = 'co-1'
+          ..managementType = CompanyManagementType.selfManaged);
+      tester.view
+        ..physicalSize = const Size(2400, 800)
+        ..devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      for (final (loan, active) in [
+        (loan40k(), true),
+        (claimedLoan(), false),
+      ]) {
+        final rows = clientRows(loan);
+        await tester.pumpApp(
+          Scaffold(
+            body: ClientDetailScheduleItem(
+              index: 2,
+              schedule: rows.firstWhere((r) => !r.isPlaceholder),
+              onMakePayment: (_) {},
+              loan: loan,
+              loanRows: rows,
+            ),
+          ),
+        );
+        final button = tester.widget<OutlinedButton>(
+          find.widgetWithText(OutlinedButton, 'Make payment'),
+        );
+        expect(button.onPressed != null, active);
+      }
+    });
+
+    testWidgets('Payment Center: no Pay on the overdue tile', (tester) async {
+      final bloc = PaymentCenterBloc.withDependencies(
+        userRepository: _Users(),
+        loanRepository: _Loans(),
+        loanScheduleRepository: _Schedules(),
+        paymentRepository: _Payments(),
+        storageRepository: _Storage(),
+        authService: officer(),
+      );
+      addTearDown(bloc.close);
+
+      for (final (loan, pays) in [(loan40k(), 1), (claimedLoan(), 0)]) {
+        final bills = clientRows(loan).where((r) => !r.isPlaceholder).toList();
+        bills.first.status = LoanStatus.not_paid_overdue;
+        await tester.pumpApp(
+          BlocProvider.value(
+            value: bloc,
+            child: Scaffold(
+              body: SingleChildScrollView(
+                child: LoanCardWidget(
+                  group: BorrowerLoanGroup(
+                    loan: loan,
+                    productName: 'Open term',
+                    loanType: 'Personal loan',
+                    actionableSchedules: bills,
+                  ),
+                  onPay: (_) {},
+                  onPayOverdue: (_) {},
+                ),
+              ),
+            ),
+          ),
+        );
+        expect(find.text('Overdue - 1 payment'), findsOneWidget);
+        expect(find.text('Pay'), findsNWidgets(pays));
+      }
     });
   });
 

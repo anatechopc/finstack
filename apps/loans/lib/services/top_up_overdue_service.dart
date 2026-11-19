@@ -213,19 +213,71 @@ class TopUpOverdueService {
   static LoanStatus lastStatusOf(List<Map<String, dynamic>> plan) =>
       LoanSchedule.fromJson(plan.last['row'] as Map<String, dynamic>).status;
 
-  /// Writes [plan]: each bill's payment, then its row, at their fixed ids.
+  /// Writes [plan]: each bill's row, then its payment, at their fixed ids.
   /// Writing it again (an approval that stopped part way) overwrites the
-  /// documents already written and adds the missing ones.
+  /// documents already written and adds the missing ones. Rows first, so
+  /// a bill with no row written has no payment written either.
   Future<void> write(List<Map<String, dynamic>> plan) async {
     for (final entry in plan) {
-      await paymentRepository.set(
-        data: Payment.fromJson(entry['payment'] as Map<String, dynamic>),
-      );
       await loanScheduleRepository.set(
         data: LoanSchedule.fromJson(entry['row'] as Map<String, dynamic>),
       );
+      await paymentRepository.set(
+        data: Payment.fromJson(entry['payment'] as Map<String, dynamic>),
+      );
     }
   }
+
+  /// [plan] against the loan's stored rows [stored] before it is written
+  /// (again): `stale` when a planned bill's cycle has been paid or
+  /// submitted by a payment that is not the plan's (a teller or the
+  /// borrower paid it while the approval was stopped), `written` when any
+  /// of the plan's own rows is already stored.
+  static ({bool stale, bool written}) check(
+    List<Map<String, dynamic>> plan,
+    List<LoanSchedule> stored,
+  ) {
+    var stale = false;
+    var written = false;
+    for (final planned in _rowsOf(plan)) {
+      for (final row in stored) {
+        if (!_settled.contains(row.status) || !_sameBill(planned, row)) {
+          continue;
+        }
+        if (row.paymentId == planned.paymentId) {
+          written = true;
+        } else {
+          stale = true;
+        }
+      }
+    }
+
+    return (stale: stale, written: written);
+  }
+
+  /// Whether [bill] is one that a pending top-up of [loan] has claimed to
+  /// pay: no other payment may be taken for it until that approval
+  /// completes (review of #149).
+  static bool isClaimedBill(Loan loan, LoanSchedule bill) =>
+      loan.additionalLoanAmounts.any(
+        (topUp) =>
+            topUp.status == LoanStatus.pending &&
+            _rowsOf(topUp.deductionPlan).any((r) => _sameBill(r, bill)),
+      );
+
+  static Iterable<LoanSchedule> _rowsOf(List<Map<String, dynamic>> plan) =>
+      plan.map((e) => LoanSchedule.fromJson(e['row'] as Map<String, dynamic>));
+
+  /// The same bill: the same stored row, or the same cycle (lateness day).
+  static bool _sameBill(LoanSchedule a, LoanSchedule b) =>
+      (a.id != NO_ID && a.id == b.id) ||
+      DateUtils.isSameDay(a.lateFrom.toLocal(), b.lateFrom.toLocal());
+
+  static const _settled = {
+    LoanStatus.paid_on_time,
+    LoanStatus.paid_late,
+    LoanStatus.payment_submitted,
+  };
 
   static double _centavos(double value) => (value * 100).round() / 100;
 }
