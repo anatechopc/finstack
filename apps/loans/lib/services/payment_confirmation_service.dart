@@ -117,7 +117,7 @@ class PaymentConfirmationService {
     schedule
       ..paidAt = null
       ..paymentId = null
-      ..status = revertedStatus(dueAt: schedule.dueAt);
+      ..status = revertedStatus(dueAt: schedule.lateFrom);
     await loanScheduleRepository.update(data: schedule);
 
     await _advanceLoanStatus(

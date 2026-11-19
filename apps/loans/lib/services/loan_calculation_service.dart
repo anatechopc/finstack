@@ -181,7 +181,8 @@ class LoanCalculationService {
   ///
   /// Note: 1 month = 30 days (even if in a month there are 31 or 28 days)
   ///
-  /// [now] is the clock used to clamp a past due date to today and, for
+  /// [now] is the clock used to clamp a past due date to today (the row
+  /// keeps the past date as `originalDueAt`) and, for
   /// `'D1,D2'` terms, to pick the next salary day when the start date is on
   /// neither. Defaults to the wall clock; tests pass a fixed date.
   static ({
@@ -267,8 +268,16 @@ class LoanCalculationService {
       nextDate = nextDate.add(days: 30);
     }
 
+    // An overdue cycle is billed as due today so interest accrues to today.
+    // Its own due date is kept on the row: lateness counts from it
+    // (finstack#114).
+    DateTime? originalDueAt;
     if (nextDate.isSameOrBefore(clock)) {
-      nextDate = clock.startOf(Unit.day);
+      final today = clock.startOf(Unit.day);
+      if (nextDate.isBefore(today)) {
+        originalDueAt = nextDate.dateTime;
+      }
+      nextDate = today;
     }
 
     final loanMonthlyAmortization = calculateMonthlyPaymentSimple(
@@ -328,7 +337,7 @@ class LoanCalculationService {
         isOpenTerm: true,
         interestDayMultiplier: interestDayMultiplier,
         companyId: companyId,
-      );
+      )..originalDueAt = originalDueAt;
 
       clientLoanSchedules.add(schedule);
     }

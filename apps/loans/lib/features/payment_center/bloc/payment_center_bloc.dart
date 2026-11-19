@@ -67,7 +67,9 @@ class PaymentCenterBloc
   /// [cashPoolRepository] and [productRepository] are optional because they
   /// are `final` classes and so cannot be mocked; the OTP handlers never touch
   /// them, and a test that reaches a handler which does will fail loudly on
-  /// the unset late field rather than silently using a stand-in.
+  /// the unset late field rather than silently using a stand-in. Selecting a
+  /// borrower reads products through `_getProduct`, which treats a missing
+  /// product as none (no charges), so it runs without [productRepository].
   PaymentCenterBloc.withDependencies({
     required this.userRepository,
     required this.loanRepository,
@@ -94,6 +96,7 @@ class PaymentCenterBloc
       this.userLoanViewRepository = userLoanViewRepository;
     }
     on<SearchBorrowersEvent>(_handleSearchBorrowersEvent);
+    on<SelectBorrowerEvent>(_handleSelectBorrowerEvent);
     on<RequestOtpEvent>(_handleRequestOtpEvent);
     on<VerifyOtpEvent>(_handleVerifyOtpEvent);
   }
@@ -440,6 +443,35 @@ class PaymentCenterBloc
     }
   }
 
+  /// Stored unpaid rows plus each generated row that is not the same cycle
+  /// as one already in the list. The same cycle means the same lateness day
+  /// (`lateFrom`; the open-term clamp moves `due_at` to the day a row was
+  /// computed, finstack#114) in the device's zone; [utcOffset] stands in for
+  /// that zone in tests. Stored dates come back in UTC, generated ones are
+  /// local, so both are converted before the days are compared. The stored
+  /// row wins because it carries the id.
+  @visibleForTesting
+  static List<LoanSchedule> mergeUnpaid(
+    List<LoanSchedule> stored,
+    List<LoanSchedule> generated, {
+    Duration? utcOffset,
+  }) {
+    DateTime day(DateTime d) =>
+        utcOffset == null ? d.toLocal() : d.toUtc().add(utcOffset);
+
+    final merged = <LoanSchedule>[...stored];
+    for (final gen in generated) {
+      final sameCycle = merged.any(
+        (s) => DateUtils.isSameDay(day(s.lateFrom), day(gen.lateFrom)),
+      );
+      if (!sameCycle) {
+        merged.add(gen);
+      }
+    }
+
+    return merged;
+  }
+
   /// Generates actionable (payable) schedules for a loan.
   ///
   /// For fixed-term loans: calculates remaining unpaid schedules using
@@ -500,21 +532,30 @@ class PaymentCenterBloc
       );
       generatedSchedules = result.schedules;
     } else {
-      // Open-term: generate next payable schedule
+      // Open-term: generate next payable schedule. Every stored row goes in
+      // as a past cycle, unpaid ones (rejected submissions) included, as
+      // LoansBloc does, so this screen, client detail and the borrower
+      // compute the same next cycle (review of finstack#143). The engine
+      // gets copies: its top-up loop overwrites a row in place, and the
+      // stored rows are what this screen shows and confirmation writes.
       final result = LoanCalculationService.calculateOpenTerm(
         amount: totalAmount,
         date: loan.createdAt,
         interestRate: loan.interestRate,
         term: loan.term,
         companyId: loan.companyId,
-        paidSchedules: paidSchedules,
+        paidSchedules: [
+          for (final s in persistedSchedules) s.toLoanSchedule(),
+        ],
         loan: loan,
       );
-      // Filter out placeholders and additional loan entries —
-      // only keep actual payable schedules (id == NO_ID, not placeholder)
+      // Filter out placeholders, additional loan entries and the stored rows
+      // the engine hands back — only keep actual payable schedules
+      // (id == NO_ID, not placeholder)
       generatedSchedules = result.schedules
           .where(
             (s) =>
+                s.id == NO_ID &&
                 !s.isPlaceholder &&
                 !s.isAdditionalLoanAmount &&
                 (s.status == LoanStatus.not_paid ||
@@ -532,26 +573,13 @@ class PaymentCenterBloc
         )
         .toList();
 
-    // Combine: persisted unpaid + generated, then deduplicate by dueAt
-    final allUnpaid = <LoanSchedule>[...persistedUnpaid];
-    for (final gen in generatedSchedules) {
-      final alreadyExists = allUnpaid.any(
-        (s) =>
-            s.dueAt.year == gen.dueAt.year &&
-            s.dueAt.month == gen.dueAt.month &&
-            s.dueAt.day == gen.dueAt.day,
-      );
-      if (!alreadyExists) {
-        allUnpaid.add(gen);
-      }
-    }
-
-    allUnpaid.sort((a, b) => a.dueAt.compareTo(b.dueAt));
+    final allUnpaid = mergeUnpaid(persistedUnpaid, generatedSchedules)
+      ..sort((a, b) => a.dueAt.compareTo(b.dueAt));
 
     // Mark overdue schedules
     final now = DateTime.now();
     for (final schedule in allUnpaid) {
-      if (schedule.dueAt.toLocal().isBefore(now) &&
+      if (schedule.lateFrom.toLocal().isBefore(now) &&
           schedule.status == LoanStatus.not_paid) {
         schedule.status = LoanStatus.not_paid_overdue;
       }
@@ -625,14 +653,18 @@ class PaymentCenterBloc
         );
         fullSchedules = [...paidSchedules, ...result.schedules];
       } else {
-        // Open-term: use calculateOpenTerm which combines paid + next
+        // Open-term: use calculateOpenTerm which combines paid + next. Every
+        // stored row goes in, as in _getActionableSchedules and LoansBloc,
+        // as copies so the engine cannot change the stored rows.
         final result = LoanCalculationService.calculateOpenTerm(
           amount: totalAmount,
           date: loan.createdAt,
           interestRate: loan.interestRate,
           term: loan.term,
           companyId: loan.companyId,
-          paidSchedules: paidSchedules,
+          paidSchedules: [
+            for (final s in persistedSchedules) s.toLoanSchedule(),
+          ],
           loan: loan,
         );
         fullSchedules = result.schedules;

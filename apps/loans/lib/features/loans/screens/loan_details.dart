@@ -25,6 +25,59 @@ import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 import 'package:user_loan_view_repository/user_loan_view_repository.dart';
 
+/// What the borrower's Next payment and Pay in full panels charge: each
+/// unpaid installment's amortization + any extraPayment, plus the running
+/// late penalty as of [asOf] (default now), which is what the teller charges
+/// when the collection date defaults to the submission time.
+///
+/// Open-term placeholder rows (the principal release and top-ups) are not
+/// installments: the principal release is dated on the loan's creation day,
+/// so it would otherwise be the "next" payment of every open-term loan.
+({
+  List<LoanSchedule> unpaid,
+  LoanSchedule? nextDue,
+  double nextDuePenalty,
+  double nextDueAmount,
+  double remainingPenalty,
+  double remainingTotal,
+}) borrowerAmountsDue({
+  required List<LoanSchedule> schedules,
+  required Loan loan,
+  DateTime? asOf,
+}) {
+  final unpaid = schedules
+      .where(
+        (s) =>
+            !s.isPlaceholder &&
+            s.status != LoanStatus.paid_on_time &&
+            s.status != LoanStatus.paid_late &&
+            s.status != LoanStatus.payment_submitted,
+      )
+      .toList()
+    ..sort((a, b) => a.dueAt.compareTo(b.dueAt));
+  final nextDue = unpaid.isNotEmpty ? unpaid.first : null;
+  double penaltyOf(LoanSchedule s) =>
+      previewPenalty(schedule: s, loan: loan, asOf: asOf).total;
+  final nextDuePenalty = nextDue == null ? 0.0 : penaltyOf(nextDue);
+  final remainingPenalty =
+      unpaid.fold<double>(0, (sum, s) => sum + penaltyOf(s));
+
+  return (
+    unpaid: unpaid,
+    nextDue: nextDue,
+    nextDuePenalty: nextDuePenalty,
+    nextDueAmount: nextDue == null
+        ? 0.0
+        : nextDue.amortization + nextDue.extraPayment + nextDuePenalty,
+    remainingPenalty: remainingPenalty,
+    remainingTotal: unpaid.fold<double>(
+          0,
+          (sum, s) => sum + s.amortization + s.extraPayment,
+        ) +
+        remainingPenalty,
+  );
+}
+
 class LoanDetails extends StatefulWidget {
   const LoanDetails({
     required this.id,
@@ -439,35 +492,17 @@ class _LoanDetailsState extends State<LoanDetails> {
     final userLoanView =
         widget.userLoanView ?? context.read<LoansBloc>().selectedUserLoanView;
     final loan = context.read<LoansBloc>().selectedLoan;
-    final schedules = context.read<LoansBloc>().clientLoanSchedules;
-
-    final unpaid = schedules
-        .where(
-          (s) =>
-              s.status != LoanStatus.paid_on_time &&
-              s.status != LoanStatus.paid_late &&
-              s.status != LoanStatus.payment_submitted,
-        )
-        .toList()
-      ..sort((a, b) => a.dueAt.compareTo(b.dueAt));
-    final nextDue = unpaid.isNotEmpty ? unpaid.first : null;
-    // The lender side collects amortization + any extraPayment, plus the
-    // running late penalty as of now (what the teller will charge when the
-    // collection date defaults to the submission time).
-    final nextDuePenalty =
-        nextDue == null ? 0.0 : previewPenalty(schedule: nextDue, loan: loan).total;
-    final nextDueAmount = nextDue == null
-        ? 0.0
-        : nextDue.amortization + nextDue.extraPayment + nextDuePenalty;
-    final remainingPenalty = unpaid.fold<double>(
-      0,
-      (sum, s) => sum + previewPenalty(schedule: s, loan: loan).total,
+    final (
+      :unpaid,
+      :nextDue,
+      :nextDuePenalty,
+      :nextDueAmount,
+      :remainingPenalty,
+      :remainingTotal,
+    ) = borrowerAmountsDue(
+      schedules: context.read<LoansBloc>().clientLoanSchedules,
+      loan: loan,
     );
-    final remainingTotal = unpaid.fold<double>(
-          0,
-          (sum, s) => sum + s.amortization + s.extraPayment,
-        ) +
-        remainingPenalty;
 
     // Nothing left to pay (or the loan has completed) — show a "fully paid"
     // panel instead of the Pay now / Pay in full buttons, which would otherwise

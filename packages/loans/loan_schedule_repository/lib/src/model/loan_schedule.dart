@@ -100,4 +100,9 @@ class LoanSchedule extends LoanScheduleEntity
   bool get isAdditionalLoanAmount {
     return _isAdditionalLoanAmount;
   }
+
+  /// The date lateness and overdue status count from: [originalDueAt] when
+  /// the open-term engine moved an overdue row's [dueAt] to today, otherwise
+  /// [dueAt] (finstack#114).
+  DateTime get lateFrom => originalDueAt ?? dueAt;
 }

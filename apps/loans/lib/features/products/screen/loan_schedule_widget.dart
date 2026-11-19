@@ -261,7 +261,7 @@ class LoanScheduleWidget extends StatelessWidget {
     if (realPaymentStatuses.contains(schedule.status)) {
       return schedule.status.label;
     }
-    return schedule.dueAt.isBefore(DateTime.now())
+    return schedule.lateFrom.isBefore(DateTime.now())
         ? LoanStatus.not_paid_overdue.label
         : LoanStatus.not_paid.label;
   }

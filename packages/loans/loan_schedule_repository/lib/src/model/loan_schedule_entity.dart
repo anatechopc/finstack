@@ -101,6 +101,17 @@ class LoanScheduleEntity implements BaseEntity {
   )
   late DateTime dueAt;
 
+  /// The cycle's own due date when the open-term engine moved an overdue
+  /// row's [dueAt] to today so that interest accrues to today. Null when
+  /// [dueAt] was not moved. Lateness and overdue status count from this
+  /// date (finstack#114); billing keeps using [dueAt].
+  @JsonKey(
+    name: 'original_due_at',
+    toJson: handleDateTimeToJson,
+    fromJson: handleDateTimeNullableFromJson,
+  )
+  DateTime? originalDueAt;
+
   late LoanStatus status;
 
   @JsonKey(
@@ -192,6 +203,7 @@ class LoanScheduleEntity implements BaseEntity {
         paymentId,
         paidAt,
         dueAt,
+        originalDueAt,
         extraPayment,
         status,
         isOpenTerm,
@@ -228,6 +240,7 @@ class LoanScheduleEntity implements BaseEntity {
       ..paymentId = paymentId
       ..paidAt = paidAt
       ..dueAt = dueAt
+      ..originalDueAt = originalDueAt
       ..extraPayment = extraPayment
       ..status = status
       ..isOpenTerm = isOpenTerm
