@@ -115,7 +115,10 @@ until no bill is late), and a payment is charged the stretch's penalty to its
 collection date less what earlier payments in the stretch were charged. A
 percentage uses the balance in force on the day each charged period starts (a
 top-up raises it from its own day). A submitted bill is settled at its transfer
-(`collected_at` recorded at submission), whatever the confirmation order. Owner's
+(`collected_at` recorded at submission), whatever the confirmation order,
+but has not been charged until it is confirmed: two bills in one submission
+owe the stretch once. A top-up counts from its approval (`approved_at`) when
+deciding whether a stored bill already holds it. Owner's
 figures (40,000; bills Sep 15 and Sep 30 paid Oct 2): 0.1%/day 680, 10%/month
 4,000, 10%/installment (15 days) 8,000. Code: `_openTermStretchPenalty` in
 `packages/loans/loan_schedule_repository/lib/src/penalty_calculator.dart`;
@@ -127,7 +130,9 @@ figures (40,000; bills Sep 15 and Sep 30 paid Oct 2): 0.1%/day 680, 10%/month
   salary days after the previous bill; a day the month does not have is its last
   day (`'15,30'` → Feb 28, `'15,31'` → Apr 30; before 2026-11-19 they rolled
   into Mar 2 / May 1).
-- `'15d'` → creation day + 15k; anything else → creation day + 30k.
+- `'15d'` → anchor + 15k; anything else → anchor + 30k. The anchor is the
+  earliest stored bill's cycle date (`original_due_at ?? due_at`) when the loan
+  has stored bills, otherwise the local creation day.
 - All days are local calendar days (creation day, stored rows, top-ups, today),
   and interest days are counted in calendar days, so the same loan reads the
   same on a UTC and a Manila device and a daylight-saving change cannot drop a

@@ -137,7 +137,15 @@ Review of PR #146 (2026-11-19), also decided:
 - **Top-up before the cycle.** When the previous bill was paid early and a top-up came before its due date, the top-up's days up to that date are added to the next bill (G9f: 605 + 2,100 x 5% x 3/30 = 615.50).
 - **Screens.** The Payment Center loads loans with their top-ups, as client detail does (#135). The payment dialog shows each bill's amount due, not its balance (#142). Only the earliest unpaid open-term bill, stored (a rejected submission, now payable) or computed, offers "Make payment". A partial bulk payment leaves the loan's status at the earliest bill still unpaid.
 
-Not decided here: the penalty base itself (a later "Based on" option), and an approval date for top-ups (a top-up approved after a bill was stored while it was pending counts as already in that bill's balance).
+Second review of PR #146 (2026-11-19):
+
+- **A submitted bill ends its lateness at its transfer but has not been charged.** Only a bill that is no longer `payment_submitted` counts as having paid its share of the stretch. Two bills in one submission (Aug 31 and Sep 30, sent Oct 5; 100 once + 0.1% a day of 10,000) owe the stretch once, 100 + 35 x 10 = 450, in preview and in either confirmation order (was 0). Rows submitted before the transfer time was recorded get it from their payment in every path: `confirm`, the Payment Center card and bulk payment, and `LoansBloc` (client detail and the borrower).
+- **A top-up counts from its approval.** Approval records `approved_at` on the top-up (optional field; no Go code reads top-up documents). A stored bill holds a top-up only when it was computed after the approval; a top-up created Aug 6 and approved Sep 5 after the Aug 31 bill was stored bills its Aug 6-31 days (87.50) and the new balance from Sep 30 on (692.50, 605, 605; was 500 for the loan's life). Top-ups approved before this field existed keep the earlier rule (created before the bill = in it).
+- **The schedule continues from the stored bills.** With stored bills, `'1m'` / `'15d'` dates step from the earliest stored bill's cycle date (`original_due_at ?? due_at`); with none, from the local creation day. A first bill the old engine stored on the creation day's UTC date no longer causes a 1-day bill. A lone row stored by the old clamp without `original_due_at` continues from its own date.
+- **A confirmed borrower submission records the interest it paid** (its amount due), so a clamp row submitted by an older build carries the rest (1,600 charged, 500 shown → 1,100 to the next bill).
+- **A pending application shows its projected first bill, read only**: no penalty, no "Make payment", not owed in any total.
+
+Not decided here: the penalty base itself (a later "Based on" option).
 
 ## 6. Trigger: payment confirmation (PR 3)
 
