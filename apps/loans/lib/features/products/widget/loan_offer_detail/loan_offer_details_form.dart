@@ -167,6 +167,7 @@ class LoanOfferDetailsForm extends StatelessWidget {
                 loanAmount: amount,
                 period: period,
                 interestRate: productView.interestRate,
+                isOpenTerm: productView.maxPeriod <= 0,
               );
             },
           ),

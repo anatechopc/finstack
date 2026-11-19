@@ -19,6 +19,16 @@ pw.Widget _personalDetails(String title, String content) {
   );
 }
 
+/// The PDF quotation's penalty lines, from the loan's snapshot (an open-term
+/// loan has period 0).
+@visibleForTesting
+List<({String title, String detail})> pdfPenaltyLines(Loan loan) =>
+    penaltyQuotationLines(
+      penalties: loan.penalties,
+      allowLatePayments: loan.allowLatePayments,
+      isOpenTerm: loan.period == 0,
+    );
+
 pw.Widget _quotationWidget({
   required Loan loan,
   required Product product,
@@ -77,20 +87,8 @@ pw.Widget _quotationWidget({
           );
         },
       ),
-      if (loan.allowLatePayments)
-        _quotationItem(
-          title: 'Late payments',
-          detail: 'Allowed, no penalties',
-        )
-      else
-        ...loan.penalties.map(
-          (penalty) {
-            return _quotationItem(
-              title: 'Penalty if paid late: ${penalty.name}',
-              detail: penalty.amountLabel,
-            );
-          },
-        ),
+      for (final line in pdfPenaltyLines(loan))
+        _quotationItem(title: line.title, detail: line.detail),
       pw.Divider(),
       _quotationItem(
         title: 'Total payable',
