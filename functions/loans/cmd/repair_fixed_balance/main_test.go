@@ -42,10 +42,10 @@ func TestFindFixesMatchesTheDevAndStgRows(t *testing.T) {
 	loans = append(loans, loanDoc("ta3EhKPebk913GDxCGAJ", 100000, 6))
 	rows = append(rows, rowDoc("Khh5ytQT5jypns2qmMv8", "ta3EhKPebk913GDxCGAJ", "paid_on_time", dec13, 12960.74, 0.001963733279, 74078.52196373329))
 
-	fixes, review := findFixes(loans, rows)
+	fixes, manual := findFixes(loans, rows)
 
-	if len(fixes) != 2 || len(review) != 0 {
-		t.Fatalf("fixes %d review %d, want 2 and 0", len(fixes), len(review))
+	if len(fixes) != 2 || len(manual) != 0 {
+		t.Fatalf("fixes %d manual %d, want 2 and 0", len(fixes), len(manual))
 	}
 	dev, stg := fixes[0], fixes[1]
 	if dev.rowId != "W4PYWSxbNfziUVlJRe7X" || !near(dev.stored, 3655.82) || !near(dev.correct, 6827.91) {
@@ -75,38 +75,92 @@ func TestFindFixesLeavesCorrectAndOtherRowsAlone(t *testing.T) {
 	// A computed-balance row not paid by a teller is never matched.
 	rows = append(rows, rowDoc("r-submitted", "fine", "payment_submitted", dec13+1, 3330.69, 0, 166.53))
 
-	if fixes, review := findFixes(loans, rows); len(fixes) != 0 || len(review) != 0 {
-		t.Fatalf("fixes %+v review %+v, want none", fixes, review)
+	if fixes, manual := findFixes(loans, rows); len(fixes) != 0 || len(manual) != 0 {
+		t.Fatalf("fixes %+v manual %+v, want none", fixes, manual)
 	}
 }
 
-func TestFindFixesChainsAndListsLaterRows(t *testing.T) {
-	// Row 1 and row 2 both paid by a teller before the fix (rows sorted by
-	// due date whatever the read order): row 2 was computed from 3,655.82
-	// (interest 182.79, principal 3,489.29, computed balance 166.53) and
-	// stored 166.53 - 3,489.29 = -3,322.76. Correct: 6,827.91 - 3,489.29 =
-	// 3,338.62. Row 3, a confirmed submission, kept the computed balance
-	// that follows the wrong one: listed for review, not rewritten.
-	loans := []doc{loanDoc("L", 10000, 3)}
-	rows := []doc{
-		rowDoc("r3", "L", "payment_submitted", dec13+2, 166.53, 0, 0),
-		rowDoc("r2", "L", "paid_late", dec13+1, 3489.29, 0, 3655.82-3489.29-3489.29),
+// listedOnly asserts that findFixes writes nothing and lists loan L with the
+// rows in due-date order, their correct schedule balances and which match.
+func listedOnly(t *testing.T, rows []doc, ids []string, correct []float64, matched []bool) manualRepair {
+	t.Helper()
+	fixes, manual := findFixes([]doc{loanDoc("L", 10000, 3)}, rows)
+	if len(fixes) != 0 || len(manual) != 1 || manual[0].loanId != "L" {
+		t.Fatalf("fixes %+v manual %+v, want L listed and nothing written", fixes, manual)
+	}
+	got := manual[0].rows
+	if len(got) != len(ids) {
+		t.Fatalf("rows = %+v, want %v", got, ids)
+	}
+	for i, r := range got {
+		if r.id != ids[i] || !near(r.correct, correct[i]) || r.matched != matched[i] {
+			t.Errorf("row %d = %+v, want %s correct %.2f matched %v", i, r, ids[i], correct[i], matched[i])
+		}
+	}
+	return manual[0]
+}
+
+// G1 (10,000 at 5% for 3 months, P 3,672.0856). r1 paid by a teller before
+// the fix: 10,000 - 3,172.09 - 3,172.0856 = 3,655.82 (correct 6,827.91).
+// r2 computed from 3,655.82: interest 182.79, principal 3,489.29, balance
+// 166.53. r3 computed from 166.53: interest 8.33, principal 166.53.
+// Correct schedule balances: 6,827.91, 6,827.91 - 3,489.29 = 3,338.62,
+// 3,338.62 - 166.53 = 3,172.09 (still owed).
+
+func TestFindFixesListsTheReviewersChain(t *testing.T) {
+	// r2 a confirmed submission (computed balance kept), r3 a teller payment
+	// stored 166.53 - 166.53 - 166.53 = -166.53. A lone rewrite of r3 would
+	// give 0.00 while 3,172.09 is owed.
+	m := listedOnly(t, []doc{
+		rowDoc("r3", "L", "paid_on_time", dec13+2, 166.53, 0, -166.53),
+		rowDoc("r2", "L", "paid_on_time", dec13+1, 3489.29, 0, 166.53),
 		rowDoc("r1", "L", "paid_on_time", dec13, 3172.09, 0.0044, 3655.82),
+	}, []string{"r1", "r2", "r3"}, []float64{6827.91, 3338.62, 3172.09}, []bool{true, false, true})
+	if !strings.Contains(m.reason, "2 of 3") {
+		t.Errorf("reason = %q", m.reason)
 	}
+}
 
-	fixes, review := findFixes(loans, rows)
+func TestFindFixesListsTwoConsecutiveMatches(t *testing.T) {
+	// r2 also paid by a teller: 166.53 - 3,489.29 = -3,322.76.
+	listedOnly(t, []doc{
+		rowDoc("r1", "L", "paid_on_time", dec13, 3172.09, 0.0044, 3655.82),
+		rowDoc("r2", "L", "paid_late", dec13+1, 3489.29, 0, 3655.82-3489.29-3489.29),
+	}, []string{"r1", "r2"}, []float64{6827.91, 3338.62}, []bool{true, true})
+}
 
-	if len(fixes) != 2 {
-		t.Fatalf("fixes = %+v, want r1 and r2", fixes)
+func TestFindFixesListsAPartlyWrittenChain(t *testing.T) {
+	// r1 already rewritten to 6,827.91 by hand, r2 still -3,322.76: neither
+	// matches any more, the negative balance lists the loan.
+	m := listedOnly(t, []doc{
+		rowDoc("r1", "L", "paid_on_time", dec13, 3172.09, 0.0044, 6827.91),
+		rowDoc("r2", "L", "paid_late", dec13+1, 3489.29, 0, -3322.76),
+	}, []string{"r1", "r2"}, []float64{6827.91, 3338.62}, []bool{false, false})
+	if m.reason != "a row has a negative balance" {
+		t.Errorf("reason = %q", m.reason)
 	}
-	if fixes[0].rowId != "r1" || !near(fixes[0].correct, 6827.91) {
-		t.Errorf("r1 = %+v, want correct 6,827.91", fixes[0])
-	}
-	if fixes[1].rowId != "r2" || !near(fixes[1].correct, 3338.62) {
-		t.Errorf("r2 = %+v, want correct 3,338.62 (from the corrected r1)", fixes[1])
-	}
-	if len(review) != 1 || review[0].rowId != "r3" {
-		t.Errorf("review = %+v, want r3", review)
+}
+
+func TestFindFixesListsAMatchThatIsNotTheLastRow(t *testing.T) {
+	// A rejected submission stored after r1 (computed from 3,655.82).
+	listedOnly(t, []doc{
+		rowDoc("r1", "L", "paid_on_time", dec13, 3172.09, 0.0044, 3655.82),
+		rowDoc("r2", "L", "not_paid_overdue", dec13+1, 3489.29, 0, 166.53),
+	}, []string{"r1", "r2"}, []float64{6827.91, 3338.62}, []bool{true, false})
+}
+
+func TestFindFixesRewritesALoneMatchOnTheLastRow(t *testing.T) {
+	// r1 stored correctly (6,827.91); r2 computed from it (interest 341.40,
+	// principal 3,330.69, balance 3,497.22) and paid by a teller before the
+	// fix: 3,497.22 - 3,330.69 = 166.53. Correct 6,827.91 - 3,330.69 =
+	// 3,497.22.
+	fixes, manual := findFixes([]doc{loanDoc("L", 10000, 3)}, []doc{
+		rowDoc("r1", "L", "paid_on_time", dec13, 3172.09, 0.0044, 6827.91),
+		rowDoc("r2", "L", "paid_on_time", dec13+1, 3330.69, 0, 166.529854),
+	})
+
+	if len(manual) != 0 || len(fixes) != 1 || fixes[0].rowId != "r2" || !near(fixes[0].correct, 3497.22) {
+		t.Fatalf("fixes %+v manual %+v, want r2 rewritten to 3,497.22", fixes, manual)
 	}
 }
 
@@ -153,9 +207,13 @@ func TestDryRunListsAndWritesNothing(t *testing.T) {
 	}
 }
 
-func TestApplyRecordsTheMarkerAndRewritesOnlyTheMatchedRows(t *testing.T) {
+func TestApplyRecordsTheMarkerAndRewritesOnlyTheLoneLastRow(t *testing.T) {
 	loans, rows := devLoan()
-	rows = append(rows, rowDoc("fine", "PRxL6LHifFWQjITEaQzq", "not_paid", dec13+1, 3489.29, 0, 166.53))
+	// A chain on another loan: listed, never written.
+	loans = append(loans, loanDoc("L", 10000, 3))
+	rows = append(rows,
+		rowDoc("r1", "L", "paid_on_time", dec13, 3172.09, 0.0044, 3655.82),
+		rowDoc("r2", "L", "paid_late", dec13+1, 3489.29, 0, 3655.82-3489.29-3489.29))
 	store := &fakeStore{loans: loans, rows: rows}
 	var out bytes.Buffer
 
@@ -165,6 +223,10 @@ func TestApplyRecordsTheMarkerAndRewritesOnlyTheMatchedRows(t *testing.T) {
 
 	if len(store.rewritten) != 1 || store.rewritten[0].rowId != "W4PYWSxbNfziUVlJRe7X" || !near(store.rewritten[0].correct, 6827.91) {
 		t.Fatalf("rewritten = %+v, want only the dev row at 6,827.91", store.rewritten)
+	}
+	if !strings.Contains(out.String(), "needs a manual or recompute repair: loan L (2 of 2 row(s) match") ||
+		!strings.Contains(out.String(), "row r2 due 2026-12-13 paid_late: interest 0.00 principal 3489.29 extra 0.0000 balance -3322.76, correct schedule balance 3338.62 [double subtraction]") {
+		t.Errorf("output:\n%s", out.String())
 	}
 	if !store.rewritten[0].updated.Equal(time.UnixMilli(dec13)) {
 		t.Errorf("the rewrite must carry the row's update time as its precondition")

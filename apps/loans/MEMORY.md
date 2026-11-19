@@ -30,7 +30,7 @@ Branch `fix/fixed-term-payments-140` → develop (draft PR, after #146; placed b
 - **#150:** client detail offers "Make payment" on the earliest unpaid fixed-term installment only (`_isPayableInstallment`, the #146 rule); a rejected stored installment (`not_paid_overdue`) is now payable.
 - **Tests:** G1t (5) in `test/services/loan_calculation_service_test.dart`; `test/features/payment/fixed_term_teller_payment_test.dart` (8, real handlers; 7 fail on develop with 3,655.82 / 2,655.82 / 3,655.83 + 166.53). Full suite 519 (develop 506), `test/services/` 112 under UTC and Manila, no golden moved. Manual run: dev seed loan (Amagi, Seed Fixed Monthly) shows "Make payment" on Oct 4 only.
 - **Data:** repair tool `functions/loans/cmd/repair_fixed_balance` (see functions MEMORY); dry run dev 1 row, stg 1 row; not applied; production not counted.
-- **Open:** a fixed-term principal short of the schedule leaves a residual no remaining row bills (engine computes n−1 rows at the original amortization); the Payment Center's upcoming fixed-term tile stays payable while installments are overdue (`loan_card_widget.dart` makes it read-only for open-term only); left out because #149 edits those lines.
+- **Open:** a fixed-term principal short of the schedule leaves a residual no remaining row bills (#152); the Payment Center bulk overdue payment ignores the entered total principal, and its upcoming fixed-term tile stays payable while installments are overdue (#153; left out because #149 edits those lines).
 
 ## Open-term loans honour "Allow late payments" (finstack#114, 2026-11-13)
 

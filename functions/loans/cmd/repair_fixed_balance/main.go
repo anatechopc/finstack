@@ -7,27 +7,33 @@
 // again. A row is affected when it is paid (paid_on_time or paid_late, the
 // statuses a teller payment writes) and its stored balance equals the
 // previous balance minus the principal paid minus (the principal paid minus
-// the extra payment), within half a centavo. The correct balance is the
-// previous balance minus the principal paid. The previous balance is the
-// row before it (as this run leaves it), or for the first row the loan's
-// amount plus additional charges minus deductions.
+// the extra payment), within half a centavo. The previous balance is the
+// stored row before it, or for the first row the loan's amount plus
+// additional charges minus deductions. The correct balance is the previous
+// balance minus the principal paid.
 //
-// It defaults to a dry run, which only reads and lists each affected row
-// (loan id, row id, stored and correct balance):
+// A loan is rewritten only when exactly one row matches and it is the loan's
+// last stored row: that row is the one the app computes the rest of the
+// schedule from. Every other loan with a matched row, or with a negative
+// balance on any row, is listed under "needs a manual or recompute repair"
+// with each row and its correct schedule balance (the starting balance minus
+// the principal of every row up to it), and nothing is written for it. After
+// the first double subtraction every later row's interest and principal were
+// computed on the wrong balance, so moving balances cannot make such a loan
+// correct.
+//
+// It defaults to a dry run, which only reads and lists:
 //
 //	cd functions/loans
 //	go run ./cmd/repair_fixed_balance -env dev
 //
-// -apply rewrites only those rows' outstanding_balance, and only when the row
-// is unchanged since this run read it. It first records a run marker,
+// -apply rewrites only the listed rows' outstanding_balance, and only when the
+// row is unchanged since this run read it. It first records a run marker,
 // {prefix}repair_runs/{runId}, with every row's balance before and after,
-// and marks it applied when done. Production needs a second flag:
+// and marks it applied when done. One row per loan, so a rerun finds the
+// rewritten loans clean. Production needs a second flag:
 //
 //	go run ./cmd/repair_fixed_balance -env prod -apply -confirm-prod loooans-prod
-//
-// Later paid rows of an affected loan whose balance follows the wrong one
-// but does not match (a borrower submission confirmed after it, say) are
-// listed for review and never rewritten.
 //
 // No trigger listens to loan_schedules updates (loanScheduleChanges fires on
 // create only), and updated_at is left as it is, so a rewrite moves no report
@@ -57,9 +63,6 @@ const tolerance = 0.005
 // tellerPaid are the statuses a teller payment writes on the row it pays.
 var tellerPaid = map[string]bool{"paid_on_time": true, "paid_late": true}
 
-// anyPaid adds a submitted row, for the review list.
-var anyPaid = map[string]bool{"paid_on_time": true, "paid_late": true, "payment_submitted": true}
-
 type options struct {
 	env         string // dev, stg or prod
 	apply       bool
@@ -74,14 +77,30 @@ type doc struct {
 	updated time.Time // the document's update time, the precondition of a rewrite
 }
 
-// fix is one row to rewrite, or (in the review list) one row to look at.
+// fix is one row to rewrite.
 type fix struct {
 	loanId, rowId string
 	dueAt         int64 // epoch milliseconds
 	principal     float64
 	stored        float64
-	correct       float64 // the balance to write; unset in the review list
+	correct       float64 // the balance to write
 	updated       time.Time
+}
+
+// manualRepair is a loan the tool lists and does not write.
+type manualRepair struct {
+	loanId string
+	reason string
+	rows   []rowLine
+}
+
+// rowLine is one stored row of a listed loan.
+type rowLine struct {
+	id, status                          string
+	dueAt                               int64
+	interest, principal, extra, balance float64
+	correct                             float64 // starting balance minus the principal of every row up to this one
+	matched                             bool    // a double subtraction
 }
 
 // deps are the side effects of one run; main wires Firestore, the tests
@@ -157,18 +176,25 @@ func run(ctx context.Context, opts options, d deps, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fixes, review := findFixes(loans, rows)
+	fixes, manual := findFixes(loans, rows)
 
 	fmt.Fprintf(out, "%d loan(s), %d row(s) read\n", len(loans), len(rows))
 	for _, f := range fixes {
 		fmt.Fprintf(out, "affected: loan %s row %s due %s principal %.2f: stored %.2f, correct %.2f\n",
 			f.loanId, f.rowId, day(f.dueAt), f.principal, f.stored, f.correct)
 	}
-	for _, f := range review {
-		fmt.Fprintf(out, "review by hand: loan %s row %s due %s principal %.2f: balance %.2f follows a wrong one; not rewritten\n",
-			f.loanId, f.rowId, day(f.dueAt), f.principal, f.stored)
+	for _, m := range manual {
+		fmt.Fprintf(out, "needs a manual or recompute repair: loan %s (%s); not written\n", m.loanId, m.reason)
+		for _, r := range m.rows {
+			mark := ""
+			if r.matched {
+				mark = " [double subtraction]"
+			}
+			fmt.Fprintf(out, "  row %s due %s %s: interest %.2f principal %.2f extra %.4f balance %.2f, correct schedule balance %.2f%s\n",
+				r.id, day(r.dueAt), r.status, r.interest, r.principal, r.extra, r.balance, r.correct, mark)
+		}
 	}
-	fmt.Fprintf(out, "%d row(s) to rewrite, %d row(s) to review\n", len(fixes), len(review))
+	fmt.Fprintf(out, "%d row(s) to rewrite, %d loan(s) need a manual or recompute repair\n", len(fixes), len(manual))
 
 	if !opts.apply {
 		fmt.Fprintln(out, "dry run: nothing written")
@@ -218,10 +244,14 @@ func run(ctx context.Context, opts options, d deps, out io.Writer) error {
 	return nil
 }
 
-// findFixes returns the affected rows with their correct balance, and the
-// later paid rows of affected loans that follow a wrong balance but do not
-// match.
-func findFixes(loans, rows []doc) (fixes, review []fix) {
+// findFixes returns the rows to rewrite (a loan's lone matched row when it is
+// its last stored row) and the loans to repair by hand or by recompute.
+//
+// ponytail: one row per loan, the last one; a chain (more than one matched
+// row, or later rows after a matched one) goes to the recompute path (#132),
+// because every later row's interest and principal were computed on the
+// wrong balance.
+func findFixes(loans, rows []doc) (fixes []fix, manual []manualRepair) {
 	byLoan := map[string][]doc{}
 	for _, r := range rows {
 		if r.data["deleted_at"] != nil {
@@ -241,35 +271,43 @@ func findFixes(loans, rows []doc) (fixes, review []fix) {
 			return millis(loanRows[i].data["due_at"]) < millis(loanRows[j].data["due_at"])
 		})
 
-		// prev is the balance before the row as stored; after is the same
-		// balance as this run leaves it.
+		// prev is the stored balance before the row; owed is the starting
+		// balance minus all principal paid so far.
 		prev := num(loan.data["amount"]) + num(loan.data["additional_charges"]) - num(loan.data["deductions"])
-		after := prev
-		affected := false
+		owed := prev
+		lines := make([]rowLine, 0, len(loanRows))
+		matched, negative := 0, false
+		var last fix
 		for _, r := range loanRows {
-			if r.data["is_open_term"] == true {
-				continue
-			}
 			status, _ := r.data["status"].(string)
 			p, x := num(r.data["principal_payment"]), num(r.data["extra_payment"])
 			stored := num(r.data["outstanding_balance"])
-			f := fix{loanId: loan.id, rowId: r.id, dueAt: millis(r.data["due_at"]), principal: p, stored: stored, updated: r.updated}
-
-			if tellerPaid[status] && p-x >= tolerance && math.Abs(stored-(prev-p-(p-x))) < tolerance {
-				f.correct = after - p
-				fixes = append(fixes, f)
-				affected = true
-				after = f.correct
-			} else {
-				if affected && anyPaid[status] {
-					review = append(review, f)
-				}
-				after = stored
+			owed -= p
+			line := rowLine{
+				id: r.id, status: status, dueAt: millis(r.data["due_at"]),
+				interest: num(r.data["interest_payment"]), principal: p, extra: x, balance: stored, correct: owed,
+				matched: tellerPaid[status] && p-x >= tolerance && math.Abs(stored-(prev-p-(p-x))) < tolerance,
 			}
+			if line.matched {
+				matched++
+				last = fix{loanId: loan.id, rowId: r.id, dueAt: line.dueAt, principal: p, stored: stored, correct: prev - p, updated: r.updated}
+			}
+			negative = negative || stored < -tolerance
+			lines = append(lines, line)
 			prev = stored
 		}
+
+		switch {
+		case matched == 1 && !negative && lines[len(lines)-1].matched:
+			fixes = append(fixes, last)
+		case matched > 0:
+			manual = append(manual, manualRepair{loanId: loan.id, rows: lines,
+				reason: fmt.Sprintf("%d of %d row(s) match; only a lone match on the last row is rewritten", matched, len(lines))})
+		case negative:
+			manual = append(manual, manualRepair{loanId: loan.id, rows: lines, reason: "a row has a negative balance"})
+		}
 	}
-	return fixes, review
+	return fixes, manual
 }
 
 // num reads a Firestore number (integer or double); anything else is 0.
