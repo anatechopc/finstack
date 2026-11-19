@@ -451,6 +451,7 @@ void main() {
     late _Loans loans;
     late _Schedules schedules;
     var loanCreatedDaysAgo = 68;
+    var loanTopUps = <AdditionalLoanAmount>[];
 
     setUpAll(() {
       registerFallbackValue(Loan());
@@ -460,6 +461,7 @@ void main() {
       loans = _Loans();
       schedules = _Schedules();
       loanCreatedDaysAgo = 68;
+      loanTopUps = [];
       when(
         () => loans.load(
           statements: any(named: 'statements'),
@@ -471,7 +473,10 @@ void main() {
         final statements =
             invocation.namedArguments[#statements] as List<QueryStatement>;
         return statements.first.field == 'user_id'
-            ? [openTermLoan(createdAt: daysFromToday(-loanCreatedDaysAgo))]
+            ? [
+                openTermLoan(createdAt: daysFromToday(-loanCreatedDaysAgo))
+                  ..additionalLoanAmounts = List.of(loanTopUps),
+              ]
             : <Loan>[];
       });
       when(
@@ -622,6 +627,70 @@ void main() {
         expect(overdueOf(rows).map((r) => r.id), ['sched-2']);
         expect(rows.first.originalDueAt, isNull);
         expect(penaltyOf(rows), closeTo(300, 0.01));
+      });
+
+      test('a top-up before the rejected submission: the stored row is shown '
+          'and confirmed as stored (15,000, 500, 7,600)', () async {
+        // Paid cycle 80 days ago (10,000); 5,000 top-up 50 days ago; the
+        // borrower submitted 45 days ago on the cycle due 50 days ago. The
+        // row computed that day: balance 10,000 + 5,000 = 15,000, interest
+        // 10,000 x 5% x 30/30 = 500 (the top-up's proration, #117), billed
+        // as due 45 days ago, original due 50 days ago. Today: 50 days late,
+        // 100 + 1% x 15,000 x 50 = 7,600. The engine's top-up loop
+        // overwrites the first row created after a top-up in place; given the
+        // stored row itself it made it 20,000 / 125 / 10,100.
+        final topUp = AdditionalLoanAmount()
+          ..id = 'top-1'
+          ..amount = 5000
+          ..additionalCharges = 0
+          ..advanceCharges = 0
+          ..createdAt = daysFromToday(-50)
+          ..status = LoanStatus.approved;
+        final submittedAt = daysFromToday(-45).add(const Duration(hours: 12));
+        final atSubmission = LoanCalculationService.calculateOpenTerm(
+          amount: 10000,
+          date: daysFromToday(-110),
+          interestRate: 5,
+          term: '1m',
+          companyId: 'co-1',
+          paidSchedules: [paidCycle(daysFromToday(-80))],
+          loan: openTermLoan(createdAt: daysFromToday(-110))
+            ..additionalLoanAmounts = [topUp],
+          now: submittedAt,
+        ).schedules.last
+          ..id = 'sched-2'
+          ..loanId = 'loan-1'
+          ..createdAt = submittedAt
+          ..status = LoanStatus.not_paid_overdue;
+        expect(atSubmission.outstandingBalance, closeTo(15000, 0.01));
+        expect(atSubmission.interestCharge, closeTo(500, 0.01));
+        final storedJson = atSubmission.toJson();
+
+        stubStored(
+          () => [
+            paidCycle(daysFromToday(-80)),
+            LoanScheduleEntity.fromJson(storedJson).toLoanSchedule(),
+          ],
+        );
+        loanCreatedDaysAgo = 110;
+        loanTopUps = [topUp];
+
+        final stored = (await actionable()).firstWhere((r) => r.id == 'sched-2');
+        expect(stored.outstandingBalance, closeTo(15000, 0.01));
+        expect(stored.interestCharge, closeTo(500, 0.01));
+        expect(penaltyOf([stored]), closeTo(7600, 0.01));
+
+        // What the bulk handler does with the row before writing it.
+        final status = PaymentConfirmationService.applyLateness(
+          schedule: stored,
+          loan: openTermLoan(createdAt: daysFromToday(-110)),
+          collectedAt: DateTime.now(),
+          actorId: 'teller-1',
+        );
+        expect(status, LoanStatus.paid_late);
+        expect(stored.penalty, closeTo(7600, 0.01));
+        expect(stored.outstandingBalance, closeTo(15000, 0.01));
+        expect(stored.interestCharge, closeTo(500, 0.01));
       });
 
       test('a rejection more than a term old: the Payment Center, client '

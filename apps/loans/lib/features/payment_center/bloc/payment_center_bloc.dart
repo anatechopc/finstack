@@ -543,14 +543,18 @@ class PaymentCenterBloc
       // Open-term: generate next payable schedule. Every stored row goes in
       // as a past cycle, unpaid ones (rejected submissions) included, as
       // LoansBloc does, so this screen, client detail and the borrower
-      // compute the same next cycle (review of finstack#143).
+      // compute the same next cycle (review of finstack#143). The engine
+      // gets copies: its top-up loop overwrites a row in place, and the
+      // stored rows are what this screen shows and confirmation writes.
       final result = LoanCalculationService.calculateOpenTerm(
         amount: totalAmount,
         date: loan.createdAt,
         interestRate: loan.interestRate,
         term: loan.term,
         companyId: loan.companyId,
-        paidSchedules: persistedSchedules,
+        paidSchedules: [
+          for (final s in persistedSchedules) s.toLoanSchedule(),
+        ],
         loan: loan,
       );
       // Filter out placeholders, additional loan entries and the stored rows
@@ -661,14 +665,17 @@ class PaymentCenterBloc
         fullSchedules = [...paidSchedules, ...result.schedules];
       } else {
         // Open-term: use calculateOpenTerm which combines paid + next. Every
-        // stored row goes in, as in _getActionableSchedules and LoansBloc.
+        // stored row goes in, as in _getActionableSchedules and LoansBloc,
+        // as copies so the engine cannot change the stored rows.
         final result = LoanCalculationService.calculateOpenTerm(
           amount: totalAmount,
           date: loan.createdAt,
           interestRate: loan.interestRate,
           term: loan.term,
           companyId: loan.companyId,
-          paidSchedules: persistedSchedules,
+          paidSchedules: [
+            for (final s in persistedSchedules) s.toLoanSchedule(),
+          ],
           loan: loan,
         );
         fullSchedules = result.schedules;
