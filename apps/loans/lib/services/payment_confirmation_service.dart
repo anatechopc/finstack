@@ -87,6 +87,25 @@ class PaymentConfirmationService {
     return shares;
   }
 
+  /// A submitted open-term bill is settled, for the overdue stretch, at its
+  /// transfer (review of #146): rows submitted before submissions recorded
+  /// it on the row get it from their payment here, in memory.
+  static Future<void> settleSubmittedAtTheirTransfer(
+    List<LoanSchedule> rows,
+    PaymentRepository paymentRepository,
+  ) async {
+    for (final row in rows) {
+      final paymentId = row.paymentId;
+      if (row.status == LoanStatus.payment_submitted &&
+          row.collectedAt == null &&
+          paymentId != null &&
+          paymentId.isNotEmpty) {
+        row.collectedAt =
+            (await paymentRepository.get(id: paymentId)).createdAt;
+      }
+    }
+  }
+
   /// Pure: on rejection, a schedule reverts to not_paid (or overdue if its
   /// dueAt is already past).
   static LoanStatus revertedStatus({required DateTime dueAt}) {
@@ -116,6 +135,7 @@ class PaymentConfirmationService {
     final loanRows = schedule.isOpenTerm
         ? await _loadLoanSchedules(loan.id)
         : const <LoanSchedule>[];
+    await settleSubmittedAtTheirTransfer(loanRows, paymentRepository);
 
     // Decided first so a missing waive reason aborts the whole confirmation.
     final status = applyLateness(
@@ -155,6 +175,8 @@ class PaymentConfirmationService {
     schedule
       ..paidAt = null
       ..paymentId = null
+      // Unpaid again: no longer settled for the overdue stretch.
+      ..collectedAt = null
       ..status = revertedStatus(dueAt: schedule.lateFrom);
     await loanScheduleRepository.update(data: schedule);
 

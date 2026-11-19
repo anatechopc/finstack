@@ -88,6 +88,10 @@ class PaymentSubmissionBloc
             submissionId: submissionId,
             paidToBankDetailsId: event.bankDetailsId,
           );
+          // The transfer's time: an open-term bill counts as settled from it
+          // for the overdue stretch (R3), whichever bill is confirmed first,
+          // and confirmation defaults the collection date to it.
+          schedule.collectedAt = payment.createdAt;
 
           if (schedule.id == NO_ID) {
             // Open-term runtime schedule: persist payment + schedule, then

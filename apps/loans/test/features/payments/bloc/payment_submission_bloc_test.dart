@@ -132,6 +132,9 @@ void main() {
           .single as LoanSchedule;
       expect(s.status, LoanStatus.payment_submitted);
       expect(s.paymentId, 'pay-1');
+      // The row records the transfer time (review of #146, B1): a submitted
+      // open-term bill is settled from it for the overdue stretch.
+      expect(s.collectedAt, p.createdAt);
       // Real (fixed-term) schedule id => update path, never add.
       verifyNever(() => schedules.add(data: any(named: 'data')));
     },

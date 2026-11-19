@@ -106,7 +106,12 @@ PenaltyResult previewPenalty({
     return PenaltyResult.none;
   }
 
-  final collectedAt = asOf ?? DateTime.now();
+  // A submitted open-term bill owes what it owed at its transfer.
+  final submittedAt =
+      schedule.isOpenTerm && schedule.status == LoanStatus.payment_submitted
+          ? schedule.collectedAt
+          : null;
+  final collectedAt = submittedAt ?? asOf ?? DateTime.now();
 
   if (schedule.isOpenTerm) {
     final lateFrom = _localDay(schedule.lateFrom);
@@ -329,20 +334,37 @@ PenaltyResult _openTermStretchPenalty({
   final daysCharged =
       chargedTo == null ? 0 : chargedTo.difference(start).inDays;
   final termDays = termDaysOf(loan.term);
+  final balanceOn = _balanceOn(row: row, loan: loan);
   final lines = <PenaltyLine>[];
   var total = 0.0;
 
   for (final penalty in loan.penalties) {
-    final periods = penalty.frequency.periods(daysNow, termDays: termDays) -
+    final periodsBefore =
         penalty.frequency.periods(daysCharged, termDays: termDays);
+    final periods =
+        penalty.frequency.periods(daysNow, termDays: termDays) - periodsBefore;
     if (periods <= 0) {
       continue;
     }
 
-    final base = penalty.isPercentage
-        ? row.outstandingBalance * penalty.amount / 100
-        : penalty.amount;
-    final amount = base * periods;
+    // A percentage is of the balance in force on the day each charged
+    // period starts (review of #146: a top-up mid-stretch raises the base
+    // from its day only, whichever bill is charged).
+    final periodDays = switch (penalty.frequency) {
+      PenaltyFrequency.once => 0,
+      PenaltyFrequency.daily => 1,
+      PenaltyFrequency.monthly => 30,
+      PenaltyFrequency.perInstallment => termDays < 1 ? 30 : termDays,
+    };
+    var amount = 0.0;
+    for (var period = periodsBefore; period < periodsBefore + periods;) {
+      final periodStart =
+          DateTime(start.year, start.month, start.day + period * periodDays);
+      amount += penalty.isPercentage
+          ? balanceOn(periodStart) * penalty.amount / 100
+          : penalty.amount;
+      period++;
+    }
 
     lines.add(PenaltyLine(penalty: penalty, periods: periods, amount: amount));
     total += amount;
@@ -353,13 +375,45 @@ PenaltyResult _openTermStretchPenalty({
       : PenaltyResult(lines: lines, total: total);
 }
 
+/// The loan's balance in force on a day, worked out from [row]'s balance
+/// (in force on its due day) and the loan's approved top-ups, each in force
+/// from its own day. Only approved top-ups released money (#137).
+double Function(DateTime day) _balanceOn({
+  required LoanSchedule row,
+  required Loan loan,
+}) {
+  final rowDay = _localDay(row.dueAt);
+  final topUps = [
+    for (final topUp in loan.additionalLoanAmounts)
+      if (topUp.status == LoanStatus.approved)
+        (
+          day: _localDay(topUp.createdAt),
+          added: topUp.amount + topUp.additionalCharges
+        ),
+  ];
+
+  return (day) {
+    var balance = row.outstandingBalance;
+    for (final topUp in topUps) {
+      if (day.isBefore(topUp.day) && !topUp.day.isAfter(rowDay)) {
+        balance -= topUp.added;
+      } else if (rowDay.isBefore(topUp.day) && !topUp.day.isAfter(day)) {
+        balance += topUp.added;
+      }
+    }
+    return balance;
+  };
+}
+
 bool _isOpenTermBill(LoanSchedule schedule) =>
     schedule.isOpenTerm && !schedule.isPlaceholder;
 
 bool _sameRow(LoanSchedule a, LoanSchedule b) =>
     identical(a, b) || (a.id != NO_ID && a.id == b.id);
 
-/// When an open-term bill stopped being owed, or null while it is unpaid.
+/// When an open-term bill stopped being owed, or null while it is unpaid. A
+/// borrower submission records its transfer time as `collectedAt`, so a
+/// submitted bill is settled from then, whichever bill is confirmed first.
 DateTime? _settledOn(LoanSchedule schedule) =>
     schedule.collectedAt ??
     (schedule.status == LoanStatus.paid_on_time ||
