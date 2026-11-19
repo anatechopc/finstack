@@ -12,9 +12,10 @@
 // additional charges minus deductions. The correct balance is the previous
 // balance minus the principal paid.
 //
-// A loan is rewritten only when exactly one row matches and it is the loan's
-// last stored row: that row is the one the app computes the rest of the
-// schedule from. Every other loan with a matched row, or with a negative
+// A loan is rewritten only when exactly one row matches, it is the loan's
+// last stored row (the one the app computes the rest of the schedule from),
+// and every row before it holds its correct schedule balance within half a
+// centavo. Every other loan with a matched row, or with a negative
 // balance on any row, is listed under "needs a manual or recompute repair"
 // with each row and its correct schedule balance (the starting balance minus
 // the principal of every row up to it), and nothing is written for it. After
@@ -54,6 +55,7 @@ import (
 	"os"
 	"os/user"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -297,14 +299,30 @@ func findFixes(loans, rows []doc) (fixes []fix, manual []manualRepair) {
 			prev = stored
 		}
 
-		switch {
-		case matched == 1 && !negative && lines[len(lines)-1].matched:
+		if matched == 0 && !negative {
+			continue
+		}
+		// Why the loan cannot be rewritten; none means its lone match is the
+		// last row and every row before it holds its correct schedule balance.
+		var reasons []string
+		if matched > 1 {
+			reasons = append(reasons, fmt.Sprintf("%d of %d row(s) match", matched, len(lines)))
+		} else if matched == 1 && !lines[len(lines)-1].matched {
+			reasons = append(reasons, "the matched row is not the last stored row")
+		}
+		for _, l := range lines[:len(lines)-1] {
+			if math.Abs(l.balance-l.correct) >= tolerance {
+				reasons = append(reasons, "an earlier row's balance is not its correct schedule balance")
+				break
+			}
+		}
+		if negative {
+			reasons = append(reasons, "a row has a negative balance")
+		}
+		if matched == 1 && len(reasons) == 0 {
 			fixes = append(fixes, last)
-		case matched > 0:
-			manual = append(manual, manualRepair{loanId: loan.id, rows: lines,
-				reason: fmt.Sprintf("%d of %d row(s) match; only a lone match on the last row is rewritten", matched, len(lines))})
-		case negative:
-			manual = append(manual, manualRepair{loanId: loan.id, rows: lines, reason: "a row has a negative balance"})
+		} else {
+			manual = append(manual, manualRepair{loanId: loan.id, rows: lines, reason: strings.Join(reasons, "; ")})
 		}
 	}
 	return fixes, manual

@@ -149,6 +149,32 @@ func TestFindFixesListsAMatchThatIsNotTheLastRow(t *testing.T) {
 	}, []string{"r1", "r2"}, []float64{6827.91, 3338.62}, []bool{true, false})
 }
 
+func TestFindFixesListsAMatchAfterAShortRow(t *testing.T) {
+	// 100,000 at 10% for 6 months, P 22,960.74. r1 paid 10,000 principal,
+	// short of the scheduled 12,960.74; the old code stored 87,039.26 -
+	// 10,000 = 77,039.26 (correct 90,000), so it does not match. r2 computed
+	// from 77,039.26 (interest 7,703.93, principal 15,256.81, balance
+	// 61,782.45) and paid by a teller: 61,782.45 - 15,256.81 = 46,525.64,
+	// which matches. Rewriting it from the stored r1 would give 61,782.45;
+	// the correct schedule balance is 90,000 - 15,256.81 = 74,743.19.
+	fixes, manual := findFixes([]doc{loanDoc("L", 100000, 6)}, []doc{
+		rowDoc("r1", "L", "paid_on_time", dec13, 10000, 0, 77039.26196373328),
+		rowDoc("r2", "L", "paid_on_time", dec13+1, 15256.81, 0, 46525.6401238399),
+	})
+
+	if len(fixes) != 0 || len(manual) != 1 {
+		t.Fatalf("fixes %+v manual %+v, want L listed and nothing written", fixes, manual)
+	}
+	rows := manual[0].rows
+	if len(rows) != 2 || rows[0].matched || !rows[1].matched ||
+		!near(rows[0].correct, 90000) || !near(rows[1].correct, 74743.19) {
+		t.Errorf("rows = %+v, want r1 correct 90,000 and r2 matched, correct 74,743.19", rows)
+	}
+	if manual[0].reason != "an earlier row's balance is not its correct schedule balance" {
+		t.Errorf("reason = %q", manual[0].reason)
+	}
+}
+
 func TestFindFixesRewritesALoneMatchOnTheLastRow(t *testing.T) {
 	// r1 stored correctly (6,827.91); r2 computed from it (interest 341.40,
 	// principal 3,330.69, balance 3,497.22) and paid by a teller before the
