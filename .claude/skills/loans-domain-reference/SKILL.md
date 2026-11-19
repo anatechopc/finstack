@@ -122,9 +122,13 @@ salary day after the previous bill. Every bill due before today is its own
 row, then the bill due today or later (R2; no accrual to today, no one-month
 cap). The last stored row's interest shortfall is added to the next bill's
 `amortization` (R4: 600 paid of 1,000 → 1,400). A top-up splits its cycle
-(R5: G9 83.33 + 504.17 = 587.50). Open-term penalties are charged once per
-overdue stretch, not per bill (R3: 40,000, bills Sep 15 and Sep 30 paid Oct 2,
-0.1%/day → 680). The engine never changes its inputs (#145). Worked tables
+(R5: G9 83.33 + 504.17 = 587.50; approved top-ups only, #137). Open-term
+penalties are charged once per overdue stretch, not per bill (R3: 40,000, bills
+Sep 15 and Sep 30 paid Oct 2, 0.1%/day → 680), on the balance in force each
+day; a submitted bill is settled at its transfer. Only an active loan bills
+(`LoanCalculationService.billsOpenTerm`: not pending, declined, completed or bad
+debt). All days are local calendar days. The engine never changes its inputs
+(#145). Worked tables
 and rules: [references/schedule-math.md](references/schedule-math.md) §2-§3;
 spec `docs/superpowers/specs/2026-09-04-penalties-design.md` §5.1.
 Verified example: OB=10,000, 5%/month, salary days `'15,30'`, 15 days elapsed →
@@ -145,10 +149,10 @@ late at confirmation, no "Make payment", and not in the borrower's Next
 payment / Pay in full. Computed open-term bills are paid oldest first (the
 engine bills only after the last stored row): client detail offers "Make
 payment" on the earliest one, the Payment Center hides the upcoming tile's Pay
-while bills are overdue. Known limits: the penalty base is the charged row's
-balance, so a top-up during an overdue stretch raises it (owner decision
-pending, with the "Based on" option); days late can be off by one across a
-daylight-saving change (#125).
+while bills are overdue. Known limits: no approval date is recorded on a top-up,
+so one approved after a bill was stored while it was pending counts as already
+in that bill; days late can be off by one across a daylight-saving change
+(#125).
 
 ## 6. Additional loans (top-ups) — the sort invariant
 

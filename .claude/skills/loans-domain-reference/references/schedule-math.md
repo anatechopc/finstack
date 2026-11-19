@@ -112,7 +112,10 @@ payment is both bills plus penalties: 1,066.67 + 1,000 + 15 x 40 (0.1% a day)
 **Penalties (R3).** Days late are per bill. An open-term penalty is on the
 balance, so it is charged once per overdue stretch (earliest unpaid due date
 until no bill is late), and a payment is charged the stretch's penalty to its
-collection date less what earlier payments in the stretch were charged. Owner's
+collection date less what earlier payments in the stretch were charged. A
+percentage uses the balance in force on the day each charged period starts (a
+top-up raises it from its own day). A submitted bill is settled at its transfer
+(`collected_at` recorded at submission), whatever the confirmation order. Owner's
 figures (40,000; bills Sep 15 and Sep 30 paid Oct 2): 0.1%/day 680, 10%/month
 4,000, 10%/installment (15 days) 8,000. Code: `_openTermStretchPenalty` in
 `packages/loans/loan_schedule_repository/lib/src/penalty_calculator.dart`;
@@ -120,12 +123,15 @@ figures (40,000; bills Sep 15 and Sep 30 paid Oct 2): 0.1%/day 680, 10%/month
 
 ### Next-due-date selection
 
-- `'D1,D2'` (e.g. `'15,30'`, min/max applied): from day `d` of the previous bill,
-  `d < D1` → D1 this month; `d < D2` → D2 this month; else D1 next month. A day
-  past the month's end rolls into the next month (`DateTime` normalisation), as
-  before.
-- `'15d'` → creation day + 15k; anything else → creation day + 30k, in calendar
-  days (a daylight-saving change cannot move the date).
+- `'D1,D2'` (e.g. `'15,30'`, min/max applied): the next of each month's two
+  salary days after the previous bill; a day the month does not have is its last
+  day (`'15,30'` → Feb 28, `'15,31'` → Apr 30; before 2026-11-19 they rolled
+  into Mar 2 / May 1).
+- `'15d'` → creation day + 15k; anything else → creation day + 30k.
+- All days are local calendar days (creation day, stored rows, top-ups, today),
+  and interest days are counted in calendar days, so the same loan reads the
+  same on a UTC and a Manila device and a daylight-saving change cannot drop a
+  day. Only an active loan bills (not pending, declined, completed, bad debt).
 
 ## 3. Additional-loan (top-up) merge
 
@@ -137,10 +143,14 @@ one row per top-up.
    amount`, `isPlaceholder: true`. Not an installment.
 2. **THE INVARIANT:** top-ups are processed `sortedBy((a) => a.createdAt)`
    ascending (finstack#4 / PR finstack#33).
-3. **Billing (R5)** happens in `calculateOpenTermSchedules`: a top-up not yet in
+3. **Billing (R5)** happens in `calculateOpenTermSchedules`: only an APPROVED
+   top-up moves the balance (#137; a pending or declined row is shown with the
+   balance unchanged). A top-up not yet in
    the last stored row's balance (the row was computed before it, or it is after
    the row's due day) splits its cycle by calendar day; a top-up before the cycle
-   started puts the whole cycle on the new balance; one on the due date leaves
+   started puts the whole cycle on the new balance, and its days before that
+   cycle (the previous bill paid early) are added to it (G9f 615.50); one on
+   the due date leaves
    that bill on the old balance. G9: 83.33 + 504.17 = 587.50; G10: 83.33 +
    40.33 + 578.83 = 702.50. Balance added: `amount + additionalCharges`
    (deductions ignored, #127 undecided).
