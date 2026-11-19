@@ -34,7 +34,8 @@ import 'package:loooans_helpers/data_helpers.dart';
 //     of the stretch not yet paid by then (its balance after its principal
 //     + its principal). A bill paid inside the stretch lowers it from its
 //     payment day; the bills computed after it start from its stored
-//     balance, so the result depends on what #140 stores.
+//     balance, so the result depends on what the teller payment stores
+//     (#140, F7/F8).
 //
 // Open-term loan (owner's): 40,000 at 5% a month, salary days 15 and 30
 // (installment = 15 days), last bill paid Aug 30. "Take each bill as
@@ -104,15 +105,16 @@ import 'package:loooans_helpers/data_helpers.dart';
 //   F7 the review's probe, R2 paid Oct 5 with 5,000 principal (a teller
 //      paying 2,900 extra), the Sep 30 bill recomputed by the fixed-term
 //      engine from R2 as stored (amortization 2,500, 5% a month):
-//        correct balance 8,000 - 5,000 = 3,000 -> R3 interest 150, principal
-//          2,350, beginning 3,000 -> 5 x 3 = 15;
-//        as payment_bloc stores it today (#140): 5,900 - 2,900 extra - 2,100
-//          again = 900 -> R3 interest 45, amortization 945, principal 900,
-//          beginning 900 -> 5 x 0.90 = 4.50.
+//        the teller handlers (`recordTellerPayment`) store 5,900 - 2,900
+//          extra = 3,000 = 8,000 - 5,000 -> R3 interest 150, principal
+//          2,350, beginning 3,000 -> 5 x 3 = 15.
+//        (Before #140's fix they stored 5,900 - 2,900 - 2,100 again = 900
+//          -> R3 interest 45, amortization 945, beginning 900 -> 4.50.)
 //   F8 R2 paid Oct 5 with its scheduled 2,100 (any teller or bulk payment):
-//        correct balance 5,900 -> R3 beginning 5,900 -> 29.50 (= F3);
-//        as stored today (#140): 5,900 - 2,100 = 3,800 -> R3 interest 190,
-//          principal 2,310, beginning 3,800 -> 5 x 3.80 = 19.
+//        stored 5,900 - 0 extra = 5,900 -> R3 beginning 5,900 -> 29.50
+//          (= F3).
+//        (Before #140's fix: 5,900 - 2,100 = 3,800 -> R3 interest 190,
+//          principal 2,310, beginning 3,800 -> 19.)
 //      R2's own charge is 280 in F7 and F8 (R2 unpaid until Oct 5).
 //   F4 mixed, 1% daily of the bill + 0.1% daily of the balance, both paid
 //      Oct 5: R2 875 + 280 = 1,155, R3 125 -> 1,280.
@@ -804,10 +806,9 @@ void main() {
         penalties: [percent(0.1, daily, basedOn: balance)],
       );
 
-      /// R2 paid on Oct 5 by a teller with [principal], as payment_bloc.dart
-      /// writes it; [as140] keeps today's second subtraction of the
-      /// scheduled principal (#140), otherwise the balance is the one owed.
-      LoanSchedule storedR2(double principal, {required bool as140}) {
+      /// R2 paid on Oct 5 by a teller with [principal], as every teller
+      /// handler writes it (`recordTellerPayment`, #140).
+      LoanSchedule storedR2(double principal) {
         final row = r2();
         expect(
           payOne(
@@ -818,18 +819,12 @@ void main() {
           ),
           closeTo(280, 0.005),
         );
-        final extra = principal - row.principalPayment;
-        if (extra > 0) {
-          row
-            ..extraPayment = extra
-            ..outstandingBalance -= extra;
-        }
-        if (as140) {
-          row.outstandingBalance -= principal - row.extraPayment;
-        }
-        return row
-          ..principalPayment = principal
-          ..paidAt = oct5;
+        PaymentConfirmationService.recordTellerPayment(
+          row,
+          interestPayment: row.interestPayment,
+          principalPayment: principal,
+        );
+        return row..paidAt = oct5;
       }
 
       /// The Sep 30 bill as the fixed-term engine computes it after R1 and
@@ -845,18 +840,15 @@ void main() {
             paidSchedules: [r1(), r2],
           ).schedules.first;
 
-      // (principal paid, stored as today?, R2's stored balance = R3's
-      // beginning balance, R3's charge on Oct 10)
-      for (final (principal, as140, balanceAfter, expected) in [
-        (5000.0, false, 3000.0, 15.0),
-        (5000.0, true, 900.0, 4.50),
-        (2100.0, false, 5900.0, 29.50),
-        (2100.0, true, 3800.0, 19.0),
+      // (principal paid, R2's stored balance = R3's beginning balance, R3's
+      // charge on Oct 10). Before #140's fix the handlers stored 900 (4.50)
+      // and 3,800 (19).
+      for (final (principal, balanceAfter, expected) in [
+        (5000.0, 3000.0, 15.0),
+        (2100.0, 5900.0, 29.50),
       ]) {
-        test(
-            'R2 paid Oct 5 with $principal principal'
-            '${as140 ? ', stored as today (#140)' : ''}: R3 -> $expected', () {
-          final second = storedR2(principal, as140: as140);
+        test('R2 paid Oct 5 with $principal principal: R3 -> $expected', () {
+          final second = storedR2(principal);
           expect(second.outstandingBalance, closeTo(balanceAfter, 0.005));
 
           final third = nextBill(second);
