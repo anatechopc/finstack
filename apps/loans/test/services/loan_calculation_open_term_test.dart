@@ -71,7 +71,10 @@ import 'package:loooans_helpers/data_helpers.dart';
 //   G9f the previous cycle paid early (row due Aug 31 stored Aug 25), top-up
 //             Aug 28, now Sep 10: the top-up is before the next cycle starts,
 //             so Aug 31 -> Sep 30 is all on 12100: 605.00 (finstack#131
-//             review: 25 days, 504.17 there; develop: 50 copied, 500 due).
+//             review: 25 days, 504.17 there; develop: 50 copied, 500 due);
+//             plus the top-up's own 3 days before Aug 31, billed by nothing
+//             else: 2100 * 0.05 * 3/30 = 10.50 -> 615.50 (review of #146;
+//             was 605.00).
 //   G4c overdue cycle (now = 2026-09-08 noon): paid row due Aug 1, OB 10000;
 //             R1/R2: the Aug 31 bill keeps its date (30 days, 500, no
 //             original_due_at) and the Sep 30 bill (30 days, 500) is listed
@@ -234,6 +237,7 @@ void main() {
       final loan = Loan()
         ..id = 'loan-1'
         ..createdAt = daysFromToday(-40)
+        ..status = LoanStatus.approved
         ..additionalChargeUpfrontCollection = 0
         ..additionalLoanAmounts = additionalLoans;
 
@@ -339,6 +343,7 @@ void main() {
       final loan = Loan()
         ..id = 'loan-1'
         ..createdAt = DateTime(2026, 7, 2)
+        ..status = LoanStatus.approved
         ..additionalChargeUpfrontCollection = 0
         ..additionalLoanAmounts = [
           additionalLoan(
@@ -436,7 +441,8 @@ void main() {
       expect(s[3].outstandingBalance, closeTo(12100, 0.01));
     });
 
-    test('G9f previous cycle paid early, top-up before its due date: 605', () {
+    test('G9f previous cycle paid early, top-up before its due date: 615.50',
+        () {
       final s = run(
         now: DateTime(2026, 9, 10, 12),
         topUpAt: DateTime(2026, 8, 28),
@@ -460,7 +466,12 @@ void main() {
       expect(DateUtils.dateOnly(due.dueAt), DateTime(2026, 9, 30));
       expect(due.interestDayMultiplier, closeTo(1, 1e-9));
       expect(due.outstandingBalance, closeTo(12100, 0.01));
-      expect(due.interestCharge, closeTo(605, 0.01));
+      expect(
+        due.interestCharge,
+        closeTo(615.50, 0.01),
+        reason: "605 for the cycle + 10.50 for the top-up's 3 days before "
+            'Aug 31 (was 605)',
+      );
     });
   });
 

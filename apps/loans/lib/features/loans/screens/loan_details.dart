@@ -20,6 +20,7 @@ import 'package:loooans/features/products/screen/loan_schedule_widget.dart';
 import 'package:loooans/features/products/widget/quotation_widget.dart';
 import 'package:loooans/features/search/widget/search_app_bar_action.dart';
 import 'package:loooans/services/authentication_service.dart';
+import 'package:loooans/services/loan_calculation_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
@@ -51,9 +52,12 @@ import 'package:user_loan_view_repository/user_loan_view_repository.dart';
   required Loan loan,
   DateTime? asOf,
 }) {
+  // A pending, declined, settled or bad-debt open-term loan owes nothing.
+  final bills = loan.period != 0 || LoanCalculationService.billsOpenTerm(loan);
   final unpaid = schedules
       .where(
         (s) =>
+            bills &&
             !s.isPlaceholder &&
             s.status != LoanStatus.paid_on_time &&
             s.status != LoanStatus.paid_late &&
@@ -534,6 +538,12 @@ class _LoanDetailsState extends State<LoanDetails> {
     // panel instead of the Pay now / Pay in full buttons, which would otherwise
     // invite payment on a zero-balance loan.
     if (unpaid.isEmpty || loan.status == LoanStatus.completed) {
+      // A pending, declined or bad-debt loan bills nothing: no payment due,
+      // but not "fully paid" either.
+      final label = loan.status == LoanStatus.completed ||
+              LoanCalculationService.billsOpenTerm(loan)
+          ? 'Loan fully paid'
+          : 'No payment due';
       return Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -545,8 +555,8 @@ class _LoanDetailsState extends State<LoanDetails> {
           crossAxisAlignment: !fullScreen
               ? CrossAxisAlignment.start
               : CrossAxisAlignment.center,
-          children: const [
-            Row(
+          children: [
+            const Row(
               children: [
                 Text(
                   'Next payment',
@@ -558,15 +568,19 @@ class _LoanDetailsState extends State<LoanDetails> {
                 ),
               ],
             ),
-            Gap(16),
+            const Gap(16),
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.check_circle, color: AppColors.green1, size: 18),
-                Gap(8),
+                const Icon(
+                  Icons.check_circle,
+                  color: AppColors.green1,
+                  size: 18,
+                ),
+                const Gap(8),
                 Text(
-                  'Loan fully paid',
-                  style: TextStyle(
+                  label,
+                  style: const TextStyle(
                     color: AppColors.green1,
                     fontSize: 12,
                   ),

@@ -92,6 +92,7 @@ Loan openTermLoan({
     Loan()
       ..id = 'loan-1'
       ..createdAt = loanCreated
+      ..status = LoanStatus.approved
       ..period = 0
       ..term = term
       ..additionalChargeUpfrontCollection = 0
