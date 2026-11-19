@@ -327,13 +327,18 @@ class LoanCalculationService {
       );
     }
 
+    // Calendar days from [start], so a daylight-saving change on the way
+    // cannot move the date (adding 30 x 24 hours would, campaign D11).
     final step = term == '15d' ? 15 : 30;
-    var dueAt = start.add(days: step);
-    while (!dueAt.isAfter(after)) {
-      dueAt = dueAt.add(days: step);
+    Jiffy billOn(int cycle) => Jiffy.parseFromDateTime(
+          DateTime(start.year, start.month, start.date + step * cycle),
+        );
+    var cycle = 1;
+    while (!billOn(cycle).isAfter(after)) {
+      cycle++;
     }
 
-    return dueAt;
+    return billOn(cycle);
   }
 
   /// Start of [dateTime]'s calendar day on this device. Stored dates come

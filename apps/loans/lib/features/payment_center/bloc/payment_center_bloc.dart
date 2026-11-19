@@ -99,6 +99,9 @@ class PaymentCenterBloc
     on<SelectBorrowerEvent>(_handleSelectBorrowerEvent);
     on<RequestOtpEvent>(_handleRequestOtpEvent);
     on<VerifyOtpEvent>(_handleVerifyOtpEvent);
+    // Writes every row before its cash-pool step, which needs the
+    // unmockable cash-pool repository: a test reads the rows it wrote.
+    on<MakeOverduePaymentEvent>(_handleMakeOverduePaymentEvent);
   }
 
   final AuthenticationService authService;
@@ -544,8 +547,9 @@ class PaymentCenterBloc
       // as a past cycle, unpaid ones (rejected submissions) included, as
       // LoansBloc does, so this screen, client detail and the borrower
       // compute the same next cycle (review of finstack#143). The engine
-      // gets copies: its top-up loop overwrites a row in place, and the
-      // stored rows are what this screen shows and confirmation writes.
+      // gets copies: the stored rows are what this screen shows and
+      // confirmation writes (the engine no longer changes its inputs,
+      // finstack#145; the copies keep that guarantee here).
       final result = LoanCalculationService.calculateOpenTerm(
         amount: totalAmount,
         date: loan.createdAt,
