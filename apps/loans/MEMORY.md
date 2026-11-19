@@ -4,6 +4,17 @@ Log of refactoring and bug fix work done across multiple sessions.
 
 ---
 
+## Penalty "Based on": the missed bill or the outstanding balance (2026-11-19)
+
+Branch `feat/penalty-based-on`, draft PR stacked on #146 (`feat/openterm-billing-by-cycle`). Owner rules 2026-11-14 to 2026-11-19.
+
+- **Model:** `PenaltyBase { missedBill ('missed_bill'), outstandingBalance ('outstanding_balance') }` and `Penalty.basedOn` (`based_on`, optional; absent/unknown → null; not written when null, so saved penalties keep their shape). `Penalty.baseFor(isOpenTerm:)`: `basedOn` for a percentage, otherwise the loan type's default (fixed-term missed installment, open-term balance). `PenaltyFrequency.suffix` now reads "per day" etc.
+- **Calculator:** `_penaltiesFor` counts each penalty by its base: missed bill = per bill (`computePenalties` on the row's `amortization`, its own days late) on both loan types; balance = once per overdue stretch (the R3 code, now `_Stretch`, also for fixed-term rows). Fixed-term balance base = the stretch's first bill's `outstanding_balance + principal_payment` (principal owed before that bill's principal), constant for the stretch; flagged for the owner. Open-term keeps the balance in force each day. `chargesPerStretch(loan, isOpenTerm:)` makes `confirm` and the bulk handler (`_stretchLoanRows`, was `_openTermLoanRows`) load the loan's rows for a fixed-term loan with a balance penalty.
+- **UI:** the dialog shows "Based on" (radio) only for a percentage, starts on the missed bill, and selects the balance when "Per day" is picked; a flat amount saves no base. Labels: "10% of the missed bill, once", "0.1% of the balance, per day", "₱100.00, once"; a penalty without `based_on` shows its loan type's base (wizard: `tempProductView.maxPeriod <= 0`; quotations: `loan.period == 0`, offers `productView.maxPeriod`); company default chips (both types) say "of the missed bill (fixed term) or the balance (open term)" and wrap to 3 lines.
+- **Tests:** G15 `test/services/penalty_based_on_golden_test.dart` (22, derivations at the top); `test/features/penalty_based_on_test.dart` (10: dialog, labels, wizard chips with a mocked `ProductBloc` — the real one builds Firestore-backed final repositories — and the stored shape company → product → loan, the payment dialog and borrower amounts with a missed-bill penalty on two open-term bills: 1,000 + 300, Pay in full 1,800); `penalty_dialog_test` and `loooans_helpers/test/penalty_test.dart` extended. Full suite 534 under `TZ=UTC`, random order (seed 238675403); `test/services/` 129 under UTC and Manila; G12/G13/G14 unchanged. Mutation (missed-bill penalty counted once per stretch on the bill's amount): 14 fail; reverted.
+- **Manual browser run: skipped.** Signing in registers the browser as a new device in dev Firestore (`SessionLoader.loadSession` → `userRepository.addDevice`) and app start signs in anonymously; the rule was no writes.
+- **Open:** the owner confirms the fixed-term balance base; on a fixed-term partial catch-up the base is read from the stored first bill, whose balance #140 currently reduces twice.
+
 ## Open-term bills keep their cycle dates (owner rules R1-R5; #144, #120, #117, #145; 2026-11-19)
 
 Branch `feat/openterm-billing-by-cycle` → develop (draft PR, stacked on #143, which merged as 7857570; develop merged in). Supersedes draft PR #131.
