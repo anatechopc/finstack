@@ -21,9 +21,10 @@ import 'package:loooans_helpers/data_helpers.dart';
 //     per day of the stretch, monthly and per installment per started period
 //     of the stretch; a partial catch-up charges up to its collection date
 //     and the stretch continues without charging those days again.
-//   - A flat amount is charged as entered and has no base: it keeps the loan
-//     type's default counting (per bill on fixed-term, per stretch on
-//     open-term), whatever `based_on` holds.
+//   - A flat amount is charged as entered and has no base. It is charged
+//     per missed bill, each bill counting its own days late, on both loan
+//     types and whatever `based_on` holds (owner, 2026-11-19; before that
+//     decision open-term flat amounts were charged once per stretch).
 //   - A penalty saved without `based_on` (null) keeps today's behaviour:
 //     the missed installment on fixed-term, the outstanding balance on
 //     open-term.
@@ -61,9 +62,13 @@ import 'package:loooans_helpers/data_helpers.dart';
 //      both paid Oct 2 -> Sep 15 row 170 + 680 = 850, Sep 30 row 20 -> 870;
 //      previews 850 and 20. Partial: Sep 15 paid Oct 2 -> 850; Sep 30 paid
 //      Oct 10 -> 100 + 8 more stretch days x 40 = 320 -> 420.
-//   O6 flat amounts: 100 once -> 100 for the stretch (Sep 15 row), 0 on the
-//      Sep 30 row; 50 a day -> 50 x 17 = 850 for the stretch. A flat 100
-//      once that holds `based_on: missed_bill` is still 100 once.
+//   O6 flat amounts, per missed bill: 100 once -> 100 + 100 = 200; 50 a day
+//      -> 50 x 17 = 850 + 50 x 2 = 100 -> 950. A flat 100 once that holds
+//      `based_on: outstanding_balance` is still per bill, 200. (Before the
+//      owner's decision: 100 and 850 once for the stretch.)
+//   O6b partial catch-up, 50 a day flat: the Sep 15 bill paid Oct 2 -> 850;
+//      the Sep 30 bill paid Oct 10 counts its own 10 days -> 500 (the
+//      stretch would add 8 x 50 = 400; nothing of Sep 15's days again).
 //   O7 saved without `based_on`: 0.1% daily -> 680, the same as O1 and as
 //      G14d; G12's open-term row (balance 10,000, 5 days late, 100 once +
 //      1% daily) -> 100 + 500 = 600.
@@ -116,10 +121,11 @@ import 'package:loooans_helpers/data_helpers.dart';
 //   F6 saved without `based_on`: 1% daily -> 875 + 125 = 1,000 (= F1);
 //      G12 P1 (amortization 2,500, 5 days late, 100 once + 1% daily) -> 225.
 //
-// Mutation checks: count a penalty based on the missed bill once for the
-// loan (the stretch, still on the bill's amount) instead of per bill -> O2,
-// O4, O5, O8, F1, F4, F5, F6 fail. O3 does not: its second bill is not
-// late, so once per stretch and per bill agree. Keep the fixed-term base at
+// Mutation checks: count a penalty based on the missed bill (and so a flat
+// amount) once for the loan (the stretch, still on the bill's amount)
+// instead of per bill -> O2, O4, O5, O6, O6b, O8, F1, F4, F5, F6 fail. O3
+// does not: its second bill is not late, so once per stretch and per bill
+// agree. Keep the fixed-term base at
 // the stretch's first bill for the whole stretch -> F3, F7, F8 fail.
 
 const bill = PenaltyBase.missedBill;
@@ -533,13 +539,11 @@ void main() {
       );
     });
 
-    test(
-        'O6 flat amounts keep the open-term counting: 100 once, 850 for 50 '
-        'a day', () {
+    test('O6 flat amounts are per missed bill: 100 + 100, 850 + 100', () {
       for (final (penalty, expected) in [
-        (flat(100, once), [100.0, 0.0]),
-        (flat(50, daily), [850.0, 0.0]),
-        (flat(100, once, basedOn: bill), [100.0, 0.0]),
+        (flat(100, once), [100.0, 100.0]),
+        (flat(50, daily), [850.0, 100.0]),
+        (flat(100, once, basedOn: balance), [100.0, 100.0]),
       ]) {
         final loan = loanOf(openTerm: true, penalties: [penalty]);
         final rows = [sep15(), sep30()];
@@ -555,6 +559,28 @@ void main() {
               '${penalty.basedOn}',
         );
       }
+    });
+
+    test('O6b partial catch-up, 50 a day flat: 850, then 500 (own 10 days)',
+        () {
+      final loan = loanOf(openTerm: true, penalties: [flat(50, daily)]);
+      final first = sep15();
+      final second = sep30();
+      final context = [paidAug30(), first, second];
+
+      expect(
+        payOne(loan: loan, row: first, context: context, collectedAt: oct2),
+        closeTo(850, 0.005),
+      );
+      expect(
+        previews(loan: loan, rows: [second], context: context, asOf: oct10),
+        amounts([500]),
+      );
+      expect(
+        payOne(loan: loan, row: second, context: context, collectedAt: oct10),
+        closeTo(500, 0.005),
+      );
+      expect(second.daysLate, 10);
     });
 
     test('O7 saved without "Based on": the balance, as today (680, 600)', () {

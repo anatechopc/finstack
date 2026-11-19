@@ -172,9 +172,9 @@ Future<Penalty?> showPenaltyDialog(BuildContext context) {
                     'A percentage of the missed bill is charged on each late '
                     "bill for that bill's own days late. A percentage of the "
                     'outstanding balance is charged once for the loan while '
-                    'any bill is late. A flat amount is charged as entered: '
-                    'per late bill on fixed-term loans, once for the loan on '
-                    'open-term loans. Daily and monthly penalties multiply by '
+                    'any bill is late. A flat amount is charged as entered on '
+                    "each late bill, for that bill's own days late. Daily "
+                    'and monthly penalties multiply by '
                     'how late the payment is; "Per installment" follows the '
                     "product's loan term (monthly or twice a month). A "
                     'started period counts in full.',

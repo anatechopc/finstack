@@ -110,7 +110,7 @@ void main() {
       );
     });
 
-    test('baseFor: null keeps the loan type default; a flat amount ignores it',
+    test('baseFor: null keeps the loan type default; a flat amount is per bill',
         () {
       const legacy = Penalty(id: 'p', name: 'A', amount: 1, isPercentage: true);
       expect(legacy.baseFor(isOpenTerm: false), PenaltyBase.missedBill);
@@ -125,14 +125,13 @@ void main() {
       );
       expect(onBill.baseFor(isOpenTerm: true), PenaltyBase.missedBill);
 
-      const flat = Penalty(
-        id: 'p',
-        name: 'A',
-        amount: 100,
-        basedOn: PenaltyBase.missedBill,
-      );
-      expect(flat.baseFor(isOpenTerm: true), PenaltyBase.outstandingBalance);
-      expect(flat.baseFor(isOpenTerm: false), PenaltyBase.missedBill);
+      // A flat amount is per missed bill on both loan types (owner,
+      // 2026-11-19), whatever it holds.
+      for (final base in [null, ...PenaltyBase.values]) {
+        final flat = Penalty(id: 'p', name: 'A', amount: 100, basedOn: base);
+        expect(flat.baseFor(isOpenTerm: true), PenaltyBase.missedBill);
+        expect(flat.baseFor(isOpenTerm: false), PenaltyBase.missedBill);
+      }
     });
   });
 

@@ -134,13 +134,18 @@ class Penalty extends Equatable {
   )
   final PenaltyBase? basedOn;
 
-  /// The base in force on a loan of this type. A flat amount is charged as
-  /// entered, and it and a penalty without [basedOn] keep the loan type's
-  /// default: the missed installment on a fixed-term loan, the outstanding
-  /// balance on an open-term loan (so existing loans do not change).
-  PenaltyBase baseFor({required bool isOpenTerm}) =>
-      (isPercentage ? basedOn : null) ??
-      (isOpenTerm ? PenaltyBase.outstandingBalance : PenaltyBase.missedBill);
+  /// The base in force on a loan of this type, which also decides the
+  /// counting. A flat amount is charged as entered on each missed bill, on
+  /// both loan types and whatever [basedOn] holds (owner, 2026-11-19). A
+  /// percentage without [basedOn] keeps the loan type's default: the missed
+  /// installment on a fixed-term loan, the outstanding balance on an
+  /// open-term loan.
+  PenaltyBase baseFor({required bool isOpenTerm}) => !isPercentage
+      ? PenaltyBase.missedBill
+      : basedOn ??
+          (isOpenTerm
+              ? PenaltyBase.outstandingBalance
+              : PenaltyBase.missedBill);
 
   Map<String, dynamic> toJson() {
     return _$PenaltyToJson(this)

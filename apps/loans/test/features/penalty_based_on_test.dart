@@ -31,14 +31,15 @@ import '../helpers/helpers.dart';
 // Payment dialog and borrower amounts, open-term 10,000 at 5% ('1m', 500 a
 // cycle), created Jul 2, the Aug 1 cycle paid; seen and collected Oct 5:
 // the Aug 31 and Sep 30 bills are missed (35 and 5 days late), Oct 30 is
-// current. Penalties "Late fee" 100 once (flat: open-term counting, once
-// for the stretch) + "Bill surcharge" 1% of the missed bill per day (5 a
+// current. Penalties "Late fee" 100 once (flat: per missed bill, owner
+// 2026-11-19) + "Bill surcharge" 1% of the missed bill per day (5 a
 // day on a 500 bill, per bill):
-//   Aug 31 bill: 100 + 5 x 35 = 275; Sep 30 bill: 5 x 5 = 25 -> 300.
-//   Dialog: 2 installments 1,000 + 300 = 1,300.
-//   Borrower: Pay now 1,000 + 300 = 1,300; Pay in full + Oct 30's 500 =
-//   1,800. (With "1% of the balance" it would be 100 + 100 x 35 = 3,600
-//   once, as in open_term_late_payments_test.dart.)
+//   Aug 31 bill: 100 + 5 x 35 = 275; Sep 30 bill: 100 + 5 x 5 = 125 -> 400
+//   (300 before the flat fee counted per bill).
+//   Dialog: 2 installments 1,000 + 400 = 1,400.
+//   Borrower: Pay now 1,000 + 400 = 1,400; Pay in full + Oct 30's 500 =
+//   1,900. (With "1% of the balance" it would be 100 x 35 = 3,500 once +
+//   100 + 100, as in open_term_late_payments_test.dart.)
 
 class _MockProductBloc extends MockBloc<ProductEvent, ProductState>
     implements ProductBloc {}
@@ -571,7 +572,7 @@ void main() {
           now: oct5,
         ).schedules;
 
-    testWidgets('payment dialog: each bill its own days, 1,000 + 300',
+    testWidgets('payment dialog: each bill its own days, 1,000 + 400',
         (tester) async {
       final rows = LoanCalculationService.calculateOpenTermSchedules(
         amount: 10000,
@@ -606,7 +607,7 @@ void main() {
       expect(find.text(1000.toCurrency()), findsOneWidget);
       expect(
         find.text('Late fee · ${100.0.toCurrency()}, once × 1'),
-        findsOneWidget,
+        findsNWidgets(2),
       );
       expect(
         find.text('Bill surcharge · 1% of the missed bill, per day × 35'),
@@ -618,10 +619,10 @@ void main() {
       );
       expect(find.text(175.toCurrency()), findsOneWidget);
       expect(find.text(25.toCurrency()), findsOneWidget);
-      expect(find.text(1300.toCurrency()), findsOneWidget);
+      expect(find.text(1400.toCurrency()), findsOneWidget);
     });
 
-    test('borrower: Pay now 1,000 + 300 = 1,300, Pay in full 1,800', () {
+    test('borrower: Pay now 1,000 + 400 = 1,400, Pay in full 1,900', () {
       final due = borrowerAmountsDue(
         schedules: clientRows(),
         loan: loan,
@@ -632,10 +633,10 @@ void main() {
         due.payNow.map((s) => DateUtils.dateOnly(s.dueAt)),
         [DateTime(2026, 8, 31), DateTime(2026, 9, 30)],
       );
-      expect(due.nextDuePenalty, closeTo(300, 0.005));
-      expect(due.nextDueAmount, closeTo(1300, 0.005));
-      expect(due.remainingPenalty, closeTo(300, 0.005));
-      expect(due.remainingTotal, closeTo(1800, 0.005));
+      expect(due.nextDuePenalty, closeTo(400, 0.005));
+      expect(due.nextDueAmount, closeTo(1400, 0.005));
+      expect(due.remainingPenalty, closeTo(400, 0.005));
+      expect(due.remainingTotal, closeTo(1900, 0.005));
     });
   });
 }
