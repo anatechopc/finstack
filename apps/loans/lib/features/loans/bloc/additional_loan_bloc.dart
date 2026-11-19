@@ -25,28 +25,36 @@ final _log = Logger('additional_loan_bloc');
 class AdditionalLoanBloc
     extends Bloc<AdditionalLoanEvent, AdditionalLoanState> {
   AdditionalLoanBloc(BuildContext context)
-      : authService = AuthenticationService.instance,
-        loanRepository = context.read<LoanRepository>(),
-        storageRepository = context.read<StorageRepository>(),
-        loanScheduleRepository = context.read<LoanScheduleRepository>(),
-        paymentRepository = context.read<PaymentRepository>(),
-        super(const AdditionalLoanState()) {
-    productRepository = context.read<ProductRepository>();
-    _registerHandlers();
-  }
+      : this.withDependencies(
+          loanRepository: context.read<LoanRepository>(),
+          storageRepository: context.read<StorageRepository>(),
+          loanScheduleRepository: context.read<LoanScheduleRepository>(),
+          paymentRepository: context.read<PaymentRepository>(),
+          productRepository: context.read<ProductRepository>(),
+        );
 
-  /// Test seam: collaborators injected without a [BuildContext].
-  /// [productRepository] is optional because it is a `final` class and so
-  /// cannot be mocked; without it the loan's balance has no product
-  /// charges, as in the Payment Center's seam.
+  /// Test seam: the repositories without a widget tree. [authService]
+  /// defaults to the app's. The repositories only a "deduct" approval reads
+  /// are optional ([productRepository] is a `final` class and cannot be
+  /// mocked; without it the balance has no product charges, as in the
+  /// Payment Center's seam); a test that reaches them unset fails on the
+  /// late field.
+  @visibleForTesting
   AdditionalLoanBloc.withDependencies({
-    required this.authService,
     required this.loanRepository,
     required this.storageRepository,
-    required this.loanScheduleRepository,
-    required this.paymentRepository,
+    AuthenticationService? authService,
+    LoanScheduleRepository? loanScheduleRepository,
+    PaymentRepository? paymentRepository,
     ProductRepository? productRepository,
-  }) : super(const AdditionalLoanState()) {
+  })  : authService = authService ?? AuthenticationService.instance,
+        super(const AdditionalLoanState()) {
+    if (loanScheduleRepository != null) {
+      this.loanScheduleRepository = loanScheduleRepository;
+    }
+    if (paymentRepository != null) {
+      this.paymentRepository = paymentRepository;
+    }
     if (productRepository != null) {
       this.productRepository = productRepository;
     }
@@ -56,10 +64,10 @@ class AdditionalLoanBloc
   final AuthenticationService authService;
   final LoanRepository loanRepository;
   final StorageRepository storageRepository;
-  final LoanScheduleRepository loanScheduleRepository;
-  final PaymentRepository paymentRepository;
 
-  /// `late` so the test seam can omit it.
+  /// `late` so the test seam can omit them.
+  late final LoanScheduleRepository loanScheduleRepository;
+  late final PaymentRepository paymentRepository;
   late final ProductRepository productRepository;
 
   void _registerHandlers() {

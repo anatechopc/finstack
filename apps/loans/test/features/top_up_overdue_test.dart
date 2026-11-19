@@ -260,12 +260,16 @@ void main() {
           ..viewUpdated |=
               invocation.namedArguments[#updateView] as bool? ?? false
           ..log.add('loan ${loan.status.name}');
-        if (invocation.namedArguments[#updateAdditionalLoanAmounts] as bool? ??
-            true) {
-          for (final topUp in loan.additionalLoanAmounts) {
-            if (topUp.id == NO_ID) {
-              topUp.id = 'topup-new';
-            }
+        // LoanRepository.update: new top-ups are added; existing ones are
+        // written back only with updateAdditionalLoanAmounts.
+        final writeExisting =
+            invocation.namedArguments[#updateAdditionalLoanAmounts] as bool? ??
+                false;
+        for (final topUp in loan.additionalLoanAmounts) {
+          if (topUp.id == NO_ID) {
+            topUp.id = 'topup-new';
+            store.topUps[topUp.id] = topUp.toJson();
+          } else if (writeExisting) {
             store.topUps[topUp.id] = topUp.toJson();
           }
         }
