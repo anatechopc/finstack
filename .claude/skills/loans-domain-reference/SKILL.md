@@ -140,9 +140,13 @@ confirmation, no "Make payment" button, and not in the borrower's Next
 payment / Pay in full. Every open-term loan that does not allow late payments
 (also loans created before penalties existed, which read the flag as false)
 now confirms an overdue cycle as `paid_late`; money is charged only where the
-loan has penalties. Known limits: salary-day loans after an off-day row
-(#144); a top-up during an overdue cycle raises the penalty base for all its
-late days; missed cycles collapse into one row ("once" charged once).
+loan has penalties. Known limits: a salary-day loan is late only while its
+last row falls on a salary day (one created on an off day is never late;
+#144); a top-up during an overdue cycle raises the penalty base for all its
+late days; missed cycles collapse into one row ("once" charged once). Owner
+decision 2026-11-19: the base stays (fixed-term installment, open-term
+balance) until a "Based on" option exists; a later PR keeps open-term bill
+dates.
 
 ## 6. Additional loans (top-ups) — the sort invariant
 
