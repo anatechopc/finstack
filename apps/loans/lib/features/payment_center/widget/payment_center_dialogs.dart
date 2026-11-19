@@ -11,6 +11,7 @@ import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/features/cash_pool/bloc/cash_pool_bloc.dart';
 import 'package:loooans/features/payment_center/bloc/payment_center_bloc.dart';
 import 'package:loooans/features/users/widget/client_detail/client_detail_dialogs.dart';
+import 'package:loooans/services/payment_confirmation_service.dart';
 import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
@@ -610,7 +611,7 @@ Future<void> _handlePaymentOption(
   final totalPayment = interestPayment + payment;
 
   // Check if settling account
-  if (payment >= schedule.outstandingBalance) {
+  if (PaymentConfirmationService.isEarlyPayoff(schedule, principal: payment)) {
     final settleAccountConfirmation = await showDialog<bool>(
       context: context,
       builder: (context) {

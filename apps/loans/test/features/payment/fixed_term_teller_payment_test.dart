@@ -618,6 +618,65 @@ void main() {
       expect(await loanStatus(), LoanStatus.completed);
       expect(await actionable(), isEmpty);
     });
+
+    test('Payment Center: the last bill as billed completes the loan',
+        () async {
+      await payInPaymentCenter((await actionable()).first, principal: 3000);
+      final bill2 = (await actionable()).first;
+      await payInPaymentCenter(
+        bill2,
+        principal: double.parse(bill2.principalPayment.toStringAsFixed(2)),
+      );
+      final bill3 = (await actionable()).single;
+      await payInPaymentCenter(bill3, principal: 3505.82);
+
+      expect(written.last.outstandingBalance, closeTo(0, 0.000001));
+      expect(await loanStatus(), LoanStatus.completed);
+    });
+
+    /// Client detail records the next bill, as the dialog fills it unless
+    /// [principal] is given (#155: the last bill and a remainder row are
+    /// recorded, not sent to settlement).
+    Future<LoanSchedule> payNextInClientDetail({String? principal}) async {
+      final rows = clientRows(written.map(readBack).toList());
+      final next = rows.firstWhere((s) => s.id == NO_ID);
+      await payInClientDetail(
+        next,
+        rows,
+        interest: next.interestPayment.toStringAsFixed(2),
+        principal: principal ?? next.principalPayment.toStringAsFixed(2),
+      );
+
+      return next;
+    }
+
+    test('client detail: the last bill as billed completes the loan (#155)',
+        () async {
+      await payNextInClientDetail(principal: '3000.00');
+      await payNextInClientDetail();
+      expect(await loanStatus(), LoanStatus.paid_late);
+      final bill3 = await payNextInClientDetail();
+
+      expect(bill3.principalPayment, closeTo(3505.82, 0.000001));
+      expect(written.last.outstandingBalance, closeTo(0, 0.000001));
+      expect(await loanStatus(), LoanStatus.completed);
+    });
+
+    test('client detail: a short last bill stays open; its 505.82 remainder '
+        'completes the loan (#155)', () async {
+      await payNextInClientDetail(principal: '3000.00');
+      await payNextInClientDetail();
+      await payNextInClientDetail(principal: '3000.00');
+      expect(written.last.outstandingBalance, closeTo(505.82, 0.000001));
+      expect(await loanStatus(), LoanStatus.paid_on_time);
+
+      final remainder = await payNextInClientDetail();
+      expect(remainder.amortization, closeTo(505.82, 0.000001));
+      expect(remainder.interestPayment, 0);
+      expect(written, hasLength(4));
+      expect(written.last.outstandingBalance, closeTo(0, 0.000001));
+      expect(await loanStatus(), LoanStatus.completed);
+    });
   });
 
   testWidgets("#152 the borrower's compact schedule shows bill 2 as "

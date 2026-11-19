@@ -97,6 +97,27 @@ class PaymentConfirmationService {
     }
   }
 
+  /// Whether a teller entering [principal] on [schedule] is paying the loan
+  /// off early, for the settlement flow, rather than making a payment
+  /// (#155). Both payment dialogs ask this. Fixed-term: only principal
+  /// above the row's bill (its `principalPayment`, a carried shortfall
+  /// included) that also clears the balance before the row; the last bill
+  /// and a remainder row paid as billed are payments, and the 0.005 rule
+  /// completes the loan. Open-term, unchanged: principal of at least the
+  /// balance.
+  static bool isEarlyPayoff(
+    LoanSchedule schedule, {
+    required double principal,
+  }) {
+    if (schedule.isOpenTerm) {
+      return principal >= schedule.outstandingBalance;
+    }
+    final owed = schedule.outstandingBalance + schedule.principalPayment;
+
+    return principal > schedule.principalPayment + 0.005 &&
+        principal >= owed - 0.005;
+  }
+
   /// Records a teller payment of [interestPayment] and [principalPayment] on
   /// [schedule] with the balance left after it. Every teller path (client
   /// detail, Payment Center single and bulk) routes through here.

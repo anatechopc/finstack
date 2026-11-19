@@ -21,9 +21,9 @@ import 'package:payment_repository/payment_repository.dart';
 //      last bill clears the whole remaining balance, rounding included.
 //      Rounding (review of #156): a bill that carries a shortfall is in
 //      centavos, the figures the dialog fills in: amount = the
-//      amortization to the centavo + the carry, principal = amount -
-//      interest to the centavo, and the next row starts from the balance
-//      after that principal. The projection then equals the rows after
+//      amortization to the centavo + the carry, interest to the centavo
+//      (rounded once), principal = amount - that interest, and the next
+//      row starts from the balance after that principal. The projection then equals the rows after
 //      payment, and the shown bills sum to what is owed. Other bills keep
 //      the unrounded amortization (G1, unchanged).
 //   2. A shortfall on the last bill: one more row bills the balance, due on
@@ -51,6 +51,12 @@ import 'package:payment_repository/payment_repository.dart';
 //   3,681.1156, shown 7,525.30, one centavo more than owed.
 //   The dev row holds the amortization unrounded (3,672.0856463124487):
 //   the same figures.
+//   Interest not in whole centavos (second review of #156): bill 1 paid
+//   500 + 2,999.50 → balance 7,000.50, carry 172.59, bill 2 3,844.68,
+//   interest 350.025 → 350.03 (rounded once), principal 3,844.68 − 350.03
+//   = 3,494.65, balance 3,505.85; bill 3 3,505.85 + 175.2925 = 3,681.1425.
+//   Shown 3,844.68 + 3,681.14 = 7,525.82 = owed 7,000.50 + 350.03 +
+//   175.2925. Before: the dialog filled 350.03 + 3,494.66 = 3,844.69.
 //
 // G16b, short on bill 2 of 3. Bill 1 paid 500 + 3,172.09: balance 6,827.91.
 //   Bill 2: interest 341.3955, principal 3,330.6901; paid 341.40 + 3,000:
@@ -92,6 +98,23 @@ import 'package:payment_repository/payment_repository.dart';
 // G16g, completion. Every bill paid and a paid row at 0.005 or less:
 //   completed. G16c's three paid bills (497.2244 owed): not completed; its
 //   remainder paid: completed. 0.006 owed: not completed.
+//
+// G16h, early payoff or payment (#155; `isEarlyPayoff`, which both payment
+//   dialogs ask before recording). A payment whose principal is at most
+//   the row's bill (+ 0.005) is a payment; only more than the bill that
+//   also clears the balance before the row goes to settlement.
+//   Bill 1 paid 500 + 2,900: carry 272.09, balance 7,100; bill 2 3,944.18
+//     = 355.00 + 3,589.18, balance after 3,510.82. The old check (principal
+//     >= balance after) sent 3,589.18 to settlement. From a carry of 185.03
+//     it trips: 500 + 2,987.05 (185.04) → bill 2 principal 3,506.48,
+//     balance after 3,506.47; 2,987.06 (185.03) gives 3,506.47 against
+//     3,506.47; 2,987.07 (185.02) gives 3,506.46, no trip.
+//   Bill 2 paid as filled, bill 3 (last) = 3,510.82 + 175.541 = 3,686.361:
+//     principal 3,510.82 is a payment (balance after 0). Paid 175.54 +
+//     3,000: the remainder row 510.82 is a payment.
+//   Settlement: 7,100 on bill 2 (all owed before it); 3,510.83 on the last
+//   bill. 5,000 on bill 2 is an extra payment, not settlement.
+//   Open-term, unchanged: principal >= the balance (10,000) settles.
 //
 // Rule 4. G16a's bill 2 (3,844.18) unpaid on Mar 20, 10 days late: 1% a
 //   day of the missed bill = 384.418; 0.1% a day of the balance in force
@@ -228,6 +251,33 @@ void main() {
           rest.fold<double>(0, (sum, s) => sum + s.interestCharge);
       expect(shown, (owed * 100).round(), reason: '7,525.29 both');
       expect(shown, 752529);
+    });
+
+    test('interest not in whole centavos (500 + 2,999.50): the parts add up '
+        'to the bill, 350.03 + 3,494.65 = 3,844.68', () {
+      final rest = engine(
+        payNext(const [], interest: 500, principal: 2999.50),
+      ).schedules;
+      final (bill2, bill3) = (rest.first, rest.last);
+
+      expect(bill2.amortization.toStringAsFixed(2), '3844.68');
+      expect(bill2.interestPayment.toStringAsFixed(2), '350.03');
+      expect(bill2.principalPayment.toStringAsFixed(2), '3494.65');
+      expect(
+        double.parse(bill2.interestPayment.toStringAsFixed(2)) +
+            double.parse(bill2.principalPayment.toStringAsFixed(2)),
+        closeTo(bill2.amortization, 0.000001),
+      );
+      expect(bill2.outstandingBalance, closeTo(3505.85, 0.000001));
+      expect(bill3.amortization, closeTo(3681.1425, 0.000001));
+      final shown = rest.fold<int>(
+        0,
+        (sum, s) => sum + (s.amortization * 100).round(),
+      );
+      final owed = 7000.50 +
+          rest.fold<double>(0, (sum, s) => sum + s.interestCharge);
+      expect(shown, 752582);
+      expect((owed * 100).round(), 752582);
     });
 
     test("the borrower's Pay now is bill 2: 3,844.18", () {
@@ -455,6 +505,80 @@ void main() {
       rest.fold<double>(totalPaid(one), (sum, s) => sum + s.amortization),
       closeTo(10908.6034, 0.0001),
     );
+  });
+
+  group('G16h a payment, or an early payoff for settlement (#155)', () {
+    bool payoff(LoanSchedule row, double principal) =>
+        PaymentConfirmationService.isEarlyPayoff(row, principal: principal);
+
+    final one = payNext(const [], interest: 500, principal: 2900);
+    final bill2 = engine(one).schedules.first;
+    final two = payNext(one, principal: 3589.18);
+    final bill3 = engine(two).schedules.single;
+    final remainder =
+        engine(payNext(two, interest: 175.54, principal: 3000)).schedules.single;
+
+    test('bill 2 carrying 272.09: 3,589.18 is a payment (the old check '
+        'settled it)', () {
+      expect(bill2.amortization, closeTo(3944.18, 0.000001));
+      expect(bill2.principalPayment, closeTo(3589.18, 0.000001));
+      expect(bill2.outstandingBalance, closeTo(3510.82, 0.000001));
+      expect(bill2.principalPayment >= bill2.outstandingBalance, isTrue);
+      expect(payoff(bill2, 3589.18), isFalse);
+    });
+
+    test('185.04 short trips the old check and is a payment; 185.02 never '
+        'tripped it', () {
+      final next = engine(
+        payNext(const [], interest: 500, principal: 2987.05),
+      ).schedules.first;
+
+      expect(next.principalPayment, closeTo(3506.48, 0.000001));
+      expect(next.outstandingBalance, closeTo(3506.47, 0.000001));
+      expect(next.principalPayment >= next.outstandingBalance, isTrue);
+      expect(payoff(next, 3506.48), isFalse);
+      final under = engine(
+        payNext(const [], interest: 500, principal: 2987.07),
+      ).schedules.first;
+      expect(under.principalPayment, closeTo(3506.46, 0.000001));
+      expect(under.principalPayment < under.outstandingBalance, isTrue);
+      expect(payoff(under, 3506.46), isFalse);
+    });
+
+    test('the last bill and the remainder row paid as billed are payments',
+        () {
+      expect(bill3.amortization, closeTo(3686.361, 0.000001));
+      expect(bill3.outstandingBalance, closeTo(0, 0.000001));
+      expect(payoff(bill3, 3510.82), isFalse);
+      expect(remainder.amortization, closeTo(510.82, 0.000001));
+      expect(remainder.outstandingBalance, 0);
+      expect(payoff(remainder, 510.82), isFalse);
+    });
+
+    test('more than the bill that clears what is owed is settlement', () {
+      expect(payoff(bill2, 7100), isTrue);
+      expect(payoff(bill2, 7099.996), isTrue, reason: 'within 0.005');
+      expect(payoff(bill2, 5000), isFalse, reason: 'an extra payment');
+      expect(payoff(bill3, 3510.83), isTrue);
+    });
+
+    test('open-term is unchanged: principal of at least the balance', () {
+      final bill = LoanSchedule.create(
+        dueAt: DateTime(2026, 2, 9),
+        outstandingBalance: 10000,
+        amortization: 500,
+        principalPayment: 0,
+        interestCharge: 500,
+        loanId: 'loan-1',
+        interestDayMultiplier: 1,
+        companyId: 'co-1',
+        isOpenTerm: true,
+      );
+
+      expect(payoff(bill, 10000), isTrue);
+      expect(payoff(bill, 9999.99), isFalse);
+      expect(payoff(bill, 0), isFalse);
+    });
   });
 
   group('rule 4: the carried bill missed for 10 days', () {

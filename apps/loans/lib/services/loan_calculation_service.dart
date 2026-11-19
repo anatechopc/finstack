@@ -79,8 +79,9 @@ class LoanCalculationService {
   ///
   /// Resuming after the stored [paidSchedules] (owner, 2026-11-19, #152):
   /// the next bill is the amortization plus the principal the last stored
-  /// row left unpaid, both to the centavo, with its principal to the
-  /// centavo; the last bill clears the whole balance, rounding included.
+  /// row left unpaid, both to the centavo, with its interest to the centavo
+  /// and its principal the rest; the last bill clears the whole balance,
+  /// rounding included.
   /// When every bill is stored and the last one left principal owed, one
   /// more row bills it: due on the last due date, no interest.
   static LoanCalculationResult calculateFixedTerm({
@@ -147,18 +148,21 @@ class LoanCalculationService {
     _log.finest('---------------------------------------------------');
     for (var i = 1; i <= numOfPayments; i++) {
       final beginningBalance = outstandingBalance;
-      final interestPayment = outstandingBalance * monthlyInterestRate;
+      var interestPayment = outstandingBalance * monthlyInterestRate;
       final clears = beginningBalance + interestPayment;
       var monthlyAmort = i == numOfPayments
           ? clears
           : min(loanMonthlyAmortization + carry, clears);
       var principalPayment = monthlyAmort - interestPayment;
-      // A bill that carries a shortfall is in centavos, the figures the
-      // dialog fills in, so the rows after it start from the balance its
-      // payment leaves (review of #156: 3,681.11, not 3,681.12).
+      // A bill that carries a shortfall is in centavos: its interest is
+      // rounded once and its principal is the bill less that interest. The
+      // dialog then fills in figures that add up to the bill, and the rows
+      // after it start from the balance its payment leaves (reviews of
+      // #156: 3,681.11, not 3,681.12; 350.03 + 3,494.65, not + 3,494.66).
       final carriedBill = _toCentavo(loanMonthlyAmortization) + carry;
       if (i < numOfPayments && carry > 0 && carriedBill < clears) {
         monthlyAmort = carriedBill;
+        interestPayment = _toCentavo(interestPayment);
         principalPayment = _toCentavo(carriedBill - interestPayment);
       }
       carry = 0;
