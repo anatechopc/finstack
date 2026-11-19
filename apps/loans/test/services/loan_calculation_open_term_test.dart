@@ -388,7 +388,7 @@ void main() {
     test('G9c a top-up on the due date: the cycle is on the old balance', () {
       for (final topUpAt in [
         DateTime(2026, 8, 31),
-        DateTime(2026, 8, 31, 10)
+        DateTime(2026, 8, 31, 10),
       ]) {
         final s = run(now: DateTime(2026, 8, 31, 12), topUpAt: topUpAt);
 

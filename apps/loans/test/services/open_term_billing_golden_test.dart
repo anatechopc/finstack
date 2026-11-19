@@ -307,8 +307,12 @@ void main() {
       );
 
       expect(rows, hasLength(1));
-      expectBill(rows.single,
-          due: DateTime(2026, 8, 31), days: 30, interest: 500);
+      expectBill(
+        rows.single,
+        due: DateTime(2026, 8, 31),
+        days: 30,
+        interest: 500,
+      );
     });
 
     test("'1m' after a row stored by the old clamp (due_at Aug 5)", () {
@@ -382,8 +386,12 @@ void main() {
       );
 
       expect(rows, hasLength(3));
-      expectBill(rows[0],
-          due: DateTime(2026, 9, 30), days: 14, interest: 233.33);
+      expectBill(
+        rows[0],
+        due: DateTime(2026, 9, 30),
+        days: 14,
+        interest: 233.33,
+      );
       expectBill(rows[1], due: DateTime(2026, 10, 15), days: 15, interest: 250);
       expectBill(rows[2], due: DateTime(2026, 10, 30), days: 15, interest: 250);
       expect(calculateDaysLate(dueAt: rows[0].lateFrom, collectedAt: now), 20);
@@ -402,8 +410,12 @@ void main() {
       expect(rows, hasLength(4));
       expectBill(rows[0], due: DateTime(2026, 8, 15), days: 12, interest: 200);
       expectBill(rows[1], due: DateTime(2026, 8, 30), days: 15, interest: 250);
-      expectBill(rows[2],
-          due: DateTime(2026, 9, 15), days: 16, interest: 266.67);
+      expectBill(
+        rows[2],
+        due: DateTime(2026, 9, 15),
+        days: 16,
+        interest: 266.67,
+      );
       expectBill(rows[3], due: DateTime(2026, 9, 30), days: 15, interest: 250);
     });
   });
