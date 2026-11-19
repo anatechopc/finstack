@@ -246,6 +246,14 @@ class LoanCalculationService {
         .lastOrNull;
     final lastBill = last == null ? null : _localDay(last.lateFrom);
     final start = _localDay(date);
+    // A stored row dated a day off the schedule (a first bill the old engine
+    // dated on the creation day's UTC date, or a row written in another
+    // zone) is the scheduled bill a day after it: no 1-day bill. A row ON a
+    // scheduled date never absorbs the next one (salary days a day apart:
+    // '15,16', '1,30' after Feb 28), and a row further away (an old clamp
+    // row) does not move the schedule (reviews of #146).
+    final offSchedule = lastBill != null &&
+        !_isScheduledDate(term: term, start: start, day: lastBill);
     final today = _localDay(now ?? DateTime.now());
 
     var balance = last?.outstandingBalance ?? amount;
@@ -269,11 +277,7 @@ class LoanCalculationService {
       start: start,
       after: cycleStart,
     )) {
-      // A stored bill dated a day before a scheduled date is that bill (a
-      // first bill the old engine dated on the creation day's UTC date, or a
-      // row written in another zone): no 1-day bill (review of #146). A row
-      // further away (an old clamp row) does not move the schedule.
-      if (lastBill != null && _days(lastBill, dueAt) <= 1) {
+      if (offSchedule && _days(lastBill, dueAt) <= 1) {
         continue;
       }
       var interestCharge = 0.0;
@@ -391,6 +395,21 @@ class LoanCalculationService {
         }
       }
     }
+  }
+
+  /// Whether [day] is one of the loan's scheduled bill dates.
+  static bool _isScheduledDate({
+    required String term,
+    required Jiffy start,
+    required Jiffy day,
+  }) {
+    final dayBefore = Jiffy.parseFromDateTime(
+      DateTime(day.year, day.month, day.date - 1),
+    );
+    final next =
+        _openTermDueDates(term: term, start: start, after: dayBefore).first;
+
+    return _days(day, next) == 0;
   }
 
   /// Start of [dateTime]'s calendar day on this device. Stored dates come

@@ -166,6 +166,17 @@ import 'package:loooans_helpers/data_helpers.dart';
 //        UTC), seen Aug 20 -> next Aug 30 with interest from the row's day:
 //        UTC 16 days, 266.67 (was a 1-day 16.67 bill due Aug 15); Manila 15
 //        days, 250.
+//
+// Fifth review of #146
+//   G14v a row ON a scheduled date never absorbs the next one, so real
+//        salary-day bills a day apart keep their own due date (10,000 at 5%):
+//        '15,16', row Aug 15, seen Aug 20 -> Aug 16 (1 day, 16.67, missed),
+//          Sep 15 (30 days, 500);
+//        '1,30', row Feb 28 2027 (the 30th's month end), seen Mar 5 -> Mar 1
+//          (1 day, 16.67, missed), Mar 30 (29 days, 483.33);
+//        '1,31', row Jan 31 2027, seen Feb 5 -> Feb 1 (1 day, 16.67, missed),
+//          Feb 28 (the 31st's month end; 27 days, 450).
+//        (The fourth review's window dropped each 1-day bill.)
 //   G14q a top-up counts from its approval: 2,000 + 100 created Aug 6,
 //        approved Sep 5, the Aug 31 bill stored Aug 31 on 10,000 -> Sep 30 =
 //        12,100 x 5% + 2,100 x 5% x 25/30 (Aug 6-31, never billed) = 605 +
@@ -1526,5 +1537,53 @@ void main() {
       days: days,
       interest: 10000 * 0.05 * days / 30,
     );
+  });
+
+  group('G14v salary-day bills a day apart keep their own dates', () {
+    for (final (term, rowOn, now, first, second, secondDays) in [
+      (
+        '15,16',
+        DateTime(2026, 8, 15),
+        DateTime(2026, 8, 20, 12),
+        DateTime(2026, 8, 16),
+        DateTime(2026, 9, 15),
+        30,
+      ),
+      (
+        '1,30',
+        DateTime(2027, 2, 28),
+        DateTime(2027, 3, 5, 12),
+        DateTime(2027, 3),
+        DateTime(2027, 3, 30),
+        29,
+      ),
+      (
+        '1,31',
+        DateTime(2027, 1, 31),
+        DateTime(2027, 2, 5, 12),
+        DateTime(2027, 2),
+        DateTime(2027, 2, 28),
+        27,
+      ),
+    ]) {
+      test("'$term' after a bill stored on $rowOn", () {
+        final rows = bills(
+          amount: 10000,
+          start: DateTime(2026, 7, 2),
+          term: term,
+          now: now,
+          storedRows: [stored(id: 'sched-1', dueAt: rowOn, balance: 10000)],
+        );
+
+        expect(rows, hasLength(2));
+        expectBill(rows[0], due: first, days: 1, interest: 16.67);
+        expectBill(
+          rows[1],
+          due: second,
+          days: secondDays,
+          interest: 10000 * 0.05 * secondDays / 30,
+        );
+      });
+    }
   });
 }

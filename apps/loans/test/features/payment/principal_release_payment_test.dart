@@ -150,6 +150,19 @@ void main() {
       ..principalPayment = 10000
       ..outstandingBalance = 0;
     expect(zeroRatePaidOff.isPrincipalRelease, isFalse);
+    // Overpaid: balance 10,000, 12,000 paid -> -2,000, not minus the
+    // principal paid (a teller-paid release ends at exactly -principal).
+    final zeroRateOverpaid = storedRelease()
+      ..status = LoanStatus.paid_on_time
+      ..principalPayment = 12000
+      ..outstandingBalance = -2000
+      ..interestPayment = 1;
+    expect(zeroRateOverpaid.isPrincipalRelease, isFalse);
+    final zeroRateOverpaidNoInterest = storedRelease()
+      ..status = LoanStatus.paid_on_time
+      ..principalPayment = 12000
+      ..outstandingBalance = -2000;
+    expect(zeroRateOverpaidNoInterest.isPrincipalRelease, isFalse);
 
     // The release confirmed from a submission before #138, or paid by a
     // teller (balance -10,000 and the interest they had to enter).
