@@ -20,9 +20,17 @@ final _log = Logger('additional_loan_bloc');
 class AdditionalLoanBloc
     extends Bloc<AdditionalLoanEvent, AdditionalLoanState> {
   AdditionalLoanBloc(BuildContext context)
-      : loanRepository = context.read<LoanRepository>(),
-        storageRepository = context.read<StorageRepository>(),
-        super(const AdditionalLoanState()) {
+      : this.withDependencies(
+          loanRepository: context.read<LoanRepository>(),
+          storageRepository: context.read<StorageRepository>(),
+        );
+
+  /// Test seam: the repositories without a widget tree.
+  @visibleForTesting
+  AdditionalLoanBloc.withDependencies({
+    required this.loanRepository,
+    required this.storageRepository,
+  }) : super(const AdditionalLoanState()) {
     on<AddLoanAmountEvent>(_handleAddLoanAmountEvent);
     on<UpdateAdditionalLoanAmountEvent>(
       _handleUpdateAdditionalLoanAmountEvent,
@@ -155,7 +163,11 @@ class AdditionalLoanBloc
         ..approvedAt = event.status == LoanStatus.approved
             ? DateTime.timestamp()
             : null;
-      await loanRepository.update(data: loan);
+      // Freshly loaded, and it changes the top-up: write it back.
+      await loanRepository.update(
+        data: loan,
+        updateAdditionalLoanAmounts: true,
+      );
       emit(const AdditionalLoanState.loading());
       emit(
         const AdditionalLoanState.success(
