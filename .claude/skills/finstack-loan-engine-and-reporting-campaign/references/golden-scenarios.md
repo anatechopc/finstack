@@ -127,7 +127,7 @@ double-derivation IS the proof.
 
 | ID | Method / target | Inputs (summary) | Expected (hand-derived) | Guards against |
 |----|-----------------|------------------|-------------------------|----------------|
-| G1 | `calculateFixedTerm` | 10000, 3 mo, 5%, `'1m'` | table above | amortization formula drift |
+| G1 | `calculateFixedTerm` | 10000, 3 mo, 5%, `'1m'` | table above; G1t (finstack#140, `PaymentConfirmationService.recordTellerPayment`, 5 scenarios in `test/services/loan_calculation_service_test.dart`): row 1 paid by a teller stores 6,827.91 (was 3,655.82), then two of 3,672.09, total 11,016.26 (the dialog's 3,172.09: 3,672.09 + 3,672.08, total 11,016.26); 1,000 extra stores 5,827.91 (was 2,655.82), then 3,672.09 + 2,569.58; 3,000 stores 7,000; open-term rows keep the balance before the payment (10,000 − 2,000 = 8,000) | amortization formula drift; a teller payment subtracting the principal twice |
 | G2 | `calculateFixedTerm` | 10000, 3 mo, 5%, `'15d'` | 6 payments, R=0.025/period, P closeTo 1815.50; total closeTo 10893.00 (tol 0.05) | `'15d'` doubling/halving logic |
 | G3 | `calculateFixedTerm` | resume with 1 persisted paid schedule | output contains ONLY computed schedules (all `id == NO_ID`), count = n-1, amortization taken from `paidSchedules.first.amortization` | teller double-count (EXISTS — keep) |
 | G4a | `calculateOpenTermSchedules` | 10000, 5%, `'1m'`, start = now-1d | 1 schedule; dueAt = start+30d; multiplier 1.0; interestCharge 500.00; principalPayment 0; OB stays 10000; amortization 500.00; `totalLoanPayment == double.infinity` (sentinel — pin it) | 30-day-month convention; interest-only invariant |

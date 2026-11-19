@@ -105,6 +105,19 @@ class ClientDetailScheduleItem extends StatelessWidget {
             other.dueAt.isBefore(schedule.dueAt),
       );
 
+  /// Fixed-term installments are paid oldest first too (#150): paying a
+  /// later one first leaves the earlier ones overdue with their penalties
+  /// running. Only the earliest unpaid installment can be paid.
+  bool get _isPayableInstallment =>
+      _isUnpaid(schedule) &&
+      !loanRows.any(
+        (other) =>
+            !identical(other, schedule) &&
+            !other.isOpenTerm &&
+            _isUnpaid(other) &&
+            other.dueAt.isBefore(schedule.dueAt),
+      );
+
   String _displayAmount(double amount) {
     if (amount == 0) {
       return '';
@@ -393,7 +406,7 @@ class ClientDetailScheduleItem extends StatelessWidget {
         (user.isAdmin() || user.isTeller()) &&
         (schedule.isOpenTerm && !schedule.isPlaceholder
             ? _isPayableOpenTermBill
-            : schedule.status == LoanStatus.not_paid);
+            : _isPayableInstallment);
     final showAdditionalLoanAmountDetailsButton = isSelfManaged &&
         (user.isLoanOfficer() || user.isAdmin()) &&
         schedule.status == LoanStatus.pending &&

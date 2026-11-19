@@ -842,19 +842,13 @@ class PaymentCenterBloc extends Bloc<PaymentCenterEvent, PaymentCenterState> {
         status: PaymentStatus.confirmed,
       );
 
-      if (!schedule.isOpenTerm) {
-        final extraPayment = event.payment - schedule.principalPayment;
-        if (extraPayment > 0.0) {
-          schedule
-            ..extraPayment = extraPayment
-            ..outstandingBalance -= extraPayment;
-        }
-      }
+      PaymentConfirmationService.recordTellerPayment(
+        schedule,
+        interestPayment: event.interestPayment,
+        principalPayment: event.payment,
+      );
 
       schedule
-        ..interestPayment = event.interestPayment
-        ..principalPayment = event.payment
-        ..outstandingBalance -= (event.payment - schedule.extraPayment)
         ..loanId = loan.id
         ..status = status;
 
@@ -1058,23 +1052,14 @@ class PaymentCenterBloc extends Bloc<PaymentCenterEvent, PaymentCenterState> {
         loanRows: loanRows,
       );
 
-      final interestPayment =
-          schedule.isOpenTerm ? interestShares[i] : schedule.interestPayment;
-      final principalPayment = schedule.principalPayment;
-
-      if (!schedule.isOpenTerm) {
-        final extraPayment = principalPayment - schedule.principalPayment;
-        if (extraPayment > 0.0) {
-          schedule
-            ..extraPayment = extraPayment
-            ..outstandingBalance -= extraPayment;
-        }
-      }
+      PaymentConfirmationService.recordTellerPayment(
+        schedule,
+        interestPayment:
+            schedule.isOpenTerm ? interestShares[i] : schedule.interestPayment,
+        principalPayment: schedule.principalPayment,
+      );
 
       schedule
-        ..interestPayment = interestPayment
-        ..principalPayment = principalPayment
-        ..outstandingBalance -= (principalPayment - schedule.extraPayment)
         ..loanId = loan.id
         ..status = status;
 
