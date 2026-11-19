@@ -6,12 +6,15 @@ import 'package:flutter_form_builder/flutter_form_builder.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
+import 'package:loooans/features/loans/bloc/loans_bloc.dart';
 import 'package:loooans/features/loans/screens/loan_details.dart';
 import 'package:loooans/features/products/bloc/product_bloc.dart';
 import 'package:loooans/features/products/widget/add_product/penalties_section.dart';
+import 'package:loooans/features/products/widget/quotation_widget.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/loan_calculation_service.dart';
 import 'package:loooans/utils/extensions.dart';
+import 'package:loooans/utils/pdf_generator.dart';
 import 'package:loooans/widgets/payment_penalty_section.dart';
 import 'package:loooans/widgets/penalty_dialog.dart';
 import 'package:loooans_helpers/data_helpers.dart';
@@ -39,6 +42,9 @@ import '../helpers/helpers.dart';
 
 class _MockProductBloc extends MockBloc<ProductEvent, ProductState>
     implements ProductBloc {}
+
+class _MockLoansBloc extends MockBloc<LoansEvent, LoansState>
+    implements LoansBloc {}
 
 const onceOfBill = Penalty(
   id: 'once-bill',
@@ -148,6 +154,54 @@ void main() {
       expect(saved!.basedOn, PenaltyBase.missedBill);
     });
 
+    Future<void> pickFrequency(
+      WidgetTester tester,
+      PenaltyFrequency from,
+      PenaltyFrequency to,
+    ) async {
+      await tester.tap(find.text(from.label));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(to.label).last);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets(
+        'a base the lender picked survives "Per day" again: Per day, missed '
+        'bill, Monthly, Per day', (tester) async {
+      await open(tester);
+      await fill(tester, amount: '1%', frequency: PenaltyFrequency.daily);
+      await tester.tap(find.text('The missed bill'));
+      await tester.pumpAndSettle();
+      await pickFrequency(
+        tester,
+        PenaltyFrequency.daily,
+        PenaltyFrequency.monthly,
+      );
+      await pickFrequency(
+        tester,
+        PenaltyFrequency.monthly,
+        PenaltyFrequency.daily,
+      );
+      await add(tester);
+
+      expect(saved!.frequency, PenaltyFrequency.daily);
+      expect(saved!.basedOn, PenaltyBase.missedBill);
+    });
+
+    testWidgets('untouched, Monthly then Per day still selects the balance',
+        (tester) async {
+      await open(tester);
+      await fill(tester, amount: '1%', frequency: PenaltyFrequency.monthly);
+      await pickFrequency(
+        tester,
+        PenaltyFrequency.monthly,
+        PenaltyFrequency.daily,
+      );
+      await add(tester);
+
+      expect(saved!.basedOn, PenaltyBase.outstandingBalance);
+    });
+
     testWidgets('a flat amount hides the choice and saves no base',
         (tester) async {
       await open(tester);
@@ -160,6 +214,121 @@ void main() {
       expect(saved!.basedOn, isNull);
       expect(saved!.toJson().containsKey('based_on'), isFalse);
     });
+  });
+
+  group('quotation and PDF penalty lines', () {
+    final penalties = [onceOfBill, dailyOfBalance, legacyDaily, flatOnce];
+
+    Loan loanWith({required int period, bool allowLate = false}) => Loan.create(
+          userId: 'u1',
+          companyId: 'co-1',
+          productId: 'pr-1',
+          amount: 10000,
+          additionalCharges: 0,
+          deductions: 0,
+          period: period,
+          requirements: const [],
+          isForceCollect: false,
+          status: LoanStatus.approved,
+          dueAt: null,
+          reason: 'quotation',
+          interestRate: 5,
+          term: '1m',
+          amortization: 500,
+          penalties: penalties,
+          allowLatePayments: allowLate,
+        );
+
+    test('PDF: each base in words; a saved penalty shows its loan type', () {
+      for (final (period, legacyBase) in [
+        (3, 'of the missed bill'),
+        (0, 'of the balance'),
+      ]) {
+        final lines = pdfPenaltyLines(loanWith(period: period));
+        expect(
+          lines.map((l) => l.title),
+          [
+            'Penalty if paid late: Late fee',
+            'Penalty if paid late: Daily surcharge',
+            'Penalty if paid late: Old surcharge',
+            'Penalty if paid late: Fee',
+          ],
+        );
+        expect(
+          lines.map((l) => l.detail),
+          [
+            '10% of the missed bill, once',
+            '0.1% of the balance, per day',
+            '1% $legacyBase, per day',
+            '${100.0.toCurrency()}, once',
+          ],
+          reason: 'period $period',
+        );
+      }
+      expect(
+        pdfPenaltyLines(loanWith(period: 3, allowLate: true))
+            .map((l) => '${l.title}: ${l.detail}'),
+        ['Late payments: Allowed, no penalties'],
+      );
+    });
+
+    late _MockProductBloc products;
+    late _MockLoansBloc loans;
+
+    setUp(() {
+      products = _MockProductBloc();
+      loans = _MockLoansBloc();
+      when(() => products.state).thenReturn(const ProductState());
+      when(() => products.charges).thenReturn([]);
+      when(() => products.deductions).thenReturn([]);
+      when(() => products.penalties).thenReturn([]);
+      when(() => products.selectedProduct).thenReturn(null);
+      when(() => loans.state).thenReturn(const LoansState());
+      when(() => loans.totalLoanPayment).thenReturn(0);
+      when(() => loans.totalLoanAmountReceivable).thenReturn(0);
+      when(() => loans.monthlyAmortization).thenReturn(0);
+    });
+
+    Future<void> pumpQuotation(WidgetTester tester, Loan loan) {
+      return tester.pumpApp(
+        MultiBlocProvider(
+          providers: [
+            BlocProvider<ProductBloc>.value(value: products),
+            BlocProvider<LoansBloc>.value(value: loans),
+          ],
+          child: Scaffold(
+            body: SingleChildScrollView(
+              child: QuotationWidget(
+                loanAmount: loan.amount,
+                period: loan.period,
+                interestRate: loan.interestRate,
+                penalties: loan.penalties,
+                allowLatePayments: loan.allowLatePayments,
+                isOpenTerm: loan.period == 0,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    for (final (period, legacyBase) in [
+      (3, 'of the missed bill'),
+      (0, 'of the balance'),
+    ]) {
+      testWidgets('quotation on a loan with period $period', (tester) async {
+        await pumpQuotation(tester, loanWith(period: period));
+
+        expect(find.text('10% of the missed bill, once'), findsOneWidget);
+        expect(find.text('0.1% of the balance, per day'), findsOneWidget);
+        expect(find.text('1% $legacyBase, per day'), findsOneWidget);
+        expect(find.text('${100.0.toCurrency()}, once'), findsOneWidget);
+        expect(
+          find.text('Penalty if paid late: Old surcharge'),
+          findsOneWidget,
+        );
+      });
+    }
   });
 
   group('labels say the base in words', () {
@@ -268,7 +437,8 @@ void main() {
       verify(() => bloc.resetPenalties()).called(1);
     });
 
-    testWidgets('an open-term product (max period 0): only the default base '
+    testWidgets(
+        'an open-term product (max period 0): only the default base '
         'changes', (tester) async {
       await pumpSection(tester, maxPeriod: 0);
 
@@ -286,7 +456,8 @@ void main() {
       );
     });
 
-    test('company -> product -> loan keeps "Based on"; old ones stay without '
+    test(
+        'company -> product -> loan keeps "Based on"; old ones stay without '
         'it', () {
       final companyJson = Penalty.listToJson(defaults);
       expect(

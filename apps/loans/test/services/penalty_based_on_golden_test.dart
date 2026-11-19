@@ -27,10 +27,13 @@ import 'package:loooans_helpers/data_helpers.dart';
 //   - A penalty saved without `based_on` (null) keeps today's behaviour:
 //     the missed installment on fixed-term, the outstanding balance on
 //     open-term.
-//   - Fixed-term balance base (this PR's definition, flagged for the owner):
-//     the principal still owed on the stretch's first missed bill's due date,
-//     before that bill's principal is paid = that row's balance after its
-//     principal + its principal. It stays the same for the whole stretch.
+//   - Fixed-term balance base (review of #148, flagged for the owner): the
+//     balance in force each day of the stretch, as on open-term loans = the
+//     principal still owed that day = the balance before the earliest bill
+//     of the stretch not yet paid by then (its balance after its principal
+//     + its principal). A bill paid inside the stretch lowers it from its
+//     payment day; the bills computed after it start from its stored
+//     balance, so the result depends on what #140 stores.
 //
 // Open-term loan (owner's): 40,000 at 5% a month, salary days 15 and 30
 // (installment = 15 days), last bill paid Aug 30. "Take each bill as
@@ -67,6 +70,11 @@ import 'package:loooans_helpers/data_helpers.dart';
 //   O8 the engine's own bills (Sep 15 = 40,000 x 5% x 16/30 = 1,066.67, Sep
 //      30 = 1,000): "1% daily of the missed bill" -> 10.6667 x 17 = 181.33
 //      + 10 x 2 = 20 -> 201.33.
+//   O9 principal paid inside the stretch (engine bills, 0.1% daily of the
+//      balance): the Sep 15 bill paid Oct 2 with 10,000 principal -> 680
+//      (17 days on 40,000); stored balance 30,000, so the engine's Sep 30
+//      bill is 30,000 x 5% x 15/30 = 750; paid Oct 10 -> 8 more stretch
+//      days (Oct 2 to Oct 9) x 30 = 240 (320 had the balance stayed 40,000).
 //
 // Fixed-term loan: 10,000 at 5% a month, '1m', amortization 2,500; rows as
 // the fixed-term engine lays them out (balance after the row's principal):
@@ -76,17 +84,31 @@ import 'package:loooans_helpers/data_helpers.dart';
 //   R2 and R3 paid Oct 5: R2 Aug 31 -> Oct 5 = 35 days late, R3 5 days.
 //   F1 based on the missed bill, daily 1% (25 a day): 875 + 125 = 1,000;
 //      10% once: 250 + 250 = 500.
-//   F2 based on the balance: the base is R2's 5,900 + 2,100 = 8,000 (the
-//      principal owed on Aug 31 before R2's principal is paid); the stretch
-//      Aug 31 -> Oct 5 = 35 days:
+//   F2 based on the balance, both unpaid until Oct 5: every day of the
+//      stretch Aug 31 -> Oct 5 (35 days) R2 is the earliest unpaid bill, so
+//      the balance is R2's 5,900 + 2,100 = 8,000:
 //        daily 0.1%      8 x 35                    =   280 (R2; R3 0)
 //        10% once        800                       =   800
 //        monthly 10%     800 x ceil(35/30) = 2     = 1,600
 //      Previews on Oct 5: R2 280, R3 0.
-//   F3 partial catch-up, 0.1% daily of the balance: R2 paid Oct 5 alone ->
-//      280 (R3 unpaid and late, same stretch); R3 paid Oct 10 -> the
-//      stretch Aug 31 -> Oct 10 = 40 days, 35 charged -> 5 x 8 = 40
-//      (280 + 40 = 320 = 40 x 8; the base stays 8,000).
+//   F3 partial catch-up, 0.1% daily of the balance: R2 paid Oct 5 alone
+//      with its scheduled principal -> 280 (R3 unpaid and late, same
+//      stretch); R3 (beginning balance 3,695 + 2,205 = 5,900) paid Oct 10 ->
+//      the stretch Aug 31 -> Oct 10 = 40 days, 35 charged; Oct 5 to Oct 9
+//      R2 is paid, so 5 x 5.90 = 29.50 (the first version kept 8,000: 40).
+//   F7 the review's probe, R2 paid Oct 5 with 5,000 principal (a teller
+//      paying 2,900 extra), the Sep 30 bill recomputed by the fixed-term
+//      engine from R2 as stored (amortization 2,500, 5% a month):
+//        correct balance 8,000 - 5,000 = 3,000 -> R3 interest 150, principal
+//          2,350, beginning 3,000 -> 5 x 3 = 15;
+//        as payment_bloc stores it today (#140): 5,900 - 2,900 extra - 2,100
+//          again = 900 -> R3 interest 45, amortization 945, principal 900,
+//          beginning 900 -> 5 x 0.90 = 4.50.
+//   F8 R2 paid Oct 5 with its scheduled 2,100 (any teller or bulk payment):
+//        correct balance 5,900 -> R3 beginning 5,900 -> 29.50 (= F3);
+//        as stored today (#140): 5,900 - 2,100 = 3,800 -> R3 interest 190,
+//          principal 2,310, beginning 3,800 -> 5 x 3.80 = 19.
+//      R2's own charge is 280 in F7 and F8 (R2 unpaid until Oct 5).
 //   F4 mixed, 1% daily of the bill + 0.1% daily of the balance, both paid
 //      Oct 5: R2 875 + 280 = 1,155, R3 125 -> 1,280.
 //   F5 flat amounts: 100 once -> 100 + 100 = 200; 50 a day -> 50 x 35 +
@@ -94,10 +116,11 @@ import 'package:loooans_helpers/data_helpers.dart';
 //   F6 saved without `based_on`: 1% daily -> 875 + 125 = 1,000 (= F1);
 //      G12 P1 (amortization 2,500, 5 days late, 100 once + 1% daily) -> 225.
 //
-// Mutation check: count a penalty based on the missed bill once for the loan
-// (the stretch, still on the bill's amount) instead of per bill -> O2, O4,
-// O5, O8, F1, F4, F5, F6 fail (12 here, 14 with the widget tests). O3 does
-// not: its second bill is not late, so once per stretch and per bill agree.
+// Mutation checks: count a penalty based on the missed bill once for the
+// loan (the stretch, still on the bill's amount) instead of per bill -> O2,
+// O4, O5, O8, F1, F4, F5, F6 fail. O3 does not: its second bill is not
+// late, so once per stretch and per bill agree. Keep the fixed-term base at
+// the stretch's first bill for the whole stretch -> F3, F7, F8 fail.
 
 const bill = PenaltyBase.missedBill;
 const balance = PenaltyBase.outstandingBalance;
@@ -203,6 +226,26 @@ LoanSchedule sep30() => rowOf(
       balance: 40000,
       openTerm: true,
     );
+
+/// The Aug 30 bill as G14 stores it (nothing recorded), for the engine.
+LoanSchedule engineAug30() => LoanSchedule()
+  ..id = 'sched-1'
+  ..loanId = 'loan-1'
+  ..companyId = 'co-1'
+  ..createdAt = DateTime(2026, 8, 30)
+  ..updatedAt = DateTime(2026, 8, 30)
+  ..dueAt = DateTime(2026, 8, 30)
+  ..paidAt = DateTime(2026, 8, 30)
+  ..status = LoanStatus.paid_on_time
+  ..isOpenTerm = true
+  ..outstandingBalance = 40000
+  ..principalPayment = 0
+  ..interestPayment = 0
+  ..interestCharge = 0
+  ..amortization = 0
+  ..extraPayment = 0
+  ..advanceInterestPayments = 0
+  ..interestDayMultiplier = 1;
 
 // Fixed-term fixture.
 LoanSchedule r1() => rowOf(
@@ -386,7 +429,8 @@ void main() {
       expect(due.nextDueAmount, closeTo(2190, 0.005));
     });
 
-    test('O3 the 15th paid on the 30th with the 30th: 1,000 + 100 + 1,000 '
+    test(
+        'O3 the 15th paid on the 30th with the 30th: 1,000 + 100 + 1,000 '
         '= 2,100', () {
       final loan = loanOf(
         openTerm: true,
@@ -419,8 +463,7 @@ void main() {
       );
     });
 
-    test('O4 partial catch-up, 1% daily of the missed bill: 170, then 100',
-        () {
+    test('O4 partial catch-up, 1% daily of the missed bill: 170, then 100', () {
       final loan = loanOf(
         openTerm: true,
         penalties: [percent(1, daily, basedOn: bill)],
@@ -444,8 +487,7 @@ void main() {
       expect(second.daysLate, 10);
     });
 
-    test('O5 mixed: 850 + 20 together; 850 then 420 as a partial catch-up',
-        () {
+    test('O5 mixed: 850 + 20 together; 850 then 420 as a partial catch-up', () {
       final loan = loanOf(
         openTerm: true,
         penalties: [
@@ -491,7 +533,8 @@ void main() {
       );
     });
 
-    test('O6 flat amounts keep the open-term counting: 100 once, 850 for 50 '
+    test(
+        'O6 flat amounts keep the open-term counting: 100 once, 850 for 50 '
         'a day', () {
       for (final (penalty, expected) in [
         (flat(100, once), [100.0, 0.0]),
@@ -560,24 +603,7 @@ void main() {
     });
 
     test("O8 the engine's own bills: 181.33 + 20 = 201.33", () {
-      final stored = LoanSchedule()
-        ..id = 'sched-1'
-        ..loanId = 'loan-1'
-        ..companyId = 'co-1'
-        ..createdAt = DateTime(2026, 8, 30)
-        ..updatedAt = DateTime(2026, 8, 30)
-        ..dueAt = DateTime(2026, 8, 30)
-        ..paidAt = DateTime(2026, 8, 30)
-        ..status = LoanStatus.paid_on_time
-        ..isOpenTerm = true
-        ..outstandingBalance = 40000
-        ..principalPayment = 0
-        ..interestPayment = 0
-        ..interestCharge = 0
-        ..amortization = 0
-        ..extraPayment = 0
-        ..advanceInterestPayments = 0
-        ..interestDayMultiplier = 1;
+      final stored = engineAug30();
       final rows = LoanCalculationService.calculateOpenTermSchedules(
         amount: 40000,
         date: DateTime(2026, 7, 30),
@@ -608,6 +634,58 @@ void main() {
           collectedAt: oct2,
         ),
         amounts([181.33, 20]),
+      );
+    });
+
+    test('O9 principal paid inside the stretch: 680, then 240 on 30,000', () {
+      final loan = loanOf(
+        openTerm: true,
+        penalties: [percent(0.1, daily, basedOn: balance)],
+      );
+      final aug30 = engineAug30();
+      List<LoanSchedule> engineBills(List<LoanSchedule> stored, DateTime now) =>
+          LoanCalculationService.calculateOpenTermSchedules(
+            amount: 40000,
+            date: DateTime(2026, 7, 30),
+            interestRate: 5,
+            term: '15,30',
+            companyId: 'co-1',
+            paidSchedules: stored,
+            now: now,
+          ).schedules;
+
+      final first = engineBills([aug30], oct2);
+      final sep15 = first.first;
+      expect(
+        payOne(
+          loan: loan,
+          row: sep15,
+          context: [aug30, ...first],
+          collectedAt: oct2,
+        ),
+        closeTo(680, 0.005),
+      );
+      // A teller's payment of the interest and 10,000 principal.
+      sep15
+        ..id = 'sep15'
+        ..paidAt = oct2
+        ..interestPayment = sep15.amortization
+        ..principalPayment = 10000
+        ..outstandingBalance = 30000;
+
+      final later = engineBills([aug30, sep15], oct10);
+      final sep30 = later.first;
+      expect(DateUtils.dateOnly(sep30.dueAt), DateTime(2026, 9, 30));
+      expect(sep30.outstandingBalance, 30000);
+      expect(sep30.amortization, closeTo(750, 0.005));
+      expect(
+        payOne(
+          loan: loan,
+          row: sep30,
+          context: [aug30, sep15, ...later],
+          collectedAt: oct10,
+        ),
+        closeTo(240, 0.005),
       );
     });
   });
@@ -669,7 +747,9 @@ void main() {
       });
     }
 
-    test('F3 partial catch-up of the balance: 280, then 40 (base 8,000)', () {
+    test(
+        'F3 partial catch-up of the balance: 280, then 29.50 (5,900 after '
+        'Oct 5)', () {
       final loan = loanOf(
         openTerm: false,
         penalties: [percent(0.1, daily, basedOn: balance)],
@@ -684,12 +764,98 @@ void main() {
       );
       expect(
         previews(loan: loan, rows: [third], context: context, asOf: oct10),
-        amounts([40]),
+        amounts([29.50]),
       );
       expect(
         payOne(loan: loan, row: third, context: context, collectedAt: oct10),
-        closeTo(40, 0.005),
+        closeTo(29.50, 0.005),
       );
+    });
+
+    group('F7-F8 principal paid inside the stretch (engine rows)', () {
+      final loan = loanOf(
+        openTerm: false,
+        penalties: [percent(0.1, daily, basedOn: balance)],
+      );
+
+      /// R2 paid on Oct 5 by a teller with [principal], as payment_bloc.dart
+      /// writes it; [as140] keeps today's second subtraction of the
+      /// scheduled principal (#140), otherwise the balance is the one owed.
+      LoanSchedule storedR2(double principal, {required bool as140}) {
+        final row = r2();
+        expect(
+          payOne(
+            loan: loan,
+            row: row,
+            context: [r1(), row, r3()],
+            collectedAt: oct5,
+          ),
+          closeTo(280, 0.005),
+        );
+        final extra = principal - row.principalPayment;
+        if (extra > 0) {
+          row
+            ..extraPayment = extra
+            ..outstandingBalance -= extra;
+        }
+        if (as140) {
+          row.outstandingBalance -= principal - row.extraPayment;
+        }
+        return row
+          ..principalPayment = principal
+          ..paidAt = oct5;
+      }
+
+      /// The Sep 30 bill as the fixed-term engine computes it after R1 and
+      /// [r2].
+      LoanSchedule nextBill(LoanSchedule r2) =>
+          LoanCalculationService.calculateFixedTerm(
+            amount: 10000,
+            monthsToPay: 5,
+            date: DateTime(2026, 7),
+            interestRate: 5,
+            term: '1m',
+            companyId: 'co-1',
+            paidSchedules: [r1(), r2],
+          ).schedules.first;
+
+      // (principal paid, stored as today?, R2's stored balance = R3's
+      // beginning balance, R3's charge on Oct 10)
+      for (final (principal, as140, balanceAfter, expected) in [
+        (5000.0, false, 3000.0, 15.0),
+        (5000.0, true, 900.0, 4.50),
+        (2100.0, false, 5900.0, 29.50),
+        (2100.0, true, 3800.0, 19.0),
+      ]) {
+        test(
+            'R2 paid Oct 5 with $principal principal'
+            '${as140 ? ', stored as today (#140)' : ''}: R3 -> $expected', () {
+          final second = storedR2(principal, as140: as140);
+          expect(second.outstandingBalance, closeTo(balanceAfter, 0.005));
+
+          final third = nextBill(second);
+          expect(DateUtils.dateOnly(third.dueAt), DateTime(2026, 9, 30));
+          expect(
+            third.outstandingBalance + third.principalPayment,
+            closeTo(balanceAfter, 0.005),
+          );
+
+          final context = [r1(), second, third];
+          expect(
+            previews(loan: loan, rows: [third], context: context, asOf: oct10),
+            amounts([expected]),
+          );
+          expect(
+            payOne(
+              loan: loan,
+              row: third,
+              context: context,
+              collectedAt: oct10,
+            ),
+            closeTo(expected, 0.005),
+          );
+        });
+      }
     });
 
     test('F4 mixed: R2 875 + 280 = 1,155, R3 125', () {

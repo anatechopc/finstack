@@ -339,9 +339,11 @@ final class _Stretch {
     final collectedOn = _localDay(collectedAt);
     final ownDue = _localDay(row.lateFrom);
     var start = ownDue;
-    var startRow = row;
     final unchargedDues = <DateTime>[];
-    final latePeriods = <(DateTime, DateTime, bool, LoanSchedule)>[];
+    final latePeriods = <(DateTime, DateTime, bool)>[];
+    // Every bill due before the collection day, with the day it was settled
+    // (null while unpaid), for the fixed-term balance below.
+    final bills = <(DateTime, DateTime?, LoanSchedule)>[(ownDue, null, row)];
 
     for (final other in loanRows) {
       if (!_isBill(other, like: row) || _sameRow(other, row)) {
@@ -355,28 +357,27 @@ final class _Stretch {
 
       final inThisPayment = paidNow.any((paid) => _sameRow(paid, other));
       final settledAt = inThisPayment ? collectedAt : _settledOn(other);
+      bills.add((dueOn, settledAt == null ? null : _localDay(settledAt), other));
       if (settledAt == null) {
         // Unpaid and late on the collection day: the same stretch.
         unchargedDues.add(dueOn);
         if (dueOn.isBefore(start)) {
           start = dueOn;
-          startRow = other;
         }
       } else if (_localDay(settledAt).isAfter(dueOn)) {
         // A submitted bill not yet confirmed has been charged nothing.
         final charged =
             inThisPayment || other.status != LoanStatus.payment_submitted;
-        latePeriods.add((dueOn, _localDay(settledAt), charged, other));
+        latePeriods.add((dueOn, _localDay(settledAt), charged));
       }
     }
 
     // Late periods that ran into the stretch belong to it.
     for (var grew = true; grew;) {
       grew = false;
-      for (final (dueOn, settledOn, _, other) in latePeriods) {
+      for (final (dueOn, settledOn, _) in latePeriods) {
         if (dueOn.isBefore(start) && settledOn.isAfter(start)) {
           start = dueOn;
-          startRow = other;
           grew = true;
         }
       }
@@ -384,7 +385,7 @@ final class _Stretch {
 
     // Only a bill that is not merely submitted has been charged.
     DateTime? chargedTo;
-    for (final (dueOn, settledOn, charged, _) in latePeriods) {
+    for (final (dueOn, settledOn, charged) in latePeriods) {
       if (!settledOn.isAfter(start)) {
         continue;
       }
@@ -398,16 +399,29 @@ final class _Stretch {
       }
     }
 
-    // Open-term: the balance in force each day (review of #146: a top-up
-    // mid-stretch raises the base from its day only, whichever bill is
-    // charged). Fixed-term: the principal still owed on the stretch's first
-    // due date, before that bill's principal is paid (its balance is the
-    // one after its principal), for the whole stretch.
-    final firstBill = startRow;
-    final balanceOn = row.isOpenTerm
-        ? _balanceOn(row: row, loan: loan)
-        : (DateTime _) =>
-            firstBill.outstandingBalance + firstBill.principalPayment;
+    // The balance in force each day. Open-term: the row's balance and the
+    // top-ups from their days (review of #146: a top-up mid-stretch raises
+    // the base from its day only, whichever bill is charged). Fixed-term
+    // (review of #148): the principal still owed that day, the balance
+    // before the earliest bill of the stretch not yet paid by then (its
+    // balance after its principal plus that principal). A bill paid inside
+    // the stretch lowers it from its payment day; the bills computed after
+    // it start from its stored balance, so this reads what #140 stores.
+    final double Function(DateTime day) balanceOn;
+    if (row.isOpenTerm) {
+      balanceOn = _balanceOn(row: row, loan: loan);
+    } else {
+      final stretchBills = [
+        for (final bill in bills)
+          if (!bill.$1.isBefore(start)) bill,
+      ];
+      balanceOn = (day) {
+        final (_, _, owed) = stretchBills
+            .where((bill) => bill.$2 == null || bill.$2!.isAfter(day))
+            .reduce((a, b) => b.$1.isBefore(a.$1) ? b : a);
+        return owed.outstandingBalance + owed.principalPayment;
+      };
+    }
 
     return _Stretch._(
       start: start,

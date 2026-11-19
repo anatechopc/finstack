@@ -355,3 +355,21 @@ extension PenaltyLabels on Penalty {
   String chipLabel({bool? isOpenTerm}) =>
       '$name · ${amountLabel(isOpenTerm: isOpenTerm)}';
 }
+
+/// The penalty lines of a quotation, on screen and in the PDF (spec 7.6):
+/// "Late payments: Allowed, no penalties" when late payments are allowed,
+/// otherwise one line per penalty naming its base.
+List<({String title, String detail})> penaltyQuotationLines({
+  required List<Penalty> penalties,
+  required bool allowLatePayments,
+  bool? isOpenTerm,
+}) =>
+    allowLatePayments
+        ? const [(title: 'Late payments', detail: 'Allowed, no penalties')]
+        : [
+            for (final penalty in penalties)
+              (
+                title: 'Penalty if paid late: ${penalty.name}',
+                detail: penalty.amountLabel(isOpenTerm: isOpenTerm),
+              ),
+          ];

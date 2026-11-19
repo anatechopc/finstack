@@ -182,31 +182,21 @@ class QuotationWidget extends StatelessWidget {
                 next.status == ProductStatus.selected;
           },
           builder: (context, state) {
-            final list = penalties ?? context.read<ProductBloc>().penalties;
             final selected = context.read<ProductBloc>().selectedProduct;
-            final allowsLate =
-                allowLatePayments ?? selected?.allowLatePayments ?? false;
-            // A max period of 0 is an open-term product.
-            final openTerm = isOpenTerm ??
-                (selected == null ? null : selected.maxPeriod <= 0);
+            final lines = penaltyQuotationLines(
+              penalties: penalties ?? context.read<ProductBloc>().penalties,
+              allowLatePayments:
+                  allowLatePayments ?? selected?.allowLatePayments ?? false,
+              // A max period of 0 is an open-term product.
+              isOpenTerm: isOpenTerm ??
+                  (selected == null ? null : selected.maxPeriod <= 0),
+            );
             return Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (allowsLate)
-                  _quotationItem(
-                    title: 'Late payments',
-                    detail: 'Allowed, no penalties',
-                  )
-                else
-                  ...list.map(
-                    (penalty) {
-                      return _quotationItem(
-                        title: 'Penalty if paid late: ${penalty.name}',
-                        detail: penalty.amountLabel(isOpenTerm: openTerm),
-                      );
-                    },
-                  ),
+                for (final line in lines)
+                  _quotationItem(title: line.title, detail: line.detail),
               ],
             );
           },

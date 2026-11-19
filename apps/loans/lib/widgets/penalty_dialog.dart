@@ -59,14 +59,16 @@ String? validatePenaltyAmount(String? value) {
 /// add-product wizard. Resolves to the new [Penalty], or null when dismissed.
 ///
 /// "Based on" (owner, 2026-11-19) shows only for a percentage. It starts on
-/// the missed bill; picking "Per day" selects the outstanding balance, which
-/// the lender can change.
+/// the missed bill; picking "Per day" selects the outstanding balance until
+/// the lender picks a base themselves (review of #148).
 Future<Penalty?> showPenaltyDialog(BuildContext context) {
   return showDialog<Penalty>(
     context: context,
     builder: (context) {
       final key = GlobalKey<FormBuilderState>(debugLabel: 'penalty_dialog');
       var isPercentage = false;
+      var baseChosen = false;
+      var presetting = false;
 
       return AlertDialog(
         title: const Text('Penalty'),
@@ -127,9 +129,11 @@ Future<Penalty?> showPenaltyDialog(BuildContext context) {
                         )
                         .toList(),
                     onChanged: (frequency) {
-                      if (frequency == PenaltyFrequency.daily) {
+                      if (frequency == PenaltyFrequency.daily && !baseChosen) {
+                        presetting = true;
                         key.currentState?.fields['based_on']
                             ?.didChange(PenaltyBase.outstandingBalance);
+                        presetting = false;
                       }
                     },
                   ),
@@ -147,6 +151,11 @@ Future<Penalty?> showPenaltyDialog(BuildContext context) {
                             const InputDecoration(labelText: 'Based on'),
                         orientation: OptionsOrientation.vertical,
                         activeColor: AppColors.black,
+                        onChanged: (_) {
+                          if (!presetting) {
+                            baseChosen = true;
+                          }
+                        },
                         options: PenaltyBase.values
                             .map(
                               (base) => FormBuilderFieldOption(
