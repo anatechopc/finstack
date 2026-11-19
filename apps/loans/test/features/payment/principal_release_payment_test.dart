@@ -136,6 +136,35 @@ void main() {
       ..interestCharge = 500
       ..amortization = 500;
     expect(billPaidWithPrincipal.isPrincipalRelease, isFalse);
+
+    // A 0% loan's bill paid with principal: nothing charged or due, like the
+    // release, but a balance left, or interest recorded (a teller must
+    // enter interest above 0) when it was paid off.
+    final zeroRateBill = storedRelease()
+      ..status = LoanStatus.paid_on_time
+      ..principalPayment = 1000
+      ..outstandingBalance = 9000
+      ..interestPayment = 1;
+    expect(zeroRateBill.isPrincipalRelease, isFalse);
+    final zeroRatePaidOff = zeroRateBill
+      ..principalPayment = 10000
+      ..outstandingBalance = 0;
+    expect(zeroRatePaidOff.isPrincipalRelease, isFalse);
+
+    // The release confirmed from a submission before #138, or paid by a
+    // teller (balance -10,000 and the interest they had to enter).
+    expect(
+      (storedRelease()..status = LoanStatus.paid_on_time).isPrincipalRelease,
+      isTrue,
+    );
+    expect(
+      (storedRelease()
+            ..status = LoanStatus.paid_on_time
+            ..outstandingBalance = -10000
+            ..interestPayment = 1)
+          .isPrincipalRelease,
+      isTrue,
+    );
   });
 
   test('client detail (PaymentBloc) refuses it and writes nothing', () async {

@@ -153,6 +153,19 @@ import 'package:loooans_helpers/data_helpers.dart';
 //        anchor gave Sep 8 (30 days, 633.33) then Oct 8. As a second stored
 //        row (after a paid Aug 1 row, paid Sep 8 for the Aug 31 bill) it
 //        shifts nothing either: next Sep 30, 22 days, 366.67 + 133.33.
+//
+// Fourth review of #146
+//   G14t the principal release approval stores for app-managed companies
+//        (balance 0) is not where billing continues: loan of Jul 2, seen Oct
+//        5 -> Aug 1, Aug 31, Sep 30 (missed) and Oct 30, 500 each; Pay now
+//        1,500, Pay in full 2,000. Whether the row is unconfirmed, was
+//        confirmed from a submission before #138 (principal 10,000, interest
+//        0) or was paid by a teller (balance -10,000). Before: 0.00 each.
+//   G14u the one-day rule also holds for salary days (run under TZ=UTC and
+//        TZ=Asia/Manila): '15,30', a Manila-written Aug 15 row (Aug 14 16:00
+//        UTC), seen Aug 20 -> next Aug 30 with interest from the row's day:
+//        UTC 16 days, 266.67 (was a 1-day 16.67 bill due Aug 15); Manila 15
+//        days, 250.
 //   G14q a top-up counts from its approval: 2,000 + 100 created Aug 6,
 //        approved Sep 5, the Aug 31 bill stored Aug 31 on 10,000 -> Sep 30 =
 //        12,100 x 5% + 2,100 x 5% x 25/30 (Aug 6-31, never billed) = 605 +
@@ -1421,5 +1434,97 @@ void main() {
         amountDue: 500,
       );
     });
+  });
+
+  group('G14t billing never continues from the principal release (#138)', () {
+    LoanSchedule release({
+      LoanStatus status = LoanStatus.approved,
+      double balance = 0,
+      double interestPaid = 0,
+    }) =>
+        stored(
+          id: 'planned',
+          dueAt: DateTime(2026, 7, 2, 9, 30),
+          balance: balance,
+          status: status,
+          interestPayment: interestPaid,
+        )..principalPayment = 10000;
+
+    for (final (name, row) in [
+      ('unconfirmed', release()),
+      ('confirmed before #138', release(status: LoanStatus.paid_on_time)),
+      (
+        'paid by a teller',
+        release(
+          status: LoanStatus.paid_on_time,
+          balance: -10000,
+          interestPaid: 1,
+        ),
+      ),
+    ]) {
+      test('$name: 500 per cycle', () {
+        expect(row.isPrincipalRelease, isTrue);
+        final now = DateTime(2026, 10, 5, 12);
+        final rows = bills(
+          amount: 10000,
+          start: DateTime(2026, 7, 2, 9, 30),
+          term: '1m',
+          now: now,
+          storedRows: [row],
+        );
+        expect(rows, hasLength(4));
+        expect(rows.map((r) => dayOf(r.dueAt)), [
+          DateTime(2026, 8),
+          DateTime(2026, 8, 31),
+          DateTime(2026, 9, 30),
+          DateTime(2026, 10, 30),
+        ]);
+        expect(
+          rows.map((r) => r.interestCharge),
+          everyElement(closeTo(500, 0.01)),
+        );
+
+        final loan = loanOf(term: '1m', createdAt: DateTime(2026, 7, 2, 9, 30));
+        final due = borrowerAmountsDue(
+          schedules: clientRows(
+            loan: loan,
+            amount: 10000,
+            now: now,
+            storedRows: [row],
+          ),
+          loan: loan,
+          asOf: now,
+        );
+        expect(due.nextDueAmount, closeTo(1500, 0.01));
+        expect(due.remainingTotal, closeTo(2000, 0.01));
+      });
+    }
+  });
+
+  test('G14u a Manila-written salary-day row: no 1-day bill (UTC and Manila)',
+      () {
+    final row = stored(
+      id: 'sched-1',
+      dueAt: DateTime.utc(2026, 8, 14, 16),
+      balance: 10000,
+    );
+    final next = bills(
+      amount: 10000,
+      start: DateTime.utc(2026, 7, 29, 16),
+      term: '15,30',
+      now: DateTime.utc(2026, 8, 20),
+      storedRows: [row],
+    );
+    final days =
+        DateTime(2026, 8, 30).difference(dayOf(row.dueAt.toLocal())).inDays;
+
+    expect(next, hasLength(1), reason: 'no 1-day bill due Aug 15');
+    expect(days, inInclusiveRange(15, 16));
+    expectBill(
+      next.single,
+      due: DateTime(2026, 8, 30),
+      days: days,
+      interest: 10000 * 0.05 * days / 30,
+    );
   });
 }

@@ -103,16 +103,21 @@ class LoanSchedule extends LoanScheduleEntity
 
   /// The open-term principal release: the in-memory row 0 ([isPlaceholder]),
   /// or that row as approval stores it for app-managed companies, where
-  /// `isPlaceholder` is not kept: open term, the whole principal as its
-  /// principal and nothing to collect (finstack#138). It is not a bill and
-  /// can never be paid.
+  /// `isPlaceholder` is not kept (finstack#138). Stored, it is open term with
+  /// the whole principal as its principal, nothing charged or due, and a
+  /// balance of 0 with no interest recorded (unconfirmed, or confirmed from a
+  /// submission before #138), or a negative balance (paid by a teller, who
+  /// had to enter interest). A bill always has a balance above 0 and, on a
+  /// 0% loan paid with principal, recorded interest. Not a bill; never paid.
   bool get isPrincipalRelease =>
       !isAdditionalLoanAmount &&
       (isPlaceholder ||
           (isOpenTerm &&
               principalPayment > 0 &&
               interestCharge == 0 &&
-              amortization == 0));
+              amortization == 0 &&
+              (outstandingBalance < 0 ||
+                  (outstandingBalance == 0 && interestPayment == 0))));
 
   /// The date lateness and overdue status count from: [originalDueAt] when
   /// the open-term engine moved an overdue row's [dueAt] to today, otherwise

@@ -238,7 +238,13 @@ class LoanCalculationService {
     List<AdditionalLoanAmount> additionalLoans = const [],
   }) {
     final monthlyInterestRate = interestRate / 100;
-    final last = paidSchedules.sortedBy((sched) => sched.dueAt).lastOrNull;
+    // The principal release approval stores for app-managed companies is
+    // not a bill: continuing from it (balance 0) would bill 0 (#138).
+    final last = paidSchedules
+        .where((sched) => !sched.isPrincipalRelease)
+        .sortedBy((sched) => sched.dueAt)
+        .lastOrNull;
+    final lastBill = last == null ? null : _localDay(last.lateFrom);
     final start = _localDay(date);
     final today = _localDay(now ?? DateTime.now());
 
@@ -262,8 +268,14 @@ class LoanCalculationService {
       term: term,
       start: start,
       after: cycleStart,
-      lastBill: last == null ? null : _localDay(last.lateFrom),
     )) {
+      // A stored bill dated a day before a scheduled date is that bill (a
+      // first bill the old engine dated on the creation day's UTC date, or a
+      // row written in another zone): no 1-day bill (review of #146). A row
+      // further away (an old clamp row) does not move the schedule.
+      if (lastBill != null && _days(lastBill, dueAt) <= 1) {
+        continue;
+      }
       var interestCharge = 0.0;
       var from = cycleStart;
       while (nextTopUp < topUps.length) {
@@ -330,18 +342,10 @@ class LoanCalculationService {
   /// one does not exist); `'15d'` steps 15 calendar days from [start] (the
   /// local creation day), anything else 30. Calendar days, so a
   /// daylight-saving change cannot move a date (campaign D11).
-  ///
-  /// [lastBill] is the last stored row's cycle date. Within one day of a
-  /// scheduled date it is that bill (a first bill the old engine dated on
-  /// the creation day's UTC date, or a row written in another zone), so the
-  /// schedule goes on with the next date instead of adding a 1-day bill. A
-  /// row further away (an old clamp row, dated the day it was paid) does
-  /// not move the schedule (review of #146).
   static Iterable<Jiffy> _openTermDueDates({
     required String term,
     required Jiffy start,
     required Jiffy after,
-    Jiffy? lastBill,
   }) sync* {
     if (term.contains(',')) {
       yield* _salaryDueDates(term: term, after: after);
@@ -353,14 +357,6 @@ class LoanCalculationService {
           DateTime(start.year, start.month, start.date + step * cycle),
         );
     var cycle = 1;
-    if (lastBill != null) {
-      while (_days(billOn(cycle), lastBill) > 1) {
-        cycle++;
-      }
-      if (_days(lastBill, billOn(cycle)) <= 1) {
-        cycle++; // the stored row is this bill
-      }
-    }
     while (!billOn(cycle).isAfter(after)) {
       cycle++;
     }
