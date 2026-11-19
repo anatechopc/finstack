@@ -24,7 +24,10 @@ import 'package:loooans_helpers/data_helpers.dart';
 //   G13d row due Sep 16 -> Aug 30, interest 533.33 (32 days) -> 250.00
 //        (15 days), amount due 500 -> 250; the Sep 15 bill (16 days,
 //        266.67) is now its own row, and paying both together still owes
-//        2,000 once (R3; per bill it would be 2,000 + 300 = 2,300)
+//        2,000 once (R3; per bill it would be 2,000 + 300 = 2,300). MOVED
+//        2026-11-19 with #148: a flat amount is charged per missed bill
+//        (owner), so both together owe 2,000 + the Sep 15 bill's flat 100
+//        once + 100 x ceil(1/15) = 2,200; the 1% a day stays once
 //   G13e the stored row is due_at Aug 31 without original_due_at; a row
 //        stored by #114's clamp (due_at Sep 8, original_due_at Aug 31)
 //        still reads back as 8 days, and one without original_due_at
@@ -250,7 +253,8 @@ void main() {
       expect(lateness.penalties.lines[2].amount, closeTo(200, 0.01));
       expect(lateness.penalties.total, closeTo(2000, 0.01));
 
-      // Both missed bills paid together still owe 2,000 once (R3).
+      // Both paid together: the 1% a day once (R3), the flat 100 once and
+      // 100 per installment on each bill: 2,000 + 100 + 100 = 2,200.
       final together = resolveLatenessTogether(
         schedules: rows.sublist(0, 2),
         loan: loan,
@@ -260,7 +264,7 @@ void main() {
       expect(together.map((r) => r.daysLate), [17, 1]);
       expect(
         together.fold<double>(0, (sum, r) => sum + r.penalties.total),
-        closeTo(2000, 0.01),
+        closeTo(2200, 0.01),
       );
     });
   });

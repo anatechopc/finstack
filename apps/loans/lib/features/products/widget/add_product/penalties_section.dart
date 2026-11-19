@@ -79,6 +79,8 @@ class PenaltiesSection extends StatelessWidget {
                     return _PenaltyChip(
                       penalty: penalty,
                       inherited: inherited,
+                      // A max period of 0 is an open-term product.
+                      isOpenTerm: bloc.tempProductView.maxPeriod <= 0,
                     );
                   }).toList(),
                 ),
@@ -135,10 +137,12 @@ class _PenaltyChip extends StatelessWidget {
   const _PenaltyChip({
     required this.penalty,
     required this.inherited,
+    required this.isOpenTerm,
   });
 
   final Penalty penalty;
   final bool inherited;
+  final bool isOpenTerm;
 
   @override
   Widget build(BuildContext context) {
@@ -161,9 +165,10 @@ class _PenaltyChip extends StatelessWidget {
         children: [
           Flexible(
             child: Text(
-              '${inherited ? 'Default · ' : ''}${penalty.chipLabel}',
+              '${inherited ? 'Default · ' : ''}'
+              '${penalty.chipLabel(isOpenTerm: isOpenTerm)}',
               overflow: TextOverflow.ellipsis,
-              softWrap: false,
+              maxLines: 2,
             ),
           ),
           const Gap(4),

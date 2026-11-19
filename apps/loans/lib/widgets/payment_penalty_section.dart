@@ -118,8 +118,10 @@ class _PaymentPenaltySectionState extends State<PaymentPenaltySection> {
               for (final r in results)
                 for (final line in r.lateness.penalties.lines)
                   _row(
-                    '${line.penalty.name} · ${line.penalty.amountLabel} '
-                    '× ${line.periods}',
+                    '${line.penalty.name} · '
+                    '${line.penalty.amountLabel(
+                      isOpenTerm: r.schedule.isOpenTerm,
+                    )} × ${line.periods}',
                     line.amount.toCurrency(),
                     sub: true,
                   ),

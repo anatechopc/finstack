@@ -54,9 +54,12 @@ import '../helpers/helpers.dart';
 // 100 + 4 x 40 + 11 x 50 = 810) -> 2,966.67.
 // A day later: a top-up added yesterday and approved today deducts today's
 // 1,300 (yesterday it showed 1,260 = 1,000 + 100 + 4 x 40).
-// Two missed bills (loan created D-35): D-20 and D-5, 1,000 each; the
-// stretch from D-20: 100 + 20 x 40 = 900 once, on D-20 -> 2,900; 7,100
-// released.
+// Two missed bills (loan created D-35): D-20 and D-5, 1,000 each. The
+// daily 0.1% has no saved basis, so on an open-term loan it is on the
+// balance, once for the stretch from D-20: 20 x 40 = 800; the flat late
+// fee is charged per missed bill (owner, #148): 100 + 100. Rows: D-20
+// 100 + 800 = 900, D-5 100 -> 2,000 + 1,000 = 3,000; 7,000 released.
+// (Before #148 the flat fee was once for the stretch: 2,900 and 7,100.)
 
 const lateFee100 = Penalty(id: 'late-fee', name: 'Late fee', amount: 100);
 const daily01pct = Penalty(
@@ -723,20 +726,20 @@ void main() {
         store = _Store(loanCreatedDaysAgo: 35, topUp: pendingTopUp())
           ..failRowWrite = 2;
 
-        final failed = await approve(expected: 2900);
+        final failed = await approve(expected: 3000);
         expect(failed.status, AdditionalLoanStatus.error);
         expect(store.payments.keys, ['topup-1-1']);
         expect(store.rows.keys, ['topup-1-1']);
         expect(store.topUp().status, LoanStatus.pending);
         expect(store.topUp().deductedPaymentIds, ['topup-1-1', 'topup-1-2']);
 
-        final state = await approve(expected: 2900);
+        final state = await approve(expected: 3000);
         expect(
           state.status,
           AdditionalLoanStatus.success,
           reason: state.message,
         );
-        expect(state.message, contains(7100.toCurrency()));
+        expect(state.message, contains(7000.toCurrency()));
         expect(store.payments.keys, ['topup-1-1', 'topup-1-2']);
         expect(store.rows.keys, ['topup-1-1', 'topup-1-2']);
         final rows = store.rows.values.toList();
@@ -744,11 +747,14 @@ void main() {
           rows.map((r) => DateUtils.dateOnly(r.dueAt.toLocal())),
           [daysFromToday(-20), daysFromToday(-5)],
         );
-        expect(rows.map((r) => r.penalty), [closeTo(900, 0.001), 0]);
+        expect(
+          rows.map((r) => r.penalty),
+          [closeTo(900, 0.001), closeTo(100, 0.001)],
+        );
         expect(rows.map((r) => r.daysLate), [20, 5]);
         final topUp = store.topUp();
         expect(topUp.status, LoanStatus.approved);
-        expect(topUp.overdueDeduction, 2900);
+        expect(topUp.overdueDeduction, 3000);
         expect(topUp.deductedPaymentIds, ['topup-1-1', 'topup-1-2']);
         expect(
           store.payments.values.map((p) => p.submissionId),
@@ -904,7 +910,7 @@ void main() {
       store = _Store(loanCreatedDaysAgo: 35, topUp: pendingTopUp())
         ..failRowWrite = 2;
       expect(
-        (await approveOn(store, expected: 2900)).status,
+        (await approveOn(store, expected: 3000)).status,
         AdditionalLoanStatus.error,
       );
       expect(store.rows.keys, ['topup-1-1']);
@@ -916,13 +922,13 @@ void main() {
           ..paymentId = 'teller-pay',
       );
 
-      final refused = await approveOn(store, expected: 2900);
+      final refused = await approveOn(store, expected: 3000);
       expect(refused.status, AdditionalLoanStatus.error);
       expect(refused.message, contains('an admin needs to check'));
       expect(store.rows.keys, ['topup-1-1']);
       expect(store.payments.keys, ['topup-1-1']);
       expect(store.topUp().status, LoanStatus.pending);
-      expect(store.topUp().overdueDeduction, 2900);
+      expect(store.topUp().overdueDeduction, 3000);
     });
   });
 
