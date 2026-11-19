@@ -114,18 +114,8 @@ PenaltyResult previewPenalty({
   final collectedAt = submittedAt ?? asOf ?? DateTime.now();
 
   if (schedule.isOpenTerm) {
-    final lateFrom = _localDay(schedule.lateFrom);
-    final earlierUnpaidBill = loanRows.any(
-      (other) =>
-          _isOpenTermBill(other) &&
-          !_sameRow(other, schedule) &&
-          _unpaidStatuses.contains(other.status) &&
-          _settledOn(other) == null &&
-          _localDay(other.lateFrom).isBefore(lateFrom),
-    );
-    if (earlierUnpaidBill ||
-        calculateDaysLate(dueAt: schedule.lateFrom, collectedAt: collectedAt) <=
-            0) {
+    if (calculateDaysLate(dueAt: schedule.lateFrom, collectedAt: collectedAt) <=
+        0) {
       return PenaltyResult.none;
     }
 
@@ -134,6 +124,7 @@ PenaltyResult previewPenalty({
       loan: loan,
       collectedAt: collectedAt,
       loanRows: loanRows,
+      onEarliestUnchargedOnly: true,
     );
   }
 
@@ -272,18 +263,24 @@ LatenessResult _resolveLateness({
 /// collection dates (waived counts as charged), so no day is charged twice.
 ///
 /// [row] is late at [collectedAt]. [paidNow] are other rows settled in the
-/// same payment, already charged. The base is [row]'s outstanding balance,
-/// as before R3.
+/// same payment, already charged. A submitted bill not yet confirmed ends
+/// its lateness at its transfer but has not been charged anything (review
+/// of #146: two bills in one submission still owe the stretch once). With
+/// [onEarliestUnchargedOnly] (previews) the stretch shows on its earliest
+/// bill not yet charged and 0 on the others.
 PenaltyResult _openTermStretchPenalty({
   required LoanSchedule row,
   required Loan loan,
   required DateTime collectedAt,
   required Iterable<LoanSchedule> loanRows,
   Iterable<LoanSchedule> paidNow = const [],
+  bool onEarliestUnchargedOnly = false,
 }) {
   final collectedOn = _localDay(collectedAt);
-  var start = _localDay(row.lateFrom);
-  final latePeriods = <(DateTime, DateTime)>[];
+  final ownDue = _localDay(row.lateFrom);
+  var start = ownDue;
+  final unchargedDues = <DateTime>[];
+  final latePeriods = <(DateTime, DateTime, bool)>[];
 
   for (final other in loanRows) {
     if (!_isOpenTermBill(other) || _sameRow(other, row)) {
@@ -295,23 +292,26 @@ PenaltyResult _openTermStretchPenalty({
       continue;
     }
 
-    final settledAt = paidNow.any((paid) => _sameRow(paid, other))
-        ? collectedAt
-        : _settledOn(other);
+    final inThisPayment = paidNow.any((paid) => _sameRow(paid, other));
+    final settledAt = inThisPayment ? collectedAt : _settledOn(other);
     if (settledAt == null) {
       // Unpaid and late on the collection day: the same stretch.
+      unchargedDues.add(dueOn);
       if (dueOn.isBefore(start)) {
         start = dueOn;
       }
     } else if (_localDay(settledAt).isAfter(dueOn)) {
-      latePeriods.add((dueOn, _localDay(settledAt)));
+      // A submitted bill not yet confirmed has been charged nothing.
+      final charged =
+          inThisPayment || other.status != LoanStatus.payment_submitted;
+      latePeriods.add((dueOn, _localDay(settledAt), charged));
     }
   }
 
   // Late periods that ran into the stretch belong to it.
   for (var grew = true; grew;) {
     grew = false;
-    for (final (dueOn, settledOn) in latePeriods) {
+    for (final (dueOn, settledOn, _) in latePeriods) {
       if (dueOn.isBefore(start) && settledOn.isAfter(start)) {
         start = dueOn;
         grew = true;
@@ -319,15 +319,25 @@ PenaltyResult _openTermStretchPenalty({
     }
   }
 
+  // Only a bill that is not merely submitted has been charged.
   DateTime? chargedTo;
-  for (final (_, settledOn) in latePeriods) {
+  for (final (dueOn, settledOn, charged) in latePeriods) {
     if (!settledOn.isAfter(start)) {
+      continue;
+    }
+    if (!charged) {
+      unchargedDues.add(dueOn);
       continue;
     }
     final end = settledOn.isAfter(collectedOn) ? collectedOn : settledOn;
     if (chargedTo == null || end.isAfter(chargedTo)) {
       chargedTo = end;
     }
+  }
+
+  if (onEarliestUnchargedOnly &&
+      unchargedDues.any((dueOn) => dueOn.isBefore(ownDue))) {
+    return PenaltyResult.none;
   }
 
   final daysNow = collectedOn.difference(start).inDays;
@@ -411,13 +421,15 @@ bool _isOpenTermBill(LoanSchedule schedule) =>
 bool _sameRow(LoanSchedule a, LoanSchedule b) =>
     identical(a, b) || (a.id != NO_ID && a.id == b.id);
 
-/// When an open-term bill stopped being owed, or null while it is unpaid. A
+const _paidStatuses = {LoanStatus.paid_on_time, LoanStatus.paid_late};
+
+/// When an open-term bill stopped being late, or null while it is unpaid. A
 /// borrower submission records its transfer time as `collectedAt`, so a
-/// submitted bill is settled from then, whichever bill is confirmed first.
+/// submitted bill stops being late then, whichever bill is confirmed first;
+/// it counts as charged only once it is no longer payment_submitted.
 DateTime? _settledOn(LoanSchedule schedule) =>
     schedule.collectedAt ??
-    (schedule.status == LoanStatus.paid_on_time ||
-            schedule.status == LoanStatus.paid_late
+    (_paidStatuses.contains(schedule.status)
         ? (schedule.paidAt ?? schedule.dueAt)
         : null);
 

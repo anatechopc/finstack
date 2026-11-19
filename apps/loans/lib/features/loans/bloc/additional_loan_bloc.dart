@@ -148,7 +148,13 @@ class AdditionalLoanBloc
       if (additionalLoanAmount == null) {
         throw Exception('Additional loan amount not found');
       }
-      additionalLoanAmount.status = event.status;
+      additionalLoanAmount
+        ..status = event.status
+        // The engine needs to know when the money was released (review of
+        // finstack#146): a bill stored before it does not hold the top-up.
+        ..approvedAt = event.status == LoanStatus.approved
+            ? DateTime.timestamp()
+            : null;
       await loanRepository.update(data: loan);
       emit(const AdditionalLoanState.loading());
       emit(

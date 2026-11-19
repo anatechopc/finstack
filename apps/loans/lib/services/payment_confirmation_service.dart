@@ -151,6 +151,13 @@ class PaymentConfirmationService {
     payment.markConfirmed(confirmedById: confirmedById);
     await paymentRepository.update(data: payment);
 
+    // The borrower paid the amount shown. Recording it lets a row from the
+    // old clamp (more interest charged than shown) carry the rest to the
+    // next bill (R4; review of #146).
+    if (schedule.isOpenTerm && schedule.interestPayment <= 0) {
+      schedule.interestPayment = schedule.amortization;
+    }
+
     schedule
       ..paidAt = DateTime.timestamp()
       ..paymentId = payment.id

@@ -102,12 +102,16 @@ import 'package:loooans_helpers/data_helpers.dart';
 //        (was 350 on the Aug 31 bill, 420 when the Sep 30 bill went first).
 //   G14k only an active loan bills: an approved loan created May 1 seen Nov
 //        19 has 7 bills (May 31 ... Oct 28 missed, Nov 27 current); the same
-//        loan pending, declined, completed (settled) or bad debt has none.
+//        loan declined, completed (settled) or bad debt has none, and a
+//        pending application shows only its projected first bill (May 31,
+//        500), owed by nobody.
 //   G14l a row stored by the old clamp (or an app build not yet updated):
 //        due_at Nov 5, interest Aug 1 -> Nov 5 = 96 days = 1,600 charged,
-//        500 due, 500 paid -> 1,100 never billed; the next bill (Nov 29, 24
-//        days, 400) owes 400 + 1,100 = 1,500, with or without
-//        original_due_at.
+//        500 due, 500 paid -> 1,100 never billed; after the paid Aug 1 row
+//        the next bill (Nov 29, 24 days, 400) owes 400 + 1,100 = 1,500,
+//        with or without original_due_at. With no earlier stored row the
+//        schedule continues from the clamp row's own date (second review):
+//        Dec 5, 30 days, 500 + 1,100 = 1,600.
 //   G14m local calendar days in every zone: a loan created at Jul 2 00:30
 //        Manila (Jul 1 16:30 UTC) with its first bill stored by a Manila
 //        device (Aug 1 00:00 Manila = Jul 31 16:00 UTC): on a UTC device and
@@ -122,6 +126,25 @@ import 'package:loooans_helpers/data_helpers.dart';
 //        Nov 19 2026 (13,471 days) -> 899 bills, the last due Dec 3 2026
 //        (current), the one before Nov 18 (was quadratic: 9.4 s, and a
 //        1,000-row cap could drop the current bill).
+//
+// Second review of #146
+//   G14p the schedule continues from the stored bills' cycle dates (run under
+//        TZ=UTC and TZ=Asia/Manila): (1) created Jul 2 00:30 Manila, first
+//        bill stored by the old engine on Jul 31 (it read the creation day
+//        in UTC) -> next bill 30 days after that row's day, 500.00 (was a
+//        16.67 bill due Aug 1 in Manila); (2) created Jul 2 10:00 Manila, a
+//        Manila-written Aug 1 row read on a UTC device -> 30 days, 500.00
+//        (was a 1-day bill due Aug 1 UTC).
+//   G14q a top-up counts from its approval: 2,000 + 100 created Aug 6,
+//        approved Sep 5, the Aug 31 bill stored Aug 31 on 10,000 -> Sep 30 =
+//        12,100 x 5% + 2,100 x 5% x 25/30 (Aug 6-31, never billed) = 605 +
+//        87.50 = 692.50; Oct 30 605; Nov 29 605 (was 500 each). A top-up
+//        approved before approval times were recorded keeps the old rule
+//        (created before the row -> in it): 500, 500, 500.
+//   G14r two bills in ONE submission (Aug 31 and Sep 30, sent Oct 5; 100
+//        once + 0.1% a day of 10,000): the stretch Aug 31 -> Oct 5 = 35 days
+//        -> 100 + 350 = 450, once, in preview and in either confirmation
+//        order (was 0: each unconfirmed bill counted as already charged).
 
 const daily01 = Penalty(
   id: 'daily',
@@ -980,8 +1003,16 @@ void main() {
       LoanStatus.completed,
       LoanStatus.bad_debt,
     ]) {
-      test('${status.name}: no bill, nothing owed', () {
-        expect(billsOf(status), isEmpty);
+      test('${status.name}: nothing owed', () {
+        final projected = billsOf(status);
+        if (status == LoanStatus.pending) {
+          // A pending application shows its projected first bill, read only.
+          expect(projected, hasLength(1));
+          expect(dayOf(projected.single.dueAt), DateTime(2026, 5, 31));
+          expect(projected.single.interestCharge, closeTo(500, 0.01));
+        } else {
+          expect(projected, isEmpty);
+        }
         final loan = loanOf(
           term: '1m',
           createdAt: DateTime(2026, 5),
@@ -1012,6 +1043,7 @@ void main() {
           term: '1m',
           now: DateTime(2026, 11, 20, 12),
           storedRows: [
+            stored(id: 'sched-0', dueAt: DateTime(2026, 8), balance: 10000),
             stored(
               id: 'sched-1',
               dueAt: DateTime(2026, 11, 5),
@@ -1035,6 +1067,36 @@ void main() {
         );
       });
     }
+
+    test(
+        'a lone clamp row without original_due_at continues from its own '
+        'date: Dec 5, 500 + 1,100 = 1,600', () {
+      final rows = bills(
+        amount: 10000,
+        start: DateTime(2026, 7, 2),
+        term: '1m',
+        now: DateTime(2026, 11, 20, 12),
+        storedRows: [
+          stored(
+            id: 'sched-1',
+            dueAt: DateTime(2026, 11, 5),
+            balance: 10000,
+            status: LoanStatus.paid_late,
+            interestCharge: 1600,
+            amortization: 500,
+            interestPayment: 500,
+          ),
+        ],
+      );
+
+      expectBill(
+        rows.single,
+        due: DateTime(2026, 12, 5),
+        days: 30,
+        interest: 500,
+        amountDue: 1600,
+      );
+    });
   });
 
   test('G14m the same bills on a UTC and a Manila device', () {
@@ -1127,5 +1189,159 @@ void main() {
       lessThan(const Duration(seconds: 5)),
       reason: 'bills are generated one after the other (was 9.4 s)',
     );
+  });
+
+  group('G14p the schedule continues from the stored bills (UTC and Manila)',
+      () {
+    void expectNextIn30Days(DateTime created, LoanSchedule storedFirst) {
+      final next = bills(
+        amount: 10000,
+        start: created,
+        term: '1m',
+        now: DateTime.utc(2026, 8, 20),
+        storedRows: [storedFirst],
+      );
+
+      expect(next, hasLength(1), reason: 'no 1-day bill');
+      expect(next.single.interestDayMultiplier * 30, closeTo(30, 1e-9));
+      expect(next.single.interestCharge, closeTo(500, 0.01));
+      expect(
+        dayOf(next.single.dueAt),
+        DateUtils.addDaysToDate(dayOf(storedFirst.dueAt.toLocal()), 30),
+      );
+    }
+
+    test('(1) a first bill the old engine stored on Jul 31', () {
+      expectNextIn30Days(
+        DateTime.utc(2026, 7, 1, 16, 30),
+        stored(id: 'sched-1', dueAt: DateTime.utc(2026, 7, 31), balance: 10000),
+      );
+    });
+
+    test('(2) a Manila-written Aug 1 bill of a loan created 10:00 Manila', () {
+      expectNextIn30Days(
+        DateTime.utc(2026, 7, 2, 2),
+        stored(
+          id: 'sched-1',
+          dueAt: DateTime.utc(2026, 7, 31, 16),
+          balance: 10000,
+        ),
+      );
+    });
+  });
+
+  group('G14q a top-up counts from its approval', () {
+    List<LoanSchedule> billsWith({DateTime? approvedAt}) => bills(
+          amount: 10000,
+          start: DateTime(2026, 7, 2),
+          term: '1m',
+          now: DateTime(2026, 11, 29, 12),
+          storedRows: [
+            stored(id: 'sched-1', dueAt: DateTime(2026, 8), balance: 10000),
+            stored(
+              id: 'sched-2',
+              dueAt: DateTime(2026, 8, 31),
+              balance: 10000,
+              interestCharge: 500,
+              amortization: 500,
+            ),
+          ],
+          topUps: [
+            AdditionalLoanAmount()
+              ..id = 'al-1'
+              ..amount = 2000
+              ..additionalCharges = 100
+              ..advanceCharges = 0
+              ..createdAt = DateTime(2026, 8, 6)
+              ..status = LoanStatus.approved
+              ..approvedAt = approvedAt,
+          ],
+        );
+
+    test('approved Sep 5, after the Aug 31 bill was stored: 692.50, 605, 605',
+        () {
+      final rows = billsWith(approvedAt: DateTime(2026, 9, 5));
+      expect(rows, hasLength(3));
+      expectBill(
+        rows[0],
+        due: DateTime(2026, 9, 30),
+        days: 30,
+        interest: 692.50,
+      );
+      expectBill(rows[1], due: DateTime(2026, 10, 30), days: 30, interest: 605);
+      expectBill(rows[2], due: DateTime(2026, 11, 29), days: 30, interest: 605);
+    });
+
+    test('approved before approval times were recorded: the old rule, 500', () {
+      final rows = billsWith();
+      expect(rows.map((r) => r.interestCharge), [500, 500, 500]);
+    });
+  });
+
+  group('G14r two bills in one submission owe the stretch once (450)', () {
+    final oct5 = DateTime(2026, 10, 5, 12);
+    final paidAug1 =
+        stored(id: 'sched-1', dueAt: DateTime(2026, 8), balance: 10000);
+    final loan = loanOf(term: '1m', penalties: const [daily01, once100]);
+
+    /// The Aug 31 and Sep 30 bills, both submitted on Oct 5.
+    List<LoanSchedule> submittedTogether() => [
+          for (final (i, bill) in bills(
+            amount: 10000,
+            start: DateTime(2026, 7, 2),
+            term: '1m',
+            now: oct5,
+            storedRows: [paidAug1],
+          ).sublist(0, 2).indexed)
+            bill
+              ..id = 'bill-$i'
+              ..status = LoanStatus.payment_submitted
+              ..collectedAt = oct5,
+        ];
+
+    test('preview: 450 on the Aug 31 bill, 0 on the Sep 30 bill', () {
+      final rows = submittedTogether();
+      final context = [paidAug1, ...rows];
+
+      expect(
+        rows.map(
+          (r) =>
+              previewPenalty(schedule: r, loan: loan, loanRows: context).total,
+        ),
+        [closeTo(450, 0.01), 0],
+      );
+      expect(
+        resolveLatenessTogether(
+          schedules: rows,
+          loan: loan,
+          collectedAt: oct5,
+          loanRows: context,
+        ).map((r) => r.penalties.total),
+        [closeTo(450, 0.01), 0],
+      );
+    });
+
+    for (final reverse in [false, true]) {
+      test('confirmed ${reverse ? 'Sep 30 first' : 'Aug 31 first'}: 450 once',
+          () {
+        final rows = submittedTogether();
+        final context = [paidAug1, ...rows];
+        for (final row in reverse ? rows.reversed : rows) {
+          row.status = PaymentConfirmationService.applyLateness(
+            schedule: row,
+            loan: loan,
+            collectedAt: oct5,
+            actorId: 'teller-1',
+            loanRows: context,
+          );
+        }
+
+        expect(
+          rows.fold<double>(0, (sum, r) => sum + r.penalty),
+          closeTo(450, 0.01),
+        );
+        expect(rows.map((r) => r.daysLate), [35, 5]);
+      });
+    }
   });
 }

@@ -13,8 +13,10 @@ import 'package:loooans/features/products/requirement_temp_container.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/charge_calculator.dart';
 import 'package:loooans/services/loan_calculation_service.dart';
+import 'package:loooans/services/payment_confirmation_service.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:loooans_helpers/logging_helpers.dart';
+import 'package:payment_repository/payment_repository.dart';
 import 'package:product_repository/product_repository.dart';
 import 'package:product_view_repository/product_view_repository.dart';
 import 'package:review_repository/review_repository.dart';
@@ -38,6 +40,7 @@ class LoansBloc extends Bloc<LoansEvent, LoansState> {
         reviewRepository = context.read<ReviewRepository>(),
         productRepository = context.read<ProductRepository>(),
         userRepository = context.read<UserRepository>(),
+        paymentRepository = context.read<PaymentRepository>(),
         super(const LoansState()) {
     on(_handleSelectLoanEvent);
     on(_handleAddLoanEvent);
@@ -50,6 +53,10 @@ class LoansBloc extends Bloc<LoansEvent, LoansState> {
   }
 
   final AuthenticationService authService;
+
+  /// Reads the transfer time of rows submitted before submissions recorded
+  /// it, so an open-term penalty stays one per overdue stretch.
+  final PaymentRepository paymentRepository;
   final LoanRepository loanRepository;
   final LoanScheduleRepository loanScheduleRepository;
   final UserLoanViewRepository userLoanViewRepository;
@@ -336,6 +343,11 @@ class LoansBloc extends Bloc<LoansEvent, LoansState> {
       ]);
       _selectedLoan = loan;
       final loanSchedules = r2[0] as List<LoanSchedule>;
+      // A submitted bill is settled at its transfer (review of #146).
+      await PaymentConfirmationService.settleSubmittedAtTheirTransfer(
+        loanSchedules,
+        paymentRepository,
+      );
       final product = r2[1] as Product;
       final additionalCharges = product.additionalCharges;
       final deductions = product.deductions;

@@ -73,6 +73,13 @@ import '../helpers/helpers.dart';
 //   days) is 15,000 x 5% x 25/30 = 625.
 
 const lateFee100 = Penalty(id: 'late-fee', name: 'Late fee', amount: 100);
+const daily01pct = Penalty(
+  id: 'daily-01',
+  name: 'Daily 0.1%',
+  amount: 0.1,
+  isPercentage: true,
+  frequency: PenaltyFrequency.daily,
+);
 const daily1pct = Penalty(
   id: 'daily',
   name: 'Daily surcharge',
@@ -897,6 +904,60 @@ void main() {
         );
       });
 
+      test('an older pending submission does not stretch the next bill: 900',
+          () async {
+        // Bill A (due 38 days ago) was submitted 30 days ago by an app build
+        // that did not record the transfer time, and is still pending. The
+        // teller bulk-pays bill B (due 8 days ago): A stopped being late at
+        // its transfer, so B owes its own 8 days, 100 + 100 x 8 = 900
+        // (second review of #146: 3,900, A counted as unpaid).
+        LoanSchedule submittedA() =>
+            LoanCalculationService.calculateOpenTermSchedules(
+              amount: 10000,
+              date: daysFromToday(-98),
+              interestRate: 5,
+              term: '1m',
+              companyId: 'co-1',
+              paidSchedules: [paidCycle(daysFromToday(-68))],
+            ).schedules.first
+              ..id = 'sched-A'
+              ..loanId = 'loan-1'
+              ..status = LoanStatus.payment_submitted
+              ..paymentId = 'pay-A';
+        stubStored(() => [paidCycle(daysFromToday(-68)), submittedA()]);
+        when(() => payments.get(id: any(named: 'id'))).thenAnswer(
+          (_) async => Payment()
+            ..id = 'pay-A'
+            ..loanScheduleId = 'sched-A'
+            ..createdAt = daysFromToday(-30).add(const Duration(hours: 12))
+            ..status = PaymentStatus.pending,
+        );
+
+        await payOverdue(500);
+
+        expect(written, hasLength(1));
+        expect(DateUtils.dateOnly(written.single.dueAt), daysFromToday(-8));
+        expect(written.single.penalty, closeTo(900, 0.01));
+
+        // Client detail and the borrower (LoansBloc settles the stored rows
+        // the same way before computing): B is due with 900, not 0.
+        final stored = [paidCycle(daysFromToday(-68)), submittedA()];
+        await PaymentConfirmationService.settleSubmittedAtTheirTransfer(
+          stored,
+          payments,
+        );
+        final loan = openTermLoan(createdAt: daysFromToday(-98));
+        final due = borrowerAmountsDue(
+          schedules: clientRowsNow(loan, stored),
+          loan: loan,
+        );
+        expect(due.payNow.map((r) => DateUtils.dateOnly(r.dueAt)), [
+          daysFromToday(-8),
+        ]);
+        expect(due.nextDuePenalty, closeTo(900, 0.01));
+        expect(due.nextDueAmount, closeTo(1400, 0.01));
+      });
+
       test(
           'with a top-up: both screens bill the same, and the next bill '
           'keeps it (605, not 500)', () async {
@@ -1207,6 +1268,21 @@ void main() {
       expect(buttons[1].onPressed, isNull, reason: 'the later computed bill');
     });
 
+    testWidgets('a pending application: its projected first bill, read only',
+        (tester) async {
+      final loan = openTermLoan(createdAt: daysFromToday(-68))
+        ..status = LoanStatus.pending;
+      final rows = clientRowsNow(loan, const []);
+      final projected = rows.where((r) => r.id == NO_ID && !r.isPlaceholder);
+      expect(projected, hasLength(1));
+      expect(DateUtils.dateOnly(projected.single.dueAt), daysFromToday(-38));
+
+      final buttons = await pumpButtons(tester, loan, rows);
+      expect(buttons.map((b) => b.onPressed), everyElement(isNull));
+      expect(find.textContaining('penalty'), findsNothing);
+      expect(borrowerAmountsDue(schedules: rows, loan: loan).unpaid, isEmpty);
+    });
+
     testWidgets('a settled loan: no bill, no Make payment, no penalty',
         (tester) async {
       final loan = openTermLoan(createdAt: daysFromToday(-68))
@@ -1320,11 +1396,14 @@ void main() {
     late Map<String, Payment> paymentDocs;
     late List<LoanStatus> loanStatuses;
     late PaymentConfirmationService service;
+    var loanPenalties = const [lateFee100, daily1pct];
 
     LoanSchedule read(String id) =>
         LoanScheduleEntity.fromJson(stored[id]!).toLoanSchedule();
 
-    void seed({required bool recordTransfer}) {
+    /// Bills A and B submitted Sep 8 and Oct 8, or both in one submission
+    /// on [together].
+    void seed({required bool recordTransfer, DateTime? together}) {
       final bills = LoanCalculationService.calculateOpenTermSchedules(
         amount: 10000,
         date: DateTime(2026, 7, 2),
@@ -1343,11 +1422,14 @@ void main() {
 
       stored = {
         'sched-1': paidCycle(DateTime(2026, 8)).toJson(),
-        'A': submitted(bills[0], 'A', sep8).toJson(),
-        'B': submitted(bills[1], 'B', oct8).toJson(),
+        'A': submitted(bills[0], 'A', together ?? sep8).toJson(),
+        'B': submitted(bills[1], 'B', together ?? oct8).toJson(),
       };
       paymentDocs = {
-        for (final (id, at) in [('A', sep8), ('B', oct8)])
+        for (final (id, at) in [
+          ('A', together ?? sep8),
+          ('B', together ?? oct8),
+        ])
           'pay-$id': Payment()
             ..id = 'pay-$id'
             ..loanScheduleId = id
@@ -1385,8 +1467,10 @@ void main() {
           return row;
         },
       );
+      loanPenalties = const [lateFee100, daily1pct];
       when(() => loans.get(id: any(named: 'id'))).thenAnswer(
-        (_) async => openTermLoan(createdAt: DateTime(2026, 7, 2)),
+        (_) async => openTermLoan(createdAt: DateTime(2026, 7, 2))
+          ..penalties = List.of(loanPenalties),
       );
       when(
         () => loans.update(
@@ -1473,6 +1557,93 @@ void main() {
         closeTo(900, 0.01),
         reason: 'the Payment Center card (was 3,900)',
       );
+    });
+
+    for (final order in [
+      ['A', 'B'],
+      ['B', 'A'],
+    ]) {
+      test(
+          'ONE submission of both bills (Oct 5), 100 once + 0.1% a day, '
+          'confirm ${order.join(' then ')}: the stretch once, 450', () async {
+        // Aug 31 -> Oct 5 = 35 days: 100 + 35 x 10 = 450 (second review of
+        // #146: 0, each unconfirmed bill counted as already charged).
+        loanPenalties = const [lateFee100, daily01pct];
+        seed(recordTransfer: true, together: DateTime(2026, 10, 5, 12));
+        for (final id in order) {
+          await service.confirm(
+            payment: paymentDocs['pay-$id']!,
+            confirmedById: 'teller-1',
+          );
+        }
+
+        expect(read('A').daysLate, 35);
+        expect(read('B').daysLate, 5);
+        expect(
+          read('A').penalty + read('B').penalty,
+          closeTo(450, 0.01),
+        );
+        expect(
+          read(order.first).penalty,
+          closeTo(450, 0.01),
+          reason: 'the first one confirmed carries it',
+        );
+      });
+    }
+
+    test('a submitted clamp row from an older build carries its 1,100',
+        () async {
+      // Clamp row: interest Aug 1 -> Nov 5 (96 days) 1,600, 500 shown and
+      // paid by the borrower; confirmed, it records 500 paid, so the next
+      // bill (Nov 29, 24 days, 400) owes 400 + 1,100 = 1,500 (second
+      // review: it recorded 0 and carried nothing).
+      stored = {
+        'sched-1': paidCycle(DateTime(2026, 8)).toJson(),
+        'C': (LoanSchedule()
+              ..id = 'C'
+              ..loanId = 'loan-1'
+              ..companyId = 'co-1'
+              ..createdAt = DateTime(2026, 11, 5, 12)
+              ..updatedAt = DateTime(2026, 11, 5, 12)
+              ..dueAt = DateTime(2026, 11, 5)
+              ..status = LoanStatus.payment_submitted
+              ..paymentId = 'pay-C'
+              ..isOpenTerm = true
+              ..outstandingBalance = 10000
+              ..principalPayment = 0
+              ..interestPayment = 0
+              ..interestCharge = 1600
+              ..amortization = 500
+              ..extraPayment = 0
+              ..advanceInterestPayments = 0
+              ..interestDayMultiplier = 96 / 30)
+            .toJson(),
+      };
+      paymentDocs = {
+        'pay-C': Payment()
+          ..id = 'pay-C'
+          ..loanScheduleId = 'C'
+          ..createdAt = DateTime(2026, 11, 5, 12)
+          ..status = PaymentStatus.pending,
+      };
+      await service.confirm(
+        payment: paymentDocs['pay-C']!,
+        confirmedById: 'teller-1',
+      );
+
+      expect(read('C').interestPayment, 500);
+      final next = LoanCalculationService.calculateOpenTermSchedules(
+        amount: 10000,
+        date: DateTime(2026, 7, 2),
+        interestRate: 5,
+        term: '1m',
+        companyId: 'co-1',
+        paidSchedules: [read('sched-1'), read('C')],
+        now: DateTime(2026, 11, 20, 12),
+      ).schedules.single;
+      expect(DateUtils.dateOnly(next.dueAt), DateTime(2026, 11, 29));
+      expect(next.interestCharge, closeTo(400, 0.01));
+      expect(next.amortization, closeTo(1500, 0.01));
     });
 
     test('reject B: the row is unpaid and overdue again, not settled',

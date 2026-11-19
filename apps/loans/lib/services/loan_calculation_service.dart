@@ -195,8 +195,9 @@ class LoanCalculationService {
   ///
   /// Owner rules R1-R5 (2026-11-14 to 2026-11-19; golden set G14):
   /// - R1: a bill keeps its scheduled date. `'1m'` and `'15d'` bills fall
-  ///   every 30 or 15 calendar days from [date] (the loan's creation day),
-  ///   the way the first bill always did; salary-day terms (`'D1,D2'`) fall
+  ///   every 30 or 15 calendar days from the earliest stored bill's cycle
+  ///   date, or from [date] (the loan's creation day) when nothing is
+  ///   stored, the way the first bill always did; salary-day terms (`'D1,D2'`) fall
   ///   on the next salary day after the previous bill (the month's last day
   ///   when the salary day does not exist). Never from today or from a
   ///   payment date (finstack#144). All days are local calendar days.
@@ -237,9 +238,15 @@ class LoanCalculationService {
     List<AdditionalLoanAmount> additionalLoans = const [],
   }) {
     final monthlyInterestRate = interestRate / 100;
-    final start = _localDay(date);
+    final stored = paidSchedules.sortedBy((sched) => sched.dueAt);
+    final last = stored.lastOrNull;
+    // The schedule continues from the stored bills' own cycle dates: a first
+    // bill stored by the old engine was anchored on the creation day in UTC,
+    // and re-deriving the anchor from the local creation day would add a
+    // 1-day bill (review of #146). With no stored bill, the local creation
+    // day.
+    final start = _localDay(stored.firstOrNull?.lateFrom ?? date);
     final today = _localDay(now ?? DateTime.now());
-    final last = paidSchedules.sortedBy((sched) => sched.dueAt).lastOrNull;
 
     var balance = last?.outstandingBalance ?? amount;
     var cycleStart = last == null ? start : _localDay(last.dueAt);
@@ -395,8 +402,12 @@ class LoanCalculationService {
   /// computed after the top-up, and the top-up is not after the row's due
   /// day. (Rows from before R1 were never dated before the day they were
   /// computed, so for them only the first condition decides.)
+  ///
+  /// A top-up counts from its approval: one still pending when the row was
+  /// computed is not in it (review of #146). Top-ups approved before the
+  /// approval time was recorded fall back to their creation time.
   static bool _includesTopUp(LoanSchedule row, AdditionalLoanAmount topUp) =>
-      topUp.createdAt.isBefore(row.createdAt) &&
+      (topUp.approvedAt ?? topUp.createdAt).isBefore(row.createdAt) &&
       !_localDay(topUp.createdAt).isAfter(_localDay(row.dueAt));
 
   /// R4: what paid [row] left unpaid of its amount due, to the centavo. The
@@ -447,8 +458,13 @@ class LoanCalculationService {
 
     final allSchedules = [
       ...paidSchedules.sortedBy((sched) => sched.dueAt),
-      // A pending, declined, settled or bad-debt loan bills nothing new.
-      if (loan == null || billsOpenTerm(loan)) ...schedules,
+      // A declined, settled or bad-debt loan bills nothing new; a pending
+      // application shows its projected first bill, which nothing counts as
+      // owed (no penalty, no "Make payment", not in any total).
+      if (loan == null || billsOpenTerm(loan))
+        ...schedules
+      else if (loan.status == LoanStatus.pending)
+        ...schedules.take(1),
     ];
 
     if (loan != null) {

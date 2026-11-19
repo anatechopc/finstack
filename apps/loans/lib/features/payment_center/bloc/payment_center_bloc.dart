@@ -1110,6 +1110,12 @@ class PaymentCenterBloc extends Bloc<PaymentCenterEvent, PaymentCenterState> {
       loanId: loan.id,
       onlyPaid: false,
     );
+    // A submitted bill is settled at its transfer, also one submitted
+    // before submissions recorded it (review of #146).
+    await PaymentConfirmationService.settleSubmittedAtTheirTransfer(
+      stored,
+      paymentRepository,
+    );
 
     return [
       ...stored.where((row) => !paying.any((s) => s.id == row.id)),
