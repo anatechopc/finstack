@@ -33,9 +33,15 @@ import 'package:user_loan_view_repository/user_loan_view_repository.dart';
 /// Open-term placeholder rows (the principal release and top-ups) are not
 /// installments: the principal release is dated on the loan's creation day,
 /// so it would otherwise be the "next" payment of every open-term loan.
+///
+/// On an open-term loan "Pay now" (`payNow`) is every bill already due
+/// (missed bills and one due today) with the overdue stretch's penalty
+/// once, or the next bill when none is due yet (owner rules R2, R3). A
+/// fixed-term loan pays its next installment.
 ({
   List<LoanSchedule> unpaid,
   LoanSchedule? nextDue,
+  List<LoanSchedule> payNow,
   double nextDuePenalty,
   double nextDueAmount,
   double remainingPenalty,
@@ -56,19 +62,37 @@ import 'package:user_loan_view_repository/user_loan_view_repository.dart';
       .toList()
     ..sort((a, b) => a.dueAt.compareTo(b.dueAt));
   final nextDue = unpaid.isNotEmpty ? unpaid.first : null;
-  double penaltyOf(LoanSchedule s) =>
-      previewPenalty(schedule: s, loan: loan, asOf: asOf).total;
-  final nextDuePenalty = nextDue == null ? 0.0 : penaltyOf(nextDue);
+  final today = DateUtils.dateOnly(asOf ?? DateTime.now());
+  final dueNow = unpaid
+      .where(
+        (s) =>
+            s.isOpenTerm &&
+            !DateUtils.dateOnly(s.lateFrom.toLocal()).isAfter(today),
+      )
+      .toList();
+  final payNow = dueNow.isNotEmpty || nextDue == null ? dueNow : [nextDue];
+  // An open-term stretch penalty shows on its earliest unpaid bill only, so
+  // these sums count it once.
+  double penaltyOf(LoanSchedule s) => previewPenalty(
+        schedule: s,
+        loan: loan,
+        asOf: asOf,
+        loanRows: schedules,
+      ).total;
+  final nextDuePenalty = payNow.fold<double>(0, (sum, s) => sum + penaltyOf(s));
   final remainingPenalty =
       unpaid.fold<double>(0, (sum, s) => sum + penaltyOf(s));
 
   return (
     unpaid: unpaid,
     nextDue: nextDue,
+    payNow: payNow,
     nextDuePenalty: nextDuePenalty,
-    nextDueAmount: nextDue == null
-        ? 0.0
-        : nextDue.amortization + nextDue.extraPayment + nextDuePenalty,
+    nextDueAmount: payNow.fold<double>(
+          0,
+          (sum, s) => sum + s.amortization + s.extraPayment,
+        ) +
+        nextDuePenalty,
     remainingPenalty: remainingPenalty,
     remainingTotal: unpaid.fold<double>(
           0,
@@ -327,6 +351,7 @@ class _LoanDetailsState extends State<LoanDetails> {
                       schedule: schedules[index - 5],
                       index: index - 5,
                       loan: loan,
+                      loanRows: schedules,
                     ),
                 };
               },
@@ -495,6 +520,7 @@ class _LoanDetailsState extends State<LoanDetails> {
     final (
       :unpaid,
       :nextDue,
+      :payNow,
       :nextDuePenalty,
       :nextDueAmount,
       :remainingPenalty,
@@ -612,7 +638,7 @@ class _LoanDetailsState extends State<LoanDetails> {
                 }
                 showSubmitPaymentDialog(
                   context,
-                  schedules: [nextDue],
+                  schedules: payNow,
                   loanId: loan.id,
                   companyId: userLoanView.companyId,
                   amount: nextDueAmount,

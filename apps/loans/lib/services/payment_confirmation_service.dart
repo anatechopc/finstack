@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans_helpers/data_helpers.dart';
@@ -25,6 +27,11 @@ class PaymentConfirmationService {
   ///
   /// Throws before touching the row when [waivePenalty] is set without a
   /// reason and there is something to waive.
+  ///
+  /// [loanRows] are the loan's other rows (stored and computed). An
+  /// open-term penalty is charged once per overdue stretch (owner rule R3):
+  /// rows of the same payment confirmed earlier carry it, and this row is
+  /// charged only what the stretch added since.
   static LoanStatus applyLateness({
     required LoanSchedule schedule,
     required Loan loan,
@@ -32,11 +39,13 @@ class PaymentConfirmationService {
     required String actorId,
     bool waivePenalty = false,
     String? waiveReason,
+    List<LoanSchedule> loanRows = const [],
   }) {
     final lateness = resolveLateness(
       schedule: schedule,
       loan: loan,
       collectedAt: collectedAt,
+      loanRows: loanRows,
     );
     final waived = waivePenalty && lateness.penalties.total > 0;
     final reason = waiveReason?.trim() ?? '';
@@ -54,6 +63,28 @@ class PaymentConfirmationService {
       ..penaltyWaiveReason = waived ? reason : null;
 
     return lateness.isLate ? LoanStatus.paid_late : LoanStatus.paid_on_time;
+  }
+
+  /// Owner rule R4 for a bulk payment of open-term bills: [totalInterest]
+  /// pays them oldest first, each up to its amount due (`amortization`). A
+  /// bill that gets nothing stays unpaid; a short one carries the rest to
+  /// the next bill. Anything above the total due stays on the last bill, as
+  /// on a single bill (no credit). [schedules] must be in due-date order.
+  static List<double> splitOpenTermInterest({
+    required List<LoanSchedule> schedules,
+    required double totalInterest,
+  }) {
+    var left = totalInterest;
+    final shares = <double>[];
+    for (var i = 0; i < schedules.length; i++) {
+      final share = i == schedules.length - 1
+          ? left
+          : min(left, schedules[i].amortization);
+      shares.add(max<double>(0, share));
+      left -= share;
+    }
+
+    return shares;
   }
 
   /// Pure: on rejection, a schedule reverts to not_paid (or overdue if its
@@ -79,6 +110,12 @@ class PaymentConfirmationService {
     final schedule =
         await loanScheduleRepository.get(id: payment.loanScheduleId);
     final loan = await loanRepository.get(id: schedule.loanId);
+    // An open-term penalty is one per overdue stretch (R3): rows of the same
+    // submission confirmed before this one are stored with their collection
+    // date, and unpaid earlier bills mark where the stretch starts.
+    final loanRows = schedule.isOpenTerm
+        ? await _loadLoanSchedules(loan.id)
+        : const <LoanSchedule>[];
 
     // Decided first so a missing waive reason aborts the whole confirmation.
     final status = applyLateness(
@@ -88,6 +125,7 @@ class PaymentConfirmationService {
       actorId: confirmedById,
       waivePenalty: waivePenalty,
       waiveReason: waiveReason,
+      loanRows: loanRows,
     );
 
     payment.markConfirmed(confirmedById: confirmedById);

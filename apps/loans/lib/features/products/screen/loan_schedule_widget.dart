@@ -97,6 +97,7 @@ class LoanScheduleWidget extends StatelessWidget {
           schedule: schedules[index],
           index: index,
           loan: loan,
+          loanRows: schedules,
         );
       },
       separatorBuilder: (context, index) {
@@ -122,6 +123,7 @@ class LoanScheduleWidget extends StatelessWidget {
     required LoanSchedule schedule,
     int index = 0,
     Loan? loan,
+    List<LoanSchedule> loanRows = const [],
   }) {
     final trailingText = !schedule.isOpenTerm
         ? context.read<LoansBloc>().monthlyAmortization
@@ -146,7 +148,7 @@ class LoanScheduleWidget extends StatelessWidget {
               fontSize: 12,
             ),
           ),
-          ..._penaltyLines(schedule, loan),
+          ..._penaltyLines(schedule, loan, loanRows),
         ],
       ),
       isThreeLine: true,
@@ -184,7 +186,7 @@ class LoanScheduleWidget extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-              ..._penaltyLines(schedule, loan),
+              ..._penaltyLines(schedule, loan, schedules),
             ],
           ),
         );
@@ -214,12 +216,17 @@ class LoanScheduleWidget extends StatelessWidget {
   }
 
   /// Running penalty on an unpaid row, or the charged/waived amount on a
-  /// paid one.
-  static List<Widget> _penaltyLines(LoanSchedule schedule, Loan? loan) {
+  /// paid one. An open-term penalty is one per overdue stretch, shown on its
+  /// earliest unpaid bill ([loanRows] are the loan's listed rows).
+  static List<Widget> _penaltyLines(
+    LoanSchedule schedule,
+    Loan? loan,
+    List<LoanSchedule> loanRows,
+  ) {
     const style = TextStyle(color: AppColors.red2, fontSize: 11);
     final preview = loan == null
         ? PenaltyResult.none
-        : previewPenalty(schedule: schedule, loan: loan);
+        : previewPenalty(schedule: schedule, loan: loan, loanRows: loanRows);
 
     return [
       if (preview.total > 0)

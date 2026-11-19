@@ -88,10 +88,17 @@ const _unpaidStatuses = {
 /// on schedule rows and for the confirmation breakdown. An open-term
 /// placeholder row (the principal release or a top-up) is not an
 /// installment and owes nothing.
+///
+/// [loanRows] are the loan's other rows (stored and computed). On an
+/// open-term loan the penalty is charged once for the loan per overdue
+/// stretch (owner rule R3), so it is shown on the stretch's earliest unpaid
+/// bill and later unpaid bills preview 0; the previews of a loan's rows add
+/// up to the stretch's penalty once.
 PenaltyResult previewPenalty({
   required LoanSchedule schedule,
   required Loan loan,
   DateTime? asOf,
+  List<LoanSchedule> loanRows = const [],
 }) {
   if (!_unpaidStatuses.contains(schedule.status) ||
       schedule.isPlaceholder ||
@@ -99,16 +106,39 @@ PenaltyResult previewPenalty({
     return PenaltyResult.none;
   }
 
-  final daysLate = calculateDaysLate(
-    dueAt: schedule.lateFrom,
-    collectedAt: asOf ?? DateTime.now(),
-  );
+  final collectedAt = asOf ?? DateTime.now();
+
+  if (schedule.isOpenTerm) {
+    final lateFrom = _localDay(schedule.lateFrom);
+    final earlierUnpaidBill = loanRows.any(
+      (other) =>
+          _isOpenTermBill(other) &&
+          !_sameRow(other, schedule) &&
+          _unpaidStatuses.contains(other.status) &&
+          _settledOn(other) == null &&
+          _localDay(other.lateFrom).isBefore(lateFrom),
+    );
+    if (earlierUnpaidBill ||
+        calculateDaysLate(dueAt: schedule.lateFrom, collectedAt: collectedAt) <=
+            0) {
+      return PenaltyResult.none;
+    }
+
+    return _openTermStretchPenalty(
+      row: schedule,
+      loan: loan,
+      collectedAt: collectedAt,
+      loanRows: loanRows,
+    );
+  }
 
   return computePenalties(
-    amountDue:
-        schedule.isOpenTerm ? schedule.outstandingBalance : schedule.amortization,
+    amountDue: schedule.amortization,
     penalties: loan.penalties,
-    daysLate: daysLate,
+    daysLate: calculateDaysLate(
+      dueAt: schedule.lateFrom,
+      collectedAt: collectedAt,
+    ),
     termDays: termDaysOf(loan.term),
   );
 }
@@ -136,10 +166,60 @@ final class LatenessResult {
 /// Unlike [previewPenalty] this ignores the row's current status, because
 /// the caller is about to set it. An open-term placeholder row is never
 /// late.
+///
+/// Days late are per bill, from the bill's own due date. On an open-term
+/// loan the penalty is the overdue stretch's, less what earlier payments in
+/// the same stretch already charged (R3); [loanRows] are the loan's other
+/// rows, stored and computed, that tell where the stretch starts.
 LatenessResult resolveLateness({
   required LoanSchedule schedule,
   required Loan loan,
   required DateTime collectedAt,
+  List<LoanSchedule> loanRows = const [],
+}) =>
+    _resolveLateness(
+      schedule: schedule,
+      loan: loan,
+      collectedAt: collectedAt,
+      loanRows: loanRows,
+    );
+
+/// [resolveLateness] for [schedules] collected together on [collectedAt],
+/// in the order given. An open-term stretch penalty is charged once, on the
+/// earliest late bill; the other bills of the same payment are late with
+/// nothing more to charge. Fixed-term rows are resolved one by one.
+List<LatenessResult> resolveLatenessTogether({
+  required List<LoanSchedule> schedules,
+  required Loan loan,
+  required DateTime collectedAt,
+  List<LoanSchedule> loanRows = const [],
+}) {
+  final byLateFrom = List<LoanSchedule>.of(schedules)
+    ..sort((a, b) => a.lateFrom.compareTo(b.lateFrom));
+  final context = [...loanRows, ...schedules];
+  final results = Map<LoanSchedule, LatenessResult>.identity();
+  final settled = <LoanSchedule>[];
+
+  for (final schedule in byLateFrom) {
+    results[schedule] = _resolveLateness(
+      schedule: schedule,
+      loan: loan,
+      collectedAt: collectedAt,
+      loanRows: context,
+      paidNow: settled,
+    );
+    settled.add(schedule);
+  }
+
+  return [for (final schedule in schedules) results[schedule]!];
+}
+
+LatenessResult _resolveLateness({
+  required LoanSchedule schedule,
+  required Loan loan,
+  required DateTime collectedAt,
+  required List<LoanSchedule> loanRows,
+  List<LoanSchedule> paidNow = const [],
 }) {
   if (schedule.isPlaceholder) {
     return const LatenessResult(
@@ -158,15 +238,137 @@ LatenessResult resolveLateness({
   return LatenessResult(
     daysLate: daysLate,
     isLate: isLate,
-    penalties: isLate
-        ? computePenalties(
-            amountDue: schedule.isOpenTerm
-                ? schedule.outstandingBalance
-                : schedule.amortization,
-            penalties: loan.penalties,
-            daysLate: daysLate,
-            termDays: termDaysOf(loan.term),
-          )
-        : PenaltyResult.none,
+    penalties: !isLate
+        ? PenaltyResult.none
+        : schedule.isOpenTerm
+            ? _openTermStretchPenalty(
+                row: schedule,
+                loan: loan,
+                collectedAt: collectedAt,
+                loanRows: loanRows,
+                paidNow: paidNow,
+              )
+            : computePenalties(
+                amountDue: schedule.amortization,
+                penalties: loan.penalties,
+                daysLate: daysLate,
+                termDays: termDaysOf(loan.term),
+              ),
   );
+}
+
+/// Owner rule R3 (2026-11-19): an open-term penalty is on the loan's
+/// balance, so it is charged once for the loan, not once per missed bill.
+/// An overdue stretch runs from the earliest unpaid due date until no bill
+/// is late. "Once" is charged once per stretch; daily per day of the
+/// stretch; monthly and per installment per started period of the stretch.
+/// A payment is charged the stretch's penalty up to [collectedAt] less what
+/// earlier payments in the same stretch were charged up to their own
+/// collection dates (waived counts as charged), so no day is charged twice.
+///
+/// [row] is late at [collectedAt]. [paidNow] are other rows settled in the
+/// same payment, already charged. The base is [row]'s outstanding balance,
+/// as before R3.
+PenaltyResult _openTermStretchPenalty({
+  required LoanSchedule row,
+  required Loan loan,
+  required DateTime collectedAt,
+  required Iterable<LoanSchedule> loanRows,
+  Iterable<LoanSchedule> paidNow = const [],
+}) {
+  final collectedOn = _localDay(collectedAt);
+  var start = _localDay(row.lateFrom);
+  final latePeriods = <(DateTime, DateTime)>[];
+
+  for (final other in loanRows) {
+    if (!_isOpenTermBill(other) || _sameRow(other, row)) {
+      continue;
+    }
+
+    final dueOn = _localDay(other.lateFrom);
+    if (!dueOn.isBefore(collectedOn)) {
+      continue;
+    }
+
+    final settledAt = paidNow.any((paid) => _sameRow(paid, other))
+        ? collectedAt
+        : _settledOn(other);
+    if (settledAt == null) {
+      // Unpaid and late on the collection day: the same stretch.
+      if (dueOn.isBefore(start)) {
+        start = dueOn;
+      }
+    } else if (_localDay(settledAt).isAfter(dueOn)) {
+      latePeriods.add((dueOn, _localDay(settledAt)));
+    }
+  }
+
+  // Late periods that ran into the stretch belong to it.
+  for (var grew = true; grew;) {
+    grew = false;
+    for (final (dueOn, settledOn) in latePeriods) {
+      if (dueOn.isBefore(start) && settledOn.isAfter(start)) {
+        start = dueOn;
+        grew = true;
+      }
+    }
+  }
+
+  DateTime? chargedTo;
+  for (final (_, settledOn) in latePeriods) {
+    if (!settledOn.isAfter(start)) {
+      continue;
+    }
+    final end = settledOn.isAfter(collectedOn) ? collectedOn : settledOn;
+    if (chargedTo == null || end.isAfter(chargedTo)) {
+      chargedTo = end;
+    }
+  }
+
+  final daysNow = collectedOn.difference(start).inDays;
+  final daysCharged =
+      chargedTo == null ? 0 : chargedTo.difference(start).inDays;
+  final termDays = termDaysOf(loan.term);
+  final lines = <PenaltyLine>[];
+  var total = 0.0;
+
+  for (final penalty in loan.penalties) {
+    final periods = penalty.frequency.periods(daysNow, termDays: termDays) -
+        penalty.frequency.periods(daysCharged, termDays: termDays);
+    if (periods <= 0) {
+      continue;
+    }
+
+    final base = penalty.isPercentage
+        ? row.outstandingBalance * penalty.amount / 100
+        : penalty.amount;
+    final amount = base * periods;
+
+    lines.add(PenaltyLine(penalty: penalty, periods: periods, amount: amount));
+    total += amount;
+  }
+
+  return lines.isEmpty
+      ? PenaltyResult.none
+      : PenaltyResult(lines: lines, total: total);
+}
+
+bool _isOpenTermBill(LoanSchedule schedule) =>
+    schedule.isOpenTerm && !schedule.isPlaceholder;
+
+bool _sameRow(LoanSchedule a, LoanSchedule b) =>
+    identical(a, b) || (a.id != NO_ID && a.id == b.id);
+
+/// When an open-term bill stopped being owed, or null while it is unpaid.
+DateTime? _settledOn(LoanSchedule schedule) =>
+    schedule.collectedAt ??
+    (schedule.status == LoanStatus.paid_on_time ||
+            schedule.status == LoanStatus.paid_late
+        ? (schedule.paidAt ?? schedule.dueAt)
+        : null);
+
+/// [dateTime]'s calendar day in local time.
+DateTime _localDay(DateTime dateTime) {
+  final local = dateTime.toLocal();
+  return DateTime(local.year, local.month, local.day);
 }
