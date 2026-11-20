@@ -1,6 +1,6 @@
 name: loooans
 description: Loooans! -- Your loans marketplace
-version: 1.0.2-dev.43+1794536084
+version: 1.0.2-dev.51+1795144684
 publish_to: none
 
 environment:
@@ -98,6 +98,8 @@ dependencies:
 
 dev_dependencies:
   bloc_test: ^9.1.6
+  cloud_firestore: ^5.4.1
+  fake_cloud_firestore: ^3.1.0
   flutter_test:
     sdk: flutter
   mocktail: ^1.0.3

@@ -14,6 +14,7 @@ import 'package:loooans/features/loans/bloc/loans_bloc.dart';
 import 'package:loooans/features/loans/bloc/payment_bloc.dart';
 import 'package:loooans/features/users/widget/client_detail/payment_otp_dialog.dart';
 import 'package:loooans/features/loans/screens/statement_of_account_screen.dart';
+import 'package:loooans/services/payment_confirmation_service.dart';
 import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
@@ -119,11 +120,13 @@ Future<Uint8List?> showSignatureDialog(
   );
 }
 
-/// Shows the make payment dialog for a loan schedule.
+/// Shows the make payment dialog for a loan schedule. [loanRows] are the
+/// loan's listed rows: an open-term penalty is one per overdue stretch.
 Future<void> showMakePaymentDialog(
   BuildContext context, {
   required LoanSchedule schedule,
   required String userId,
+  List<LoanSchedule> loanRows = const [],
 }) {
   String? selectedPaymentOption;
 
@@ -221,7 +224,9 @@ Future<void> showMakePaymentDialog(
 
                               final tempParsed = double.parse(value);
 
-                              if (tempParsed <= 0) {
+                              // Read-only on a fixed-term row; a remainder
+                              // row bills no interest (#152).
+                              if (tempParsed <= 0 && schedule.isOpenTerm) {
                                 return 'Amount should be greater than 0';
                               }
 
@@ -255,6 +260,7 @@ Future<void> showMakePaymentDialog(
                   PaymentPenaltySection(
                     schedules: [schedule],
                     loan: context.read<LoansBloc>().selectedLoan,
+                    loanRows: loanRows,
                   ),
                 ],
               ),
@@ -295,7 +301,10 @@ Future<void> showMakePaymentDialog(
                   );
                   final totalPayment = interestPayment + payment;
 
-                  if (payment >= schedule.outstandingBalance) {
+                  if (PaymentConfirmationService.isEarlyPayoff(
+                    schedule,
+                    principal: payment,
+                  )) {
                     final settleAccountConfirmation =
                         await showDialog<bool>(
                       context: context,
@@ -419,6 +428,7 @@ By clicking 'Proceed,' you acknowledge that the payment will be covered by the c
                                       .read<LoansBloc>()
                                       .selectedLoan,
                                   schedule: schedule,
+                                  loanRows: loanRows,
                                   interestPayment: key.currentState!
                                           .value['interest_payment']
                                       as String,
@@ -517,6 +527,7 @@ By clicking 'Proceed,' you acknowledge that the payment will be covered by the c
                                   .read<LoansBloc>()
                                   .selectedLoan,
                               schedule: schedule,
+                              loanRows: loanRows,
                               interestPayment: key.currentState!
                                       .value['interest_payment']
                                   as String,
@@ -573,6 +584,7 @@ By clicking 'Proceed,' you acknowledge that the payment will be covered by the c
                                 .read<LoansBloc>()
                                 .selectedLoan,
                             schedule: schedule,
+                            loanRows: loanRows,
                             interestPayment: key.currentState!
                                 .value['interest_payment'] as String,
                             payment: key.currentState!

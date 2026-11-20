@@ -11,6 +11,7 @@ import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/features/cash_pool/bloc/cash_pool_bloc.dart';
 import 'package:loooans/features/payment_center/bloc/payment_center_bloc.dart';
 import 'package:loooans/features/users/widget/client_detail/client_detail_dialogs.dart';
+import 'package:loooans/services/payment_confirmation_service.dart';
 import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
@@ -122,7 +123,10 @@ Future<void> showPaymentCenterPaymentDialog(
                                     (value) {
                                       if (value == null) return null;
                                       final parsed = double.parse(value);
-                                      if (parsed <= 0) {
+                                      // Read-only on a fixed-term row; a
+                                      // remainder row bills no interest
+                                      // (#152).
+                                      if (parsed <= 0 && schedule.isOpenTerm) {
                                         return 'Amount should be greater than 0';
                                       }
                                       return null;
@@ -159,6 +163,9 @@ Future<void> showPaymentCenterPaymentDialog(
                           PaymentPenaltySection(
                             schedules: [schedule],
                             loan: loan,
+                            loanRows: innerContext
+                                .read<PaymentCenterBloc>()
+                                .loanRowsOf(loan.id),
                           ),
                         ],
                       ),
@@ -228,17 +235,21 @@ Future<void> showPaymentCenterPaymentDialog(
 }
 
 /// Shows the overdue payment dialog for consolidated overdue schedules.
-/// Pre-fills with summed interest/principal from all overdue schedules.
+/// Pre-fills with summed interest/principal from all overdue schedules: on
+/// open-term bills the amount due, which includes a carried shortfall
+/// (owner rule R4). [loanRows] are the loan's stored rows: an open-term
+/// penalty is one per overdue stretch.
 Future<void> showOverduePaymentDialog(
   BuildContext context, {
   required Loan loan,
   required List<LoanSchedule> overdueSchedules,
   required String userId,
+  List<LoanSchedule> loanRows = const [],
 }) {
   final isOpenTerm = overdueSchedules.first.isOpenTerm;
   final totalInterest = overdueSchedules.fold<double>(
     0,
-    (sum, s) => sum + s.interestCharge,
+    (sum, s) => sum + (isOpenTerm ? s.amortization : s.interestCharge),
   );
   final totalPrincipal = isOpenTerm
       ? 0.0
@@ -343,7 +354,10 @@ Future<void> showOverduePaymentDialog(
                                     (value) {
                                       if (value == null) return null;
                                       final parsed = double.parse(value);
-                                      if (parsed <= 0) {
+                                      // Read-only on fixed-term rows; a
+                                      // remainder row bills no interest
+                                      // (#152).
+                                      if (parsed <= 0 && isOpenTerm) {
                                         return 'Amount should be greater than 0';
                                       }
                                       return null;
@@ -380,6 +394,7 @@ Future<void> showOverduePaymentDialog(
                           PaymentPenaltySection(
                             schedules: overdueSchedules,
                             loan: loan,
+                            loanRows: loanRows,
                           ),
                         ],
                       ),
@@ -596,7 +611,7 @@ Future<void> _handlePaymentOption(
   final totalPayment = interestPayment + payment;
 
   // Check if settling account
-  if (payment >= schedule.outstandingBalance) {
+  if (PaymentConfirmationService.isEarlyPayoff(schedule, principal: payment)) {
     final settleAccountConfirmation = await showDialog<bool>(
       context: context,
       builder: (context) {

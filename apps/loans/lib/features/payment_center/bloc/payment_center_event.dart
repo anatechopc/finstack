@@ -58,10 +58,15 @@ final class MakePaymentEvent extends PaymentCenterEvent {
     this.collectedAt,
     this.waivePenalty = false,
     this.waiveReason,
+    this.loanRows = const [],
   });
 
   final Loan loan;
   final LoanSchedule schedule;
+
+  /// The loan's stored and listed rows: an open-term penalty is one per
+  /// overdue stretch (owner rule R3).
+  final List<LoanSchedule> loanRows;
   final double payment;
   final double interestPayment;
   final String? fileName;
@@ -91,6 +96,7 @@ final class MakePaymentEvent extends PaymentCenterEvent {
         collectedAt,
         waivePenalty,
         waiveReason,
+        loanRows,
       ];
 }
 

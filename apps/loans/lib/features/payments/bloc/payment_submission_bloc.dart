@@ -18,6 +18,7 @@ class PaymentSubmissionBloc
     extends Bloc<PaymentSubmissionEvent, PaymentSubmissionState> {
   PaymentSubmissionBloc(BuildContext context)
       : this.withDependencies(
+          loanRepository: context.read<LoanRepository>(),
           paymentRepository: context.read<PaymentRepository>(),
           loanScheduleRepository: context.read<LoanScheduleRepository>(),
           storageRepository: context.read<StorageRepository>(),
@@ -25,6 +26,7 @@ class PaymentSubmissionBloc
         );
 
   PaymentSubmissionBloc.withDependencies({
+    required this.loanRepository,
     required this.paymentRepository,
     required this.loanScheduleRepository,
     required this.storageRepository,
@@ -35,6 +37,7 @@ class PaymentSubmissionBloc
     on<SubmitPaymentEvent>(_onSubmit);
   }
 
+  final BaseRepository<Loan> loanRepository;
   final BaseRepository<Payment> paymentRepository;
   final BaseRepository<LoanSchedule> loanScheduleRepository;
   final StorageRepository storageRepository;
@@ -48,11 +51,32 @@ class PaymentSubmissionBloc
     emit(state.copyWith(status: PaymentSubmissionStatus.submitting));
     try {
       final userId = authService.user.id;
-      if (event.schedules.isEmpty) {
+      if (event.schedules.isEmpty ||
+          event.schedules.any((s) => s.isPrincipalRelease)) {
         emit(
           state.copyWith(
             status: PaymentSubmissionStatus.error,
             message: 'No schedule to pay.',
+          ),
+        );
+        return;
+      }
+
+      // A settled or closed loan takes no payment: a lender could neither
+      // confirm nor reject it (#116). Checked before anything is written.
+      final loan = await loanRepository.get(id: event.loanId);
+      if (const {
+        LoanStatus.pending,
+        LoanStatus.declined,
+        LoanStatus.completed,
+        LoanStatus.bad_debt,
+      }.contains(loan.status)) {
+        emit(
+          state.copyWith(
+            status: PaymentSubmissionStatus.error,
+            message: loan.status == LoanStatus.completed
+                ? 'This loan is already settled. No payment is needed.'
+                : 'This loan is not open for payments.',
           ),
         );
         return;
@@ -88,6 +112,10 @@ class PaymentSubmissionBloc
             submissionId: submissionId,
             paidToBankDetailsId: event.bankDetailsId,
           );
+          // The transfer's time: an open-term bill counts as settled from it
+          // for the overdue stretch (R3), whichever bill is confirmed first,
+          // and confirmation defaults the collection date to it.
+          schedule.collectedAt = payment.createdAt;
 
           if (schedule.id == NO_ID) {
             // Open-term runtime schedule: persist payment + schedule, then

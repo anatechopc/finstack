@@ -6,17 +6,17 @@ part 'penalty.g.dart';
 /// How often a penalty is charged while a payment is late.
 enum PenaltyFrequency {
   once('One time', 'once'),
-  daily('Per day', '/ day'),
-  monthly('Per month', '/ month'),
+  daily('Per day', 'per day'),
+  monthly('Per month', 'per month'),
   @JsonValue('per_installment')
-  perInstallment('Per installment (same as loan term)', '/ installment');
+  perInstallment('Per installment (same as loan term)', 'per installment');
 
   const PenaltyFrequency(this.label, this.suffix);
 
   /// Dropdown label, e.g. "Per day".
   final String label;
 
-  /// Chip suffix, e.g. "/ day".
+  /// Label suffix, e.g. "per day".
   final String suffix;
 
   /// Number of penalty periods for a payment that is [daysLate] days late.
@@ -38,6 +38,25 @@ enum PenaltyFrequency {
       PenaltyFrequency.perInstallment => (daysLate / installmentDays).ceil(),
     };
   }
+}
+
+/// What a percentage penalty is a percent of, which also decides how it is
+/// counted (owner, 2026-11-19): one on the missed bill is charged per missed
+/// bill, each bill counting its own days late; one on the outstanding
+/// balance is charged once for the loan per overdue stretch.
+enum PenaltyBase {
+  @JsonValue('missed_bill')
+  missedBill('The missed bill', 'of the missed bill'),
+  @JsonValue('outstanding_balance')
+  outstandingBalance('The outstanding balance', 'of the balance');
+
+  const PenaltyBase(this.label, this.phrase);
+
+  /// Dialog option, e.g. "The missed bill".
+  final String label;
+
+  /// In a penalty's label, e.g. "10% of the missed bill, once".
+  final String phrase;
 }
 
 /// Installment period in days for a product or loan `term`.
@@ -80,6 +99,7 @@ class Penalty extends Equatable {
     this.description = '',
     this.isPercentage = false,
     this.frequency = PenaltyFrequency.once,
+    this.basedOn,
   });
 
   factory Penalty.fromJson(Map<String, dynamic> json) {
@@ -92,8 +112,8 @@ class Penalty extends Equatable {
   @JsonKey(defaultValue: '')
   final String description;
 
-  /// Fixed amount, or a percent (0–100) of the installment when
-  /// [isPercentage] is true.
+  /// Fixed amount, or a percent (0–100) of [baseFor] when [isPercentage] is
+  /// true.
   final double amount;
 
   @JsonKey(name: 'is_percentage', defaultValue: false)
@@ -105,8 +125,31 @@ class Penalty extends Equatable {
   )
   final PenaltyFrequency frequency;
 
+  /// The lender's "Based on" choice. Null on flat amounts and on penalties
+  /// saved before the option existed (2026-11-19): see [baseFor]. Not
+  /// written when null, so those documents keep their shape.
+  @JsonKey(
+    name: 'based_on',
+    unknownEnumValue: JsonKey.nullForUndefinedEnumValue,
+  )
+  final PenaltyBase? basedOn;
+
+  /// The base in force on a loan of this type, which also decides the
+  /// counting. A flat amount is charged as entered on each missed bill, on
+  /// both loan types and whatever [basedOn] holds (owner, 2026-11-19). A
+  /// percentage without [basedOn] keeps the loan type's default: the missed
+  /// installment on a fixed-term loan, the outstanding balance on an
+  /// open-term loan.
+  PenaltyBase baseFor({required bool isOpenTerm}) => !isPercentage
+      ? PenaltyBase.missedBill
+      : basedOn ??
+          (isOpenTerm
+              ? PenaltyBase.outstandingBalance
+              : PenaltyBase.missedBill);
+
   Map<String, dynamic> toJson() {
-    return _$PenaltyToJson(this);
+    return _$PenaltyToJson(this)
+      ..removeWhere((key, value) => key == 'based_on' && value == null);
   }
 
   /// For `@JsonKey(toJson: Penalty.listToJson)` on `List<Penalty>` fields.
@@ -123,5 +166,6 @@ class Penalty extends Equatable {
         amount,
         isPercentage,
         frequency,
+        basedOn,
       ];
 }

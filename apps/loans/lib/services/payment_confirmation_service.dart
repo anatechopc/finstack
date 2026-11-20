@@ -1,5 +1,8 @@
+import 'dart:math';
+
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
+import 'package:loooans/services/loan_calculation_service.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:payment_repository/payment_repository.dart';
 
@@ -25,6 +28,11 @@ class PaymentConfirmationService {
   ///
   /// Throws before touching the row when [waivePenalty] is set without a
   /// reason and there is something to waive.
+  ///
+  /// [loanRows] are the loan's other rows (stored and computed). An
+  /// open-term penalty is charged once per overdue stretch (owner rule R3):
+  /// rows of the same payment confirmed earlier carry it, and this row is
+  /// charged only what the stretch added since.
   static LoanStatus applyLateness({
     required LoanSchedule schedule,
     required Loan loan,
@@ -32,11 +40,13 @@ class PaymentConfirmationService {
     required String actorId,
     bool waivePenalty = false,
     String? waiveReason,
+    List<LoanSchedule> loanRows = const [],
   }) {
     final lateness = resolveLateness(
       schedule: schedule,
       loan: loan,
       collectedAt: collectedAt,
+      loanRows: loanRows,
     );
     final waived = waivePenalty && lateness.penalties.total > 0;
     final reason = waiveReason?.trim() ?? '';
@@ -54,6 +64,119 @@ class PaymentConfirmationService {
       ..penaltyWaiveReason = waived ? reason : null;
 
     return lateness.isLate ? LoanStatus.paid_late : LoanStatus.paid_on_time;
+  }
+
+  /// Owner rule R4 for a bulk payment of open-term bills: [totalInterest]
+  /// pays them oldest first, each up to its amount due (`amortization`). A
+  /// bill that gets nothing stays unpaid; a short one carries the rest to
+  /// the next bill. Anything above the total due stays on the last bill, as
+  /// on a single bill (no credit). [schedules] must be in due-date order.
+  static List<double> splitOpenTermInterest({
+    required List<LoanSchedule> schedules,
+    required double totalInterest,
+  }) {
+    var left = totalInterest;
+    final shares = <double>[];
+    for (var i = 0; i < schedules.length; i++) {
+      final share = i == schedules.length - 1
+          ? left
+          : min(left, schedules[i].amortization);
+      shares.add(max<double>(0, share));
+      left -= share;
+    }
+
+    return shares;
+  }
+
+  /// Throws when [schedules] include the open-term principal release, which
+  /// is never a payment: recording it would book the whole principal as
+  /// repaid on the day it was released (finstack#138).
+  static void rejectPrincipalRelease(Iterable<LoanSchedule> schedules) {
+    if (schedules.any((s) => s.isPrincipalRelease)) {
+      throw Exception('The principal release is not a payment');
+    }
+  }
+
+  /// Whether a teller entering [principal] on [schedule] is paying the loan
+  /// off early, for the settlement flow, rather than making a payment
+  /// (#155). Both payment dialogs ask this. Fixed-term: only principal
+  /// above the row's bill (its `principalPayment`, a carried shortfall
+  /// included) that also clears the balance before the row; the last bill
+  /// and a remainder row paid as billed are payments, and the 0.005 rule
+  /// completes the loan. Open-term, unchanged: principal of at least the
+  /// balance.
+  static bool isEarlyPayoff(
+    LoanSchedule schedule, {
+    required double principal,
+  }) {
+    if (schedule.isOpenTerm) {
+      return principal >= schedule.outstandingBalance;
+    }
+    final owed = schedule.outstandingBalance + schedule.principalPayment;
+
+    return principal > schedule.principalPayment + 0.005 &&
+        principal >= owed - 0.005;
+  }
+
+  /// Records a teller payment of [interestPayment] and [principalPayment] on
+  /// [schedule] with the balance left after it. Every teller path (client
+  /// detail, Payment Center single and bulk) routes through here.
+  ///
+  /// A fixed-term row already holds the balance after its scheduled
+  /// principal, so only the difference from that principal moves it (#140:
+  /// subtracting the whole payment again under-billed the rest of the
+  /// schedule). Principal above the schedule is the row's extra payment. An
+  /// open-term row holds the balance before the payment.
+  static void recordTellerPayment(
+    LoanSchedule schedule, {
+    required double interestPayment,
+    required double principalPayment,
+  }) {
+    if (schedule.isOpenTerm) {
+      schedule.outstandingBalance -= principalPayment - schedule.extraPayment;
+    } else {
+      final extraPayment = principalPayment - schedule.principalPayment;
+      if (extraPayment > 0.0) {
+        schedule.extraPayment = extraPayment;
+      }
+      schedule.outstandingBalance -= extraPayment;
+    }
+
+    schedule
+      ..interestPayment = interestPayment
+      ..principalPayment = principalPayment;
+  }
+
+  /// A submitted open-term bill is settled, for the overdue stretch, at its
+  /// transfer (review of #146): rows submitted before submissions recorded
+  /// it on the row get it from their payment here, in memory.
+  static Future<void> settleSubmittedAtTheirTransfer(
+    List<LoanSchedule> rows,
+    PaymentRepository paymentRepository,
+  ) async {
+    for (final row in rows) {
+      final paymentId = row.paymentId;
+      if (row.status == LoanStatus.payment_submitted &&
+          row.collectedAt == null &&
+          paymentId != null &&
+          paymentId.isNotEmpty) {
+        row.collectedAt =
+            (await paymentRepository.get(id: paymentId)).createdAt;
+      }
+    }
+  }
+
+  /// Throws when [loan] is settled: confirming a submission then would
+  /// collect it a second time and move the loan back to paid, rejecting it
+  /// would move the loan back to not paid (review of #157). Nothing is
+  /// written.
+  static void rejectSettled(Loan loan) {
+    if (loan.status == LoanStatus.completed) {
+      throw Exception(
+        'This loan is settled: its pending payment can no longer be '
+        'confirmed or rejected',
+      );
+    }
   }
 
   /// Pure: on rejection, a schedule reverts to not_paid (or overdue if its
@@ -78,7 +201,18 @@ class PaymentConfirmationService {
   }) async {
     final schedule =
         await loanScheduleRepository.get(id: payment.loanScheduleId);
+    rejectPrincipalRelease([schedule]);
     final loan = await loanRepository.get(id: schedule.loanId);
+    rejectSettled(loan);
+    // A penalty on the balance is one per overdue stretch (R3): rows of the
+    // same submission confirmed before this one are stored with their
+    // collection date, and unpaid earlier bills mark where the stretch
+    // starts.
+    final loanRows =
+        schedule.isOpenTerm || chargesPerStretch(loan, isOpenTerm: false)
+            ? await _loadLoanSchedules(loan.id)
+            : const <LoanSchedule>[];
+    await settleSubmittedAtTheirTransfer(loanRows, paymentRepository);
 
     // Decided first so a missing waive reason aborts the whole confirmation.
     final status = applyLateness(
@@ -88,10 +222,22 @@ class PaymentConfirmationService {
       actorId: confirmedById,
       waivePenalty: waivePenalty,
       waiveReason: waiveReason,
+      loanRows: loanRows,
     );
 
     payment.markConfirmed(confirmedById: confirmedById);
     await paymentRepository.update(data: payment);
+
+    // The borrower paid the amount shown, interest only: a submission
+    // carries no principal (#138: a planned row kept the whole principal as
+    // repaid). Recording the interest lets a row from the old clamp (more
+    // interest charged than shown) carry the rest to the next bill (R4).
+    if (schedule.isOpenTerm) {
+      schedule.principalPayment = 0;
+      if (schedule.interestPayment <= 0) {
+        schedule.interestPayment = schedule.amortization;
+      }
+    }
 
     schedule
       ..paidAt = DateTime.timestamp()
@@ -109,15 +255,20 @@ class PaymentConfirmationService {
     required String confirmedById,
     required String reason,
   }) async {
+    final schedule =
+        await loanScheduleRepository.get(id: payment.loanScheduleId);
+    final loan = await loanRepository.get(id: schedule.loanId);
+    rejectSettled(loan);
+
     payment.markRejected(confirmedById: confirmedById, reason: reason);
     await paymentRepository.update(data: payment);
 
-    final schedule =
-        await loanScheduleRepository.get(id: payment.loanScheduleId);
     schedule
       ..paidAt = null
       ..paymentId = null
-      ..status = revertedStatus(dueAt: schedule.dueAt);
+      // Unpaid again: no longer settled for the overdue stretch.
+      ..collectedAt = null
+      ..status = revertedStatus(dueAt: schedule.lateFrom);
     await loanScheduleRepository.update(data: schedule);
 
     await _advanceLoanStatus(
@@ -169,19 +320,22 @@ class PaymentConfirmationService {
     );
   }
 
-  /// True when a fixed-term loan has all of its scheduled payments paid.
+  /// True when a fixed-term loan has all of its scheduled payments paid and
+  /// a paid row left no principal owed (#152: a short payment leaves a
+  /// remainder, so the count alone is not enough).
   /// Open-term loans (period == 0) are indefinite and never "fully paid" here.
   /// 15-day-term loans have twice the period's number of schedules.
   bool _fixedTermFullyPaid(Loan loan, List<LoanSchedule> schedules) {
     if (loan.period == 0) return false;
-    final paidCount = schedules
+    final paid = schedules
         .where(
           (s) =>
               s.status == LoanStatus.paid_on_time ||
               s.status == LoanStatus.paid_late,
         )
-        .length;
+        .toList();
     final expectedSchedules = loan.period * (loan.term == '15d' ? 2 : 1);
-    return paidCount >= expectedSchedules;
+    return paid.length >= expectedSchedules &&
+        !paid.every(LoanCalculationService.leavesPrincipal);
   }
 }

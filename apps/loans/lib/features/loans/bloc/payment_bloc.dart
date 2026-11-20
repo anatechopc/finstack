@@ -96,11 +96,13 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
     DateTime? collectedAt,
     bool waivePenalty = false,
     String? waiveReason,
+    List<LoanSchedule> loanRows = const [],
   }) {
     add(
       PayLoanScheduleEvent(
         loan: loan,
         schedule: schedule,
+        loanRows: loanRows,
         payment: double.parse(payment),
         interestPayment: double.parse(interestPayment),
         fileName: fileName,
@@ -131,6 +133,7 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
           throw Exception('A reason is required to waive penalties');
         }
 
+        PaymentConfirmationService.rejectPrincipalRelease([event.schedule]);
         final schedule = event.schedule
           ..paidAt = DateTime.timestamp()
           ..loanId = loan.id;
@@ -197,6 +200,7 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
           actorId: authService.user.id,
           waivePenalty: event.waivePenalty,
           waiveReason: event.waiveReason,
+          loanRows: event.loanRows,
         );
 
         final tempPayment = Payment.create(
@@ -210,19 +214,13 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
           confirmedAt: DateTime.timestamp(),
         );
 
-        if (!schedule.isOpenTerm) {
-          final extraPayment = event.payment - schedule.principalPayment;
-          if (extraPayment > 0.0) {
-            schedule
-              ..extraPayment = extraPayment
-              ..outstandingBalance -= extraPayment;
-          }
-        }
+        PaymentConfirmationService.recordTellerPayment(
+          schedule,
+          interestPayment: event.interestPayment,
+          principalPayment: event.payment,
+        );
 
         schedule
-          ..interestPayment = event.interestPayment
-          ..principalPayment = event.payment
-          ..outstandingBalance -= (event.payment - schedule.extraPayment)
           ..loanId = loan.id
           ..status = status;
 
@@ -256,6 +254,15 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
         if (loanPayment == null) {
           _log.warning('Loan payment is null. Please check.');
         }
+
+        // The last bill or a remainder row can be recorded here since #155:
+        // complete the loan once no principal is owed, as the Payment
+        // Center does. After the row is written, so it is counted.
+        await PaymentConfirmationService(
+          loanScheduleRepository: loanScheduleRepository,
+          loanRepository: loanRepository,
+          paymentRepository: paymentRepository,
+        ).completeLoanIfFullyPaid(loan.id);
 
         final cashPoolList = await cashPoolRepository.load(
           reset: true,

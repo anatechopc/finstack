@@ -30,8 +30,7 @@ part 'payment_center_state.dart';
 
 final _log = Logger('payment_center_bloc');
 
-class PaymentCenterBloc
-    extends Bloc<PaymentCenterEvent, PaymentCenterState> {
+class PaymentCenterBloc extends Bloc<PaymentCenterEvent, PaymentCenterState> {
   PaymentCenterBloc(
     BuildContext context, {
     AuthenticationService? authService,
@@ -67,7 +66,9 @@ class PaymentCenterBloc
   /// [cashPoolRepository] and [productRepository] are optional because they
   /// are `final` classes and so cannot be mocked; the OTP handlers never touch
   /// them, and a test that reaches a handler which does will fail loudly on
-  /// the unset late field rather than silently using a stand-in.
+  /// the unset late field rather than silently using a stand-in. Selecting a
+  /// borrower reads products through `_getProduct`, which treats a missing
+  /// product as none (no charges), so it runs without [productRepository].
   PaymentCenterBloc.withDependencies({
     required this.userRepository,
     required this.loanRepository,
@@ -94,8 +95,15 @@ class PaymentCenterBloc
       this.userLoanViewRepository = userLoanViewRepository;
     }
     on<SearchBorrowersEvent>(_handleSearchBorrowersEvent);
+    on<SelectBorrowerEvent>(_handleSelectBorrowerEvent);
     on<RequestOtpEvent>(_handleRequestOtpEvent);
     on<VerifyOtpEvent>(_handleVerifyOtpEvent);
+    // Write every row before their cash-pool step, which needs the
+    // unmockable cash-pool repository: a test reads the rows they wrote.
+    on<MakePaymentEvent>(_handleMakePaymentEvent);
+    on<MakeOverduePaymentEvent>(_handleMakeOverduePaymentEvent);
+    // The loan's history, one bill per due date (#152).
+    on<ExpandLoanEvent>(_handleExpandLoanEvent);
   }
 
   final AuthenticationService authService;
@@ -249,9 +257,12 @@ class PaymentCenterBloc
         List<BorrowerLoanGroup>,
         Map<String, List<PendingSubmission>>,
       )> _loadBorrowerData(User borrower) async {
+    // With their top-ups, as client detail loads a loan: the open-term
+    // engine needs them, and a row stored here holds the balance (#135).
     final borrowerLoans = await loanRepository.load(
       reset: true,
       limit: null,
+      includeAdditionalLoanAmounts: true,
       statements: [
         QueryStatement(field: 'user_id', isEqualTo: borrower.id),
       ],
@@ -260,6 +271,7 @@ class PaymentCenterBloc
     final coMakerLoans = await loanRepository.load(
       reset: true,
       limit: null,
+      includeAdditionalLoanAmounts: true,
       statements: [
         QueryStatement(
           field: 'co_maker_user_ids',
@@ -268,10 +280,8 @@ class PaymentCenterBloc
       ],
     );
 
-    final borrowerGroups =
-        await _buildLoanGroups(borrowerLoans);
-    final coMakerGroups =
-        await _buildLoanGroups(coMakerLoans, flat: true);
+    final borrowerGroups = await _buildLoanGroups(borrowerLoans);
+    final coMakerGroups = await _buildLoanGroups(coMakerLoans, flat: true);
 
     final pendingSubmissions =
         await _loadPendingSubmissions([...borrowerLoans, ...coMakerLoans]);
@@ -330,6 +340,9 @@ class PaymentCenterBloc
         }
 
         if (payment.status != PaymentStatus.pending) continue;
+        // Settled at the transfer for the overdue stretch (rows submitted
+        // before the row recorded it).
+        schedule.collectedAt ??= payment.createdAt;
 
         // Fall back to the payment id when no submissionId is set so a lone
         // submission still surfaces as its own item.
@@ -353,6 +366,7 @@ class PaymentCenterBloc
               loan: loan,
               schedules: schedulesBySubmission[entry.key] ?? const [],
               totalAmount: amountBySubmission[entry.key],
+              loanRows: persistedSchedules,
             ),
           )
           .toList();
@@ -386,7 +400,8 @@ class PaymentCenterBloc
             loan: child,
             productName: childProduct?.loanType ?? 'Unknown',
             loanType: childProduct?.loanType ?? 'Unknown',
-            actionableSchedules: childSchedules,
+            actionableSchedules: childSchedules.actionable,
+            storedSchedules: childSchedules.stored,
           ));
         }
       }
@@ -395,7 +410,8 @@ class PaymentCenterBloc
         loan: parent,
         productName: product?.loanType ?? 'Unknown',
         loanType: product?.loanType ?? 'Unknown',
-        actionableSchedules: schedules,
+        actionableSchedules: schedules.actionable,
+        storedSchedules: schedules.stored,
         childLoans: childGroups,
       ));
     }
@@ -409,7 +425,8 @@ class PaymentCenterBloc
           loan: child,
           productName: product?.loanType ?? 'Unknown',
           loanType: product?.loanType ?? 'Unknown',
-          actionableSchedules: schedules,
+          actionableSchedules: schedules.actionable,
+          storedSchedules: schedules.stored,
         ));
       }
     } else {
@@ -423,7 +440,8 @@ class PaymentCenterBloc
           loan: orphan,
           productName: product?.loanType ?? 'Unknown',
           loanType: product?.loanType ?? 'Unknown',
-          actionableSchedules: schedules,
+          actionableSchedules: schedules.actionable,
+          storedSchedules: schedules.stored,
         ));
       }
     }
@@ -440,6 +458,35 @@ class PaymentCenterBloc
     }
   }
 
+  /// Stored unpaid rows plus each generated row that is not the same cycle
+  /// as one already in the list. The same cycle means the same lateness day
+  /// (`lateFrom`; the open-term clamp moves `due_at` to the day a row was
+  /// computed, finstack#114) in the device's zone; [utcOffset] stands in for
+  /// that zone in tests. Stored dates come back in UTC, generated ones are
+  /// local, so both are converted before the days are compared. The stored
+  /// row wins because it carries the id.
+  @visibleForTesting
+  static List<LoanSchedule> mergeUnpaid(
+    List<LoanSchedule> stored,
+    List<LoanSchedule> generated, {
+    Duration? utcOffset,
+  }) {
+    DateTime day(DateTime d) =>
+        utcOffset == null ? d.toLocal() : d.toUtc().add(utcOffset);
+
+    final merged = <LoanSchedule>[...stored];
+    for (final gen in generated) {
+      final sameCycle = merged.any(
+        (s) => DateUtils.isSameDay(day(s.lateFrom), day(gen.lateFrom)),
+      );
+      if (!sameCycle) {
+        merged.add(gen);
+      }
+    }
+
+    return merged;
+  }
+
   /// Generates actionable (payable) schedules for a loan.
   ///
   /// For fixed-term loans: calculates remaining unpaid schedules using
@@ -447,16 +494,17 @@ class PaymentCenterBloc
   /// For open-term loans: generates the next payable schedule using
   /// [LoanCalculationService.calculateOpenTerm].
   ///
-  /// Returns all overdue schedules + the next upcoming unpaid schedule.
-  Future<List<LoanSchedule>> _getActionableSchedules(
+  /// Returns all overdue schedules + the next upcoming unpaid schedule, and
+  /// the loan's stored rows (an open-term penalty is one per overdue
+  /// stretch, so the payment dialog needs what was already charged).
+  Future<({List<LoanSchedule> actionable, List<LoanSchedule> stored})>
+      _getActionableSchedules(
     Loan loan,
     Product? product,
   ) async {
-    // No actionable schedules for completed/declined/bad_debt loans
-    if (loan.status == LoanStatus.completed ||
-        loan.status == LoanStatus.declined ||
-        loan.status == LoanStatus.bad_debt) {
-      return [];
+    // No actionable schedules for pending/completed/declined/bad_debt loans
+    if (!LoanCalculationService.billsOpenTerm(loan)) {
+      return (actionable: <LoanSchedule>[], stored: <LoanSchedule>[]);
     }
 
     // Fetch persisted schedules from Firestore
@@ -500,21 +548,31 @@ class PaymentCenterBloc
       );
       generatedSchedules = result.schedules;
     } else {
-      // Open-term: generate next payable schedule
+      // Open-term: generate next payable schedule. Every stored row goes in
+      // as a past cycle, unpaid ones (rejected submissions) included, as
+      // LoansBloc does, so this screen, client detail and the borrower
+      // compute the same next cycle (review of finstack#143). The engine
+      // gets copies: the stored rows are what this screen shows and
+      // confirmation writes (the engine no longer changes its inputs,
+      // finstack#145; the copies keep that guarantee here).
       final result = LoanCalculationService.calculateOpenTerm(
         amount: totalAmount,
         date: loan.createdAt,
         interestRate: loan.interestRate,
         term: loan.term,
         companyId: loan.companyId,
-        paidSchedules: paidSchedules,
+        paidSchedules: [
+          for (final s in persistedSchedules) s.toLoanSchedule(),
+        ],
         loan: loan,
       );
-      // Filter out placeholders and additional loan entries —
-      // only keep actual payable schedules (id == NO_ID, not placeholder)
+      // Filter out placeholders, additional loan entries and the stored rows
+      // the engine hands back — only keep actual payable schedules
+      // (id == NO_ID, not placeholder)
       generatedSchedules = result.schedules
           .where(
             (s) =>
+                s.id == NO_ID &&
                 !s.isPlaceholder &&
                 !s.isAdditionalLoanAmount &&
                 (s.status == LoanStatus.not_paid ||
@@ -523,35 +581,24 @@ class PaymentCenterBloc
           .toList();
     }
 
-    // Also include any persisted unpaid schedules from Firestore
+    // Also include any persisted unpaid schedules from Firestore, but never
+    // the principal release a rejected submission left unpaid (#138).
     final persistedUnpaid = persistedSchedules
         .where(
           (s) =>
-              s.status == LoanStatus.not_paid ||
-              s.status == LoanStatus.not_paid_overdue,
+              !s.isPrincipalRelease &&
+              (s.status == LoanStatus.not_paid ||
+                  s.status == LoanStatus.not_paid_overdue),
         )
         .toList();
 
-    // Combine: persisted unpaid + generated, then deduplicate by dueAt
-    final allUnpaid = <LoanSchedule>[...persistedUnpaid];
-    for (final gen in generatedSchedules) {
-      final alreadyExists = allUnpaid.any(
-        (s) =>
-            s.dueAt.year == gen.dueAt.year &&
-            s.dueAt.month == gen.dueAt.month &&
-            s.dueAt.day == gen.dueAt.day,
-      );
-      if (!alreadyExists) {
-        allUnpaid.add(gen);
-      }
-    }
-
-    allUnpaid.sort((a, b) => a.dueAt.compareTo(b.dueAt));
+    final allUnpaid = mergeUnpaid(persistedUnpaid, generatedSchedules)
+      ..sort((a, b) => a.dueAt.compareTo(b.dueAt));
 
     // Mark overdue schedules
     final now = DateTime.now();
     for (final schedule in allUnpaid) {
-      if (schedule.dueAt.toLocal().isBefore(now) &&
+      if (schedule.lateFrom.toLocal().isBefore(now) &&
           schedule.status == LoanStatus.not_paid) {
         schedule.status = LoanStatus.not_paid_overdue;
       }
@@ -561,14 +608,16 @@ class PaymentCenterBloc
     final overdue = allUnpaid
         .where((s) => s.status == LoanStatus.not_paid_overdue)
         .toList();
-    final upcoming = allUnpaid
-        .where((s) => s.status == LoanStatus.not_paid)
-        .toList();
+    final upcoming =
+        allUnpaid.where((s) => s.status == LoanStatus.not_paid).toList();
 
-    return [
-      ...overdue,
-      if (upcoming.isNotEmpty) upcoming.first,
-    ];
+    return (
+      actionable: [
+        ...overdue,
+        if (upcoming.isNotEmpty) upcoming.first,
+      ],
+      stored: persistedSchedules,
+    );
   }
 
   Future<void> _handleClearBorrowerEvent(
@@ -623,16 +672,24 @@ class PaymentCenterBloc
           companyId: loan.companyId,
           paidSchedules: paidSchedules,
         );
-        fullSchedules = [...paidSchedules, ...result.schedules];
+        // One bill per due date (#152: a short last payment and its rest).
+        fullSchedules = LoanCalculationService.oneBillPerDueDate([
+          ...paidSchedules,
+          ...result.schedules,
+        ]);
       } else {
-        // Open-term: use calculateOpenTerm which combines paid + next
+        // Open-term: use calculateOpenTerm which combines paid + next. Every
+        // stored row goes in, as in _getActionableSchedules and LoansBloc,
+        // as copies so the engine cannot change the stored rows.
         final result = LoanCalculationService.calculateOpenTerm(
           amount: totalAmount,
           date: loan.createdAt,
           interestRate: loan.interestRate,
           term: loan.term,
           companyId: loan.companyId,
-          paidSchedules: paidSchedules,
+          paidSchedules: [
+            for (final s in persistedSchedules) s.toLoanSchedule(),
+          ],
           loan: loan,
         );
         fullSchedules = result.schedules;
@@ -672,6 +729,23 @@ class PaymentCenterBloc
     ));
   }
 
+  /// The stored and listed rows of [loanId] as loaded for the selected
+  /// borrower: an open-term penalty is one per overdue stretch (R3).
+  List<LoanSchedule> loanRowsOf(String loanId) {
+    for (final group in [
+      for (final group in [...state.borrowerLoans, ...state.coMakerLoans]) ...[
+        group,
+        ...group.childLoans,
+      ],
+    ]) {
+      if (group.loan.id == loanId) {
+        return [...group.storedSchedules, ...group.actionableSchedules];
+      }
+    }
+
+    return const [];
+  }
+
   void makePayment({
     required Loan loan,
     required LoanSchedule schedule,
@@ -690,6 +764,7 @@ class PaymentCenterBloc
       MakePaymentEvent(
         loan: loan,
         schedule: schedule,
+        loanRows: loanRowsOf(loan.id),
         payment: double.parse(payment),
         interestPayment: double.parse(interestPayment),
         fileName: fileName,
@@ -725,6 +800,7 @@ class PaymentCenterBloc
         throw Exception('A reason is required to waive penalties');
       }
 
+      PaymentConfirmationService.rejectPrincipalRelease([event.schedule]);
       final schedule = event.schedule
         ..paidAt = DateTime.timestamp()
         ..loanId = loan.id;
@@ -738,7 +814,12 @@ class PaymentCenterBloc
       } else if (event.force) {
         comment = _buildForceComment();
       } else {
-        final result = await _uploadPaymentProof(event, loan);
+        final result = await _uploadPaymentProof(
+          loan: loan,
+          fileName: event.fileName,
+          fileBytes: event.fileBytes,
+          signatureBytes: event.signatureBytes,
+        );
         transactionPhotoUrl = result.$1;
         signatureUrl = result.$2;
         comment = result.$3;
@@ -751,6 +832,7 @@ class PaymentCenterBloc
         actorId: authService.user.id,
         waivePenalty: event.waivePenalty,
         waiveReason: event.waiveReason,
+        loanRows: event.loanRows,
       );
 
       final tempPayment = Payment.create(
@@ -766,19 +848,13 @@ class PaymentCenterBloc
         status: PaymentStatus.confirmed,
       );
 
-      if (!schedule.isOpenTerm) {
-        final extraPayment = event.payment - schedule.principalPayment;
-        if (extraPayment > 0.0) {
-          schedule
-            ..extraPayment = extraPayment
-            ..outstandingBalance -= extraPayment;
-        }
-      }
+      PaymentConfirmationService.recordTellerPayment(
+        schedule,
+        interestPayment: event.interestPayment,
+        principalPayment: event.payment,
+      );
 
       schedule
-        ..interestPayment = event.interestPayment
-        ..principalPayment = event.payment
-        ..outstandingBalance -= (event.payment - schedule.extraPayment)
         ..loanId = loan.id
         ..status = status;
 
@@ -787,29 +863,7 @@ class PaymentCenterBloc
         updateView: true,
       );
 
-      Payment? loanPayment;
-      if (schedule.id == NO_ID) {
-        await paymentRepository.add(data: tempPayment).then((payment) {
-          loanPayment = payment;
-          return loanScheduleRepository
-              .add(data: schedule..paymentId = payment.id)
-              .then((addedSchedule) {
-            return paymentRepository
-                .update(data: payment..loanScheduleId = addedSchedule.id);
-          });
-        });
-      } else {
-        await paymentRepository.add(data: tempPayment).then((payment) {
-          loanPayment = payment;
-          return loanScheduleRepository.update(
-            data: schedule..paymentId = payment.id,
-          );
-        });
-      }
-
-      if (loanPayment == null) {
-        _log.warning('Loan payment is null. Please check.');
-      }
+      final loanPayment = await _persistPaidSchedule(schedule, tempPayment);
 
       // Auto-complete the loan if this teller payment was the final schedule.
       // Runs after the schedule is persisted so the paid count is accurate.
@@ -899,119 +953,31 @@ class PaymentCenterBloc
       if (event.waivePenalty && (event.waiveReason?.trim().isEmpty ?? true)) {
         throw Exception('A reason is required to waive penalties');
       }
-      final collectedAt = event.collectedAt ?? DateTime.now();
+      PaymentConfirmationService.rejectPrincipalRelease(event.schedules);
 
-      ImageUrl? transactionPhotoUrl;
-      ImageUrl? signatureUrl;
-      String? comment;
+      final proof = event.otpVerified
+          ? (null, null, await _buildOtpComment(loan))
+          : event.force
+              ? (null, null, _buildForceComment())
+              : await _uploadPaymentProof(
+                  loan: loan,
+                  fileName: event.fileName,
+                  fileBytes: event.fileBytes,
+                  signatureBytes: event.signatureBytes,
+                );
 
-      if (event.otpVerified) {
-        comment = await _buildOtpComment(loan);
-      } else if (event.force) {
-        comment = _buildForceComment();
-      } else {
-        if (event.fileName == null ||
-            event.fileBytes == null ||
-            event.signatureBytes == null) {
-          throw Exception('Transaction photo and signature are required');
-        }
-        transactionPhotoUrl = await storageRepository.upload(
-          data: event.fileBytes!,
-          folder: 'users/${loan.userId}/loans/${loan.id}',
-          fileName: event.fileName!,
-          includeOriginal: true,
-        );
-        signatureUrl = await storageRepository.upload(
-          data: event.signatureBytes!,
-          folder: 'users/${loan.userId}/loans/${loan.id}',
-          fileName:
-              'signature_${DateTime.timestamp().toDefaultDateFormat()}.png',
-          forceDecodeToImage: true,
-          includeOriginal: true,
-        );
-        comment = '''
-          Manual payment confirmed by:
-          user:id: ${authService.user.id}
-          user:name: ${authService.user.completeNameEasternOrder}
-          user:email: ${authService.user.emailAddress}
-          confirmed_at: ${DateTime.timestamp().toDefaultDateFormatExtended()}''';
-      }
+      final (:paid, :lastPayment) =
+          await _settleOverdueRows(event: event, proof: proof);
 
-      // Process each overdue schedule
-      Payment? lastPayment;
-      for (final schedule in event.schedules) {
-        schedule
-          ..paidAt = DateTime.timestamp()
-          ..loanId = loan.id;
-
-        final status = PaymentConfirmationService.applyLateness(
-          schedule: schedule,
-          loan: loan,
-          collectedAt: collectedAt,
-          actorId: authService.user.id,
-          waivePenalty: event.waivePenalty,
-          waiveReason: event.waiveReason,
-        );
-
-        // Distribute payment proportionally per schedule
-        final interestPayment = schedule.isOpenTerm
-            ? schedule.interestCharge
-            : schedule.interestPayment;
-        final principalPayment = schedule.principalPayment;
-
-        if (!schedule.isOpenTerm) {
-          final extraPayment = principalPayment - schedule.principalPayment;
-          if (extraPayment > 0.0) {
-            schedule
-              ..extraPayment = extraPayment
-              ..outstandingBalance -= extraPayment;
-          }
-        }
-
-        schedule
-          ..interestPayment = interestPayment
-          ..principalPayment = principalPayment
-          ..outstandingBalance -= (principalPayment - schedule.extraPayment)
-          ..loanId = loan.id
-          ..status = status;
-
-        final tempPayment = Payment.create(
-          userId: loan.userId,
-          loanScheduleId: schedule.id,
-          loanId: loan.id,
-          transactionPhotoUrl: transactionPhotoUrl,
-          signatureUrl: signatureUrl,
-          bypassPaymentProof: event.force || event.otpVerified,
-          comment: comment,
-          confirmedBy: authService.user.id,
-          confirmedAt: DateTime.timestamp(),
-          status: PaymentStatus.confirmed,
-        );
-
-        if (schedule.id == NO_ID) {
-          await paymentRepository.add(data: tempPayment).then((payment) {
-            lastPayment = payment;
-            return loanScheduleRepository
-                .add(data: schedule..paymentId = payment.id)
-                .then((addedSchedule) {
-              return paymentRepository
-                  .update(data: payment..loanScheduleId = addedSchedule.id);
-            });
-          });
-        } else {
-          await paymentRepository.add(data: tempPayment).then((payment) {
-            lastPayment = payment;
-            return loanScheduleRepository.update(
-              data: schedule..paymentId = payment.id,
-            );
-          });
-        }
-      }
-
-      // Update loan status with the last schedule's status
-      final lastStatus = event.schedules.last.status;
+      // The loan follows the earliest bill still unpaid (a partial payment
+      // leaves later bills overdue), otherwise the last bill paid.
+      final stillUnpaid = event.schedules.where(
+        (s) => !paid.any((p) => identical(p, s)),
+      );
       await loanRepository.update(
-        data: loan..status = lastStatus,
+        data: loan
+          ..status =
+              stillUnpaid.isEmpty ? paid.last.status : stillUnpaid.first.status,
         updateView: true,
       );
 
@@ -1034,8 +1000,7 @@ class PaymentCenterBloc
 
       emit(state.copyWith(
         status: PaymentCenterStatus.paymentSuccess,
-        message:
-            'Successfully paid ${event.schedules.length} overdue schedule(s)',
+        message: 'Successfully paid ${paid.length} overdue schedule(s)',
         isLoading: false,
       ));
 
@@ -1051,6 +1016,129 @@ class PaymentCenterBloc
         isLoading: false,
       ));
     }
+  }
+
+  /// Writes the overdue rows [event] pays, each with its own confirmed
+  /// payment. Open-term bills: the entered interest pays them oldest first
+  /// (owner rule R4; a bill that gets nothing stays unpaid, a short one
+  /// carries the rest), and the overdue stretch's penalty is charged once,
+  /// on the first late bill (R3). Fixed-term rows are paid as computed.
+  Future<({List<LoanSchedule> paid, Payment? lastPayment})> _settleOverdueRows({
+    required MakeOverduePaymentEvent event,
+    required (ImageUrl?, ImageUrl?, String) proof,
+  }) async {
+    final loan = event.loan;
+    final collectedAt = event.collectedAt ?? DateTime.now();
+    final (transactionPhotoUrl, signatureUrl, comment) = proof;
+    final interestShares = PaymentConfirmationService.splitOpenTermInterest(
+      schedules: event.schedules,
+      totalInterest: event.totalInterestPayment,
+    );
+    final loanRows = await _stretchLoanRows(loan, event.schedules);
+
+    final paid = <LoanSchedule>[];
+    Payment? lastPayment;
+    for (var i = 0; i < event.schedules.length; i++) {
+      final schedule = event.schedules[i];
+      if (schedule.isOpenTerm && interestShares[i] <= 0) {
+        continue;
+      }
+
+      schedule
+        ..paidAt = DateTime.timestamp()
+        ..loanId = loan.id;
+
+      final status = PaymentConfirmationService.applyLateness(
+        schedule: schedule,
+        loan: loan,
+        collectedAt: collectedAt,
+        actorId: authService.user.id,
+        waivePenalty: event.waivePenalty,
+        waiveReason: event.waiveReason,
+        loanRows: loanRows,
+      );
+
+      PaymentConfirmationService.recordTellerPayment(
+        schedule,
+        interestPayment:
+            schedule.isOpenTerm ? interestShares[i] : schedule.interestPayment,
+        principalPayment: schedule.principalPayment,
+      );
+
+      schedule
+        ..loanId = loan.id
+        ..status = status;
+
+      lastPayment = await _persistPaidSchedule(
+        schedule,
+        Payment.create(
+          userId: loan.userId,
+          loanScheduleId: schedule.id,
+          loanId: loan.id,
+          transactionPhotoUrl: transactionPhotoUrl,
+          signatureUrl: signatureUrl,
+          bypassPaymentProof: event.force || event.otpVerified,
+          comment: comment,
+          confirmedBy: authService.user.id,
+          confirmedAt: DateTime.timestamp(),
+        ),
+      );
+      paid.add(schedule);
+    }
+
+    if (paid.isEmpty) {
+      throw Exception('Nothing to pay');
+    }
+
+    return (paid: paid, lastPayment: lastPayment);
+  }
+
+  /// The loan's stored rows (without those in [paying]) plus [paying], so a
+  /// penalty on the balance is one per overdue stretch (R3). Empty for a
+  /// fixed-term loan without one.
+  Future<List<LoanSchedule>> _stretchLoanRows(
+    Loan loan,
+    List<LoanSchedule> paying,
+  ) async {
+    if (paying.isEmpty ||
+        !(paying.first.isOpenTerm ||
+            chargesPerStretch(loan, isOpenTerm: false))) {
+      return const [];
+    }
+    final stored = await loanScheduleRepository.allByLoanId(
+      loanId: loan.id,
+      onlyPaid: false,
+    );
+    // A submitted bill is settled at its transfer, also one submitted
+    // before submissions recorded it (review of #146).
+    await PaymentConfirmationService.settleSubmittedAtTheirTransfer(
+      stored,
+      paymentRepository,
+    );
+
+    return [
+      ...stored.where((row) => !paying.any((s) => s.id == row.id)),
+      ...paying,
+    ];
+  }
+
+  /// Saves [payment] and [schedule] (adds a computed row, updates a stored
+  /// one) and links them. Returns the saved payment.
+  Future<Payment> _persistPaidSchedule(
+    LoanSchedule schedule,
+    Payment payment,
+  ) async {
+    final saved = await paymentRepository.add(data: payment);
+    if (schedule.id == NO_ID) {
+      final added = await loanScheduleRepository.add(
+        data: schedule..paymentId = saved.id,
+      );
+      await paymentRepository.update(data: saved..loanScheduleId = added.id);
+    } else {
+      await loanScheduleRepository.update(data: schedule..paymentId = saved.id);
+    }
+
+    return saved;
   }
 
   Future<String> _buildOtpComment(Loan loan) async {
@@ -1077,28 +1165,27 @@ class PaymentCenterBloc
           confirmed_at: ${DateTime.timestamp().toDefaultDateFormatExtended()}''';
   }
 
-  Future<(ImageUrl?, ImageUrl?, String)> _uploadPaymentProof(
-    MakePaymentEvent event,
-    Loan loan,
-  ) async {
-    if (event.fileName == null ||
-        event.fileBytes == null ||
-        event.signatureBytes == null) {
+  Future<(ImageUrl?, ImageUrl?, String)> _uploadPaymentProof({
+    required Loan loan,
+    required String? fileName,
+    required Uint8List? fileBytes,
+    required Uint8List? signatureBytes,
+  }) async {
+    if (fileName == null || fileBytes == null || signatureBytes == null) {
       throw Exception('Transaction photo and signature are required');
     }
 
     final transactionPhotoUrl = await storageRepository.upload(
-      data: event.fileBytes!,
+      data: fileBytes,
       folder: 'users/${loan.userId}/loans/${loan.id}',
-      fileName: event.fileName!,
+      fileName: fileName,
       includeOriginal: true,
     );
 
     final signatureUrl = await storageRepository.upload(
-      data: event.signatureBytes!,
+      data: signatureBytes,
       folder: 'users/${loan.userId}/loans/${loan.id}',
-      fileName:
-          'signature_${DateTime.timestamp().toDefaultDateFormat()}.png',
+      fileName: 'signature_${DateTime.timestamp().toDefaultDateFormat()}.png',
       forceDecodeToImage: true,
       includeOriginal: true,
     );
@@ -1165,8 +1252,7 @@ class PaymentCenterBloc
       userId: loan.userId,
       amount: cashPoolBalanceDeduction,
       status: CashPoolStatus.acknowledged_payment,
-      paymentId:
-          loanPayment?.id ?? 'Loan payment is null. Report to app admin',
+      paymentId: loanPayment?.id ?? 'Loan payment is null. Report to app admin',
       loanId: loan.id,
       comment: cashPoolComment,
     );

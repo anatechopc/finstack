@@ -41,19 +41,20 @@ appear here.
 ## Clock coupling (read before writing any open-term scenario)
 
 `calculateOpenTermSchedules` reads the clock (`now ?? DateTime.now()` since
-the S2 seam; `Jiffy.now()` before it) in two places (verified in source):
+the S2 seam; `Jiffy.now()` before it) in ONE place since the owner rules R1-R5
+(2026-11-19): it lists every bill due before today, then the bill due today or
+later. Before R1 it read it twice: the clamp `if (nextDate.isSameOrBefore(now))
+nextDate = now.startOf(day)` and the `'D1,D2'` branch, which took the next
+salary day from TODAY's day-of-month when the start date was on neither (both
+gone; bills are on scheduled dates).
 
-1. The clamp `if (nextDate.isSameOrBefore(now)) nextDate = now.startOf(day)`
-   — fires when the computed next due date is in the past.
-2. The `'D1,D2'` branch: when the start date's day-of-month matches neither
-   salary day, the next date is derived from TODAY's day-of-month.
-
-A third, sneakier coupling sits in `calculateOpenTerm`'s additional-loan
-loop: it positions each additional loan by comparing `schedule.createdAt`
-against `additionalLoanAmount.createdAt`, and schedules computed in the same
-run carry `createdAt = DateTime.timestamp()` (i.e. NOW — set by
-`LoanSchedule.create`). Consequence for fixtures: date additional-loan
-fixtures in the PAST relative to the test run, otherwise they sort after the
+A third, sneakier coupling sat in `calculateOpenTerm`'s additional-loan loop,
+which positioned each additional loan by comparing `schedule.createdAt` with
+`additionalLoanAmount.createdAt`. Since R5 top-up rows are positioned by date;
+whether a top-up is already in a stored row's balance still compares the
+stored row's `createdAt` (rows computed in a run carry `createdAt =
+DateTime.timestamp()`). Consequence for fixtures, kept from before: date
+additional-loan fixtures in the PAST relative to the test run, otherwise they sort after the
 freshly computed schedules and the insertion point shifts.
 
 The clock is injectable since 2026-09-08 (S2 below). Two coping strategies,
@@ -126,43 +127,90 @@ double-derivation IS the proof.
 
 | ID | Method / target | Inputs (summary) | Expected (hand-derived) | Guards against |
 |----|-----------------|------------------|-------------------------|----------------|
-| G1 | `calculateFixedTerm` | 10000, 3 mo, 5%, `'1m'` | table above | amortization formula drift |
+| G1 | `calculateFixedTerm` | 10000, 3 mo, 5%, `'1m'` | table above; G1t (finstack#140, `PaymentConfirmationService.recordTellerPayment`, 5 scenarios in `test/services/loan_calculation_service_test.dart`): row 1 paid by a teller stores 6,827.91 (was 3,655.82), then two of 3,672.09, total 11,016.26 (the dialog's 3,172.09: 3,672.09 + 3,672.08, total 11,016.26); 1,000 extra stores 5,827.91 (was 2,655.82), then 3,672.09 + 2,569.58; 3,000 stores 7,000; open-term rows keep the balance before the payment (10,000 − 2,000 = 8,000) | amortization formula drift; a teller payment subtracting the principal twice |
 | G2 | `calculateFixedTerm` | 10000, 3 mo, 5%, `'15d'` | 6 payments, R=0.025/period, P closeTo 1815.50; total closeTo 10893.00 (tol 0.05) | `'15d'` doubling/halving logic |
 | G3 | `calculateFixedTerm` | resume with 1 persisted paid schedule | output contains ONLY computed schedules (all `id == NO_ID`), count = n-1, amortization taken from `paidSchedules.first.amortization` | teller double-count (EXISTS — keep) |
 | G4a | `calculateOpenTermSchedules` | 10000, 5%, `'1m'`, start = now-1d | 1 schedule; dueAt = start+30d; multiplier 1.0; interestCharge 500.00; principalPayment 0; OB stays 10000; amortization 500.00; `totalLoanPayment == double.infinity` (sentinel — pin it) | 30-day-month convention; interest-only invariant |
 | G4b | `calculateOpenTermSchedules` | same but `'15d'` | dueAt = start+15d; multiplier 0.5; interestCharge 250.00 | 15-day proration |
-| G4c | `calculateOpenTermSchedules` (S2 seam) | paid row due Aug 1 (OB 10000), `now` = 2026-09-08 noon | next due Aug 31 is past → snaps to Sep 8; diff 38 → multiplier 38/30; interestCharge 633.33; amortization stays 500 (pinned oddity); with `now` = Aug 15: due Aug 31, 500 | past-due clamp (the overdue path penalties run on) |
-| G5d | `calculateOpenTermSchedules` (S2 seam) | `'1,15'` start on neither day; `now` fixed | start Sep 5 / now Sep 8 → due Sep 15, 10 d, 166.67; start Sep 18 / now Sep 20 → due Oct 1, 13 d, 216.67; `'5,20'` start Sep 2 / now Sep 3 → due Sep 5, 3 d, 50.00 | `'D1,D2'` third sub-branch (next due derived from today) |
+| G4c | `calculateOpenTermSchedules` (S2 seam) | paid row due Aug 1 (OB 10000), `now` = 2026-09-08 noon | FLIPPED 2026-11-19 (R1/R2): the Aug 31 bill keeps its date, 30 days, 500, no `original_due_at`, then the Sep 30 bill (500). Was: snapped to Sep 8, 38/30, 633.33, amortization capped at 500. With `now` = Aug 15: due Aug 31, 500 (unchanged) | overdue bills keep their dates; no accrual to today, no cap (#120) |
+| G5d | `calculateOpenTermSchedules` (S2 seam) | `'1,15'` start on neither day; `now` fixed | start Sep 5 / now Sep 8 → due Sep 15, 10 d, 166.67; start Sep 18 / now Sep 20 → due Oct 1, 13 d, 216.67; `'5,20'` start Sep 2 / now Sep 3 → due Sep 5, 3 d, 50.00 | `'D1,D2'` start on neither day: since R1 the next salary day after the start date (same numbers as when it came from today) |
 | G5 | `calculateOpenTermSchedules` | 10000, 5%, term `'1,15'`, start ON day 1 (next month, future) | dueAt = day 15 same month; diff 14 days; multiplier 14/30 = 0.4667; interestCharge closeTo 233.33 | `'D1,D2'` comma parsing + salary-day hop |
 | G5b | `calculateOpenTermSchedules` | term `'15,1'` (reversed order), start ON day 1 | identical to G5 (code min/maxes the two days) | salary-day ordering |
 | G6 | `calculateOpenTermSchedules` | 10000, 5%, `'1m'`, start = Feb 1 of the next NON-LEAP year (test helper picks it, keeping it in the future) | dueAt = Mar 3 that year (Feb 1 + 30 CALENDAR days); multiplier exactly 1.0; interest 500.00 | month-boundary proration: 1 month = 30 days, NOT calendar month |
-| G7 | early-settlement formula | family of 1 loan (10000 + 500 charges - 200 deductions - 100 upfront) + an open-term row (interest 500) and a fixed-term row (interest 400 + principal 1000) | released 10200; CURRENT formula = released − last row only = 8800 (pinned); accumulation would give 8300 but is NOT the target (subtracts interest from principal) — finstack#116 decides the formula | D9 and its siblings (see aggregation-triggers.md D9) |
+| G7 | early-settlement figure (finstack#116) | G1 and a 10,000 open-term loan at 5%, settled on fixed dates (see the notes) | balance after the last confirmed row + top-ups + interest accrued since its due date + missed-bill penalties; G7a G1 10 days after bill 1 = 6,941.71 | D9 and its siblings (see aggregation-triggers.md D9) |
 | G8 | `ChargeCalculator.applyChargesAndDeductionsDetailed` | base 10000; charges [5%, flat 150, upfront 2%]; deductions [1%, flat 50] | additionalCharges 650, upfront 200, deductions 150, totalAmount 10500 | percent-vs-flat parsing; upfront excluded from principal |
-| G9 | `calculateOpenTerm` (finstack#33 RC2) | open-term loan, 1 paid schedule (OB 10000), 1 additional loan (2000 + 100 charges) dated after the paid schedule but in the past | additional-loan placeholder schedule has OB = 12100 EXACTLY ONCE; the adjacent computed schedule is updated in place to OB 12100 (the documented mutation at the end of `calculateOpenTerm`); the 12100 appears from the insertion point onward and nowhere earlier | double-counted OB (root cause 2 of finstack#33) |
-| G10 | `calculateOpenTerm` (finstack#33 RC3) | 2 additional loans supplied NEWEST-FIRST in `loan.additionalLoanAmounts` | processing order is by `createdAt` ascending: first placeholder OB = base+A1, second = base+A1+A2 | reverse-order iteration (root cause 3 of finstack#33; the `sortedBy` at ~line 357) |
+| G9 | `calculateOpenTerm` (finstack#33 RC2) | open-term loan, 1 paid schedule (OB 10000), 1 additional loan (2000 + 100 charges) dated after the paid schedule but in the past | additional-loan placeholder schedule has OB = 12100 EXACTLY ONCE (83.33 accrued, amortization 0); the due row has OB 12100 and FLIPPED 2026-11-19 (R5, #117) bills 83.33 + 504.17 = 587.50 (was 83.33 copied, 500 due); G9b-G9f: top-up at 14:30 (587.50), on the due date (500, old balance), in a missed cycle (598.00 then 605.00), stamped after the bill (500), previous cycle paid early (605.00 + the top-up's 3 unbilled days 10.50 = 615.50 since the #146 review; #131's review probe) | double-counted OB (root cause 2 of finstack#33); the top-up split |
+| G10 | `calculateOpenTerm` (finstack#33 RC3) | 2 additional loans supplied NEWEST-FIRST in `loan.additionalLoanAmounts` | processing order is by `createdAt` ascending: first placeholder OB = base+A1, second = base+A1+A2; FLIPPED 2026-11-19 (R5): the due row bills 83.33 + 40.33 + 578.83 = 702.50 (was 40.33 copied) | reverse-order iteration (root cause 3 of finstack#33; the `sortedBy` at ~line 357) |
 | G11 | bloc flow (finstack#33 RC1) | AdditionalLoanBloc success → LoansBloc refresh | `selectLoan()` invoked after success | stale-UI root cause 1 — NOT a math test; write as a bloc/widget test per finstack-testing-and-validation, or park it explicitly |
+| G12 | penalties: `resolveLateness` / `PaymentConfirmationService.applyLateness` (`test/services/penalty_golden_test.dart`, 11 scenarios) | company default penalties copied to a product, snapshotted on the loan; a row 5 days late on a 2,500 amortization (100 once + 25/day) | defaults imposed → 225 and `paid_late`; no company defaults → `paid_late` but 0, nothing to penalize or waive; allow-late product → `paid_on_time`, 0; open-term base is the outstanding balance (600); monthly and per-installment cadence; waive needs a reason and keeps the terms; the loan snapshot does not follow later edits | a penalty charged without a definition, the wrong base or cadence, a waive that erases the record, a snapshot that follows the product |
+| G13 | open-term lateness (finstack#114): `calculateOpenTermSchedules` (S2 seam) → `previewPenalty` / `resolveLateness` / `applyLateness` (`test/services/penalty_open_term_golden_test.dart`, 7 scenarios) | the G4c loan (paid cycle due Aug 1, OB 10,000, 5%) with 100 once + 1%/day of the balance; seen Sep 8 noon | INTEREST FLIPPED 2026-11-19 (R1/R2; penalties unchanged): the bill is due Aug 31, 500 (was due Sep 8, 633.33, `originalDueAt` Aug 31); `'15,30'` bills Aug 30 250 and Sep 15 266.67 (was one row due Sep 16, 533.33), both paid together 2,000 + 200 = 2,200 (the 1% a day once, R3; the flat 100 once and 100 per installment per bill since the owner's flat-fee decision, 2026-11-19, was 2,000). Penalties: 8 days late, 100 + 800 = 900, `paid_late`; allow-late → 8 days recorded, 0, `paid_on_time`; on time (seen Aug 15, or on Aug 31 itself) → no original due date, 0; `'15,30'` paid Aug 15 seen Sep 16 → due Aug 30, 17 days, 100 + 1,700 + 100 × ceil(17/15) = 2,000; stored row keeps `original_due_at` and reads back 8 days, a pre-#114 document counts from `due_at`; collected Sep 5 → 5 days, 600; the principal-release placeholder → 0, and confirming it → `paid_on_time`, 0 days. Before #114 every one of these was 0 days, 0 | lateness read from the billing date (open-term never late), the salary-day term read as 30 days, the original due date lost on the stored row, a penalty on a placeholder row |
+| G14 | owner rules R1-R5 (2026-11-19): `calculateOpenTermSchedules` / `calculateOpenTerm` (S2 seam), `borrowerAmountsDue`, `resolveLatenessTogether` / `previewPenalty` / `applyLateness` with the loan's rows, `splitOpenTermInterest` (`test/services/open_term_billing_golden_test.dart`, 48 scenarios; G14t-u from the fourth #146 review: billing never continues from a stored principal release (500 per cycle, Pay in full 2,000 by Oct 5), the one-day rule for salary days; G14s from the third: an old build's clamp row does not move the schedule (Aug 31, 22 days, 500 due, then Sep 30); G14p-r from the second: a stored bill within a day of its date is that bill (no 1-day bill under UTC or Manila), a top-up counts from its approval (587.50, 605, 605 since the #149 review moved the split to the approval day; was 692.50), two bills in one submission owe 450 + 100 = 550 (the stretch once, the flat 100 per bill since 2026-11-19, was 450); G14i-o from the first: approved top-ups only 587.50 vs 500, per-day penalty base 400, active loans only (7 bills vs none), clamp-row shortfall 1,500, UTC vs Manila same bills, month-end salary days, 899 bills with the current one last) | 40,000 at 5% on `'15,30'`; 10,000 and 20,000 `'1m'`/`'15d'`; penalties 0.1%/day, 10%/month, 10%/installment, 100 once | salary-day example: Sep 15 1,066.67 + Sep 30 1,000 + 15 × 40 = 2,666.67; next bill after a late payment on its scheduled date (`'1m'` Aug 31 500, clamp row 433.33 interest and 500.00 due with its 66.67 unbilled charge (moved in the #146 review, was 433.33); `'15d'` Aug 1 200 then Aug 16; #144 repros: Sep 30 / Oct 15 / Oct 30 and Aug 15 / Aug 30 / Sep 15 / Sep 30); three missed bills 1,500 (Pay in full 2,000); penalty once per stretch 680 / 4,000 / 8,000 (per bill 760 / 8,000 / 12,000); partial catch-up 680 then 320 (with the flat "100 once" 780 then 420 since 2026-11-19, was 780 then 320); two stretches 300 + 300; shortfall 600 of 1,000 → 1,400, chain 1,400, bulk split 1,400 + 400 / 600 + 0 / 1,400 + 1,600; top-up 83.33 + 504.17 = 587.50; the engine leaves the caller's rows and list unchanged (#145 probe: 15,000 / 500 / 7,600) | bills moved to today, one-month cap, missed bills collapsed, the salary day taken from the clock, a balance penalty per bill, a lost shortfall, a partial top-up cycle, mutated inputs |
+| G15 | penalty "Based on" (owner, 2026-11-19): `previewPenalty` / `resolveLatenessTogether` / `applyLateness` with the loan's rows, `borrowerAmountsDue`, `Penalty.baseFor` (`test/services/penalty_based_on_golden_test.dart`, 26 scenarios) | open-term 40,000 at 5% on `'15,30'`, Sep 15 and Sep 30 bills of 1,000 (the owner's "take each bill as 1,000"; O8 uses the engine's 1,066.67); fixed-term rows of 2,500 (Aug 31: principal 2,100, balance after 5,900; Sep 30: 2,205, 3,695) | on the balance, both paid Oct 2: 680 / 4,000 / 8,000 once; on the missed bill: daily 1% 170 + 20 = 190, monthly 10% 100 + 100 = 200, per installment 10% 200 + 100 = 300, Pay now 2,190; the 15th paid on the 30th with the 30th, 10% once of the bill: 1,000 + 100 + 1,000 = 2,100; partial catch-up on the bill 170 then 100; mixed 850 + 20 (partial 850 then 420); flat amounts per missed bill on both loan types (owner, 2026-11-19): open-term 100 once 100 + 100 (was 100), 50 a day 850 + 100 (was 850), partial 850 then 500; fixed-term 200, 2,000; engine bills 181.33 + 20 = 201.33; fixed-term on the bill 875 + 125 and 250 + 250; fixed-term on the balance (the balance in force each day: 8,000 while the Aug 31 bill is unpaid, 35 days) 280 / 800 / 1,600 once, partial 280 then 29.50 (scheduled principal paid; 19 before #140's fix) or 15 (5,000 principal; 4.50 before #140's fix), mixed 1,155 + 125; open-term principal paid inside the stretch 680 then 240; saved without `based_on`: open-term 680 and G12 P4 600, fixed-term 1,000 and G12 P1 225 | a missed-bill penalty counted once for the loan, a balance penalty per bill, the wrong base, a flat amount given a base, saved penalties changing behaviour |
+| G16 | fixed-term principal shortfall (owner, 2026-11-19, #152): `calculateFixedTerm` resumed after `recordTellerPayment`, `borrowerAmountsDue`, `previewPenalty`, `PaymentConfirmationService.completeLoanIfFullyPaid` (`test/services/fixed_term_shortfall_golden_test.dart`, 36 scenarios; the handlers in `test/features/payment/fixed_term_teller_payment_test.dart`; both single-payment dialogs in `test/features/payment/settle_prompt_test.dart`) | the G1 loan (10,000, 3 months, 5%, dated 2026-01-10) and G2 (`'15d'`); the dev row as stored (amortization 3,672.0856463124487) | owner's example: bill 1 paid 500 + 3,000 stores 7,000; bill 2 = 3,672.09 + 172.09 = 3,844.18 (350 + 3,494.18), balance 3,505.82; bill 3 = 175.29 + 3,505.82 = 3,681.11, before and after bill 2 is paid (a last bill on a whole-centavo balance rounds its interest once); shown bills 7,525.29 = owed (the first version of #156 showed 3,681.12, 7,525.30); total 11,025.29 (was 3,672.09 twice, 189.72 never billed, loan completed). Short on bill 2 of 3 (341.40 + 3,000): 3,827.91, the last bill clears it, 3,827.91 + 191.40 = 4,019.31 (was 3,672.09, 347.22 left). Short on the last bill (3,000 of 3,497.22; owner, 2026-11-20): no extra bill, bill 3 stays open at 497.22 (its rest, a second row of the same bill, `partPaidAt`), 3 bills shown (`oneBillPerDueDate`); 1% a day for 10 days 49.72; paid short again with 400 → 97.22, still bill 3; paid in full 11,016.26, bill 3 one paid row. G16i with 100 once + 1% a day: short Apr 15 283.60, rest paid Apr 25 49.72 from Apr 15 (not 174.58), bill 3 333.33, 15 days; short twice 283.60 + 24.86 + 19.72 = 328.19; short on time then the rest Apr 30, 100 + 20 days = 199.44. G16j 5% a month of the bill: short Apr 15 183.60; the rest Apr 30 nothing more (was a new month, 24.86); May 15 one more month on the rest, 24.86. No carry: 3,672.09 twice; 0.0001 short is 0.00 (bill 3 3,497.22 + 174.86 = 3,672.08). 1,000 extra unchanged (3,672.09 + 2,569.58). `'15d'` 1,000 of 1,565.50: 565.50 carried, 2,381.00 (225 + 2,156.00), 1,815.50 three times, 1,831.10; shown 9,658.60 = owed; total 10,908.60. Pay now 3,844.18. Carried bill missed 10 days: 1% a day of the bill 384.42, 0.1% a day of the balance 70.00 (7,000). Completion: 497.22 owed stays open, 0.006 stays open, 0.005 completes. Interest not in whole centavos (500 + 2,999.50): 3,844.68 = 350.03 + 3,494.65 (the dialog filled 3,494.66), then 3,681.14, shown 7,525.82 = owed. G16h `isEarlyPayoff` (#155): 500 + 2,900 → bill 2 3,944.18 = 355 + 3,589.18 with 3,510.82 after it is a payment (the old check settled it; from a 185.03 carry); the last bill (3,686.36) and its rest (510.82) as billed are payments; 7,100 on bill 2 and 3,510.83 on the last bill settle; 5,000 is an extra payment; open-term unchanged (10,000 settles). Grid: 960 bill-1 principals, the fills of bill 2, the last bill and its rest add up to the shown bill (`toStringAsFixed(2)`, what `toCurrency` shows) and none is a payoff | a shortfall never billed; a loan completed with principal owed; a bill sent to settlement |
 
 Notes:
 
 - **G4a sentinel:** `totalLoanPayment = double.infinity` for open-term is
   intentional ("no fixed total"); pin it so a refactor that "fixes" it to 0
   or NaN is caught and forced to be a deliberate, documented change.
-- **G7 (extraction DONE 2026-09-08 as
-  `LoanCalculationService.calculateSettlementBalance`, the bloc delegates):**
-  written against the CURRENT formula on purpose. The review of PR #115
-  showed the formula is wrong four ways (aggregation-triggers.md D9), so
-  the expectation flips with finstack#116's decided formula, never
-  silently, and never to a plain `+=` (8300 is not the answer either).
+- **G7 (flipped 2026-11-20, finstack#116):** the owner's settlement rule —
+  balance after the last confirmed row, top-ups included, plus interest
+  accrued from its due date — replaced the released − payments shape.
+  G7a-i pin it: G1 10 days after bill 1 = 6,941.71 (was 6,327.91); bill 1
+  paid 500 + 2,900 then 6 days = 7,171 (was 6,600); open-term top-up
+  12,468.33 (was 9,500); submission not credited 10,566.67; missed bill +
+  1,100 penalties 11,766.67; no confirmed row 10,643.33 (was 10,200); row
+  due after the settlement day 6,827.91; R4 shortfall 10,250; a family
+  12,025.04.
 - **G9/G10 encode finstack#33** (PR finstack#33, closed issue finstack#4;
   full narrative in finstack-failure-archaeology). Root causes, restated as
   test oracles: (1) UI didn't refresh → G11; (2) OB mutated twice (bloc +
   service) → G9; (3) newest-first iteration → G10.
-- The `'D1,D2'` third sub-branch (start date on NEITHER salary day) and the
-  past-due-date clamp are wall-clock-dependent (see Clock coupling); covered
-  by G5d and G4c through the S2 seam since 2026-09-08. G4c also pins that an
-  overdue row's amortization stays capped at one month's interest while
-  interestCharge keeps growing — current behaviour, pinned; campaign D12,
-  finstack#120 (owner decides what an overdue row should bill).
+- G5d and G4c run through the S2 seam (2026-09-08). Since the owner rules
+  R1-R5 (2026-11-19, G14) an overdue bill keeps its date and bills its own
+  cycle; the one-month cap G4c pinned (campaign D12, finstack#120) is gone.
+- **G15** (`test/services/penalty_based_on_golden_test.dart`, 26 scenarios)
+  pins the "Based on" option; derivations at the top of the file. The
+  fixed-term balance base (the balance in force each day of the stretch,
+  review of #148) awaits the owner's confirmation. F7/F8 store R2 through
+  `recordTellerPayment` (#140's fix): 3,000 then 15, 5,900 then 29.50; the
+  two cases that kept the old double subtraction (900 then 4.50, 3,800 then
+  19) were removed with the fix.
+- **G16** (`test/services/fixed_term_shortfall_golden_test.dart`, 29
+  scenarios, derivations at the top of the file) pins the owner's rule for
+  a fixed-term principal shortfall (#152): the next bill is the
+  amortization plus the last stored row's billed principal
+  (`amortization - interestCharge`) less the principal recorded, to the
+  centavo. That carried bill is in centavos (reviews of #156): amount =
+  the amortization to the centavo + the carry, interest to the centavo
+  (rounded once), principal = amount - that interest, the figures the
+  dialog fills in, so the rows after it
+  are the same before and after it is paid and the shown bills sum to
+  what is owed. The last bill is the balance plus its interest (its
+  interest to the centavo when the balance is in whole centavos). A short
+  last bill (owner, 2026-11-20) adds no bill: the rest is a second row of
+  the same bill (`partPaidAt`), each receipt its own row, shown as one
+  bill (`LoanCalculationService.oneBillPerDueDate`); its penalties count
+  their periods from the bill's due date and charge only those after the
+  ones the short payment was charged (daily: the days after; monthly: a
+  month that starts after; once: nothing more; default, for the owner to
+  confirm). A fixed-term loan completes
+  only when every bill is paid and a paid row left 0.005 or less. G16h
+  pins `PaymentConfirmationService.isEarlyPayoff` (#155), the one rule both
+  single-payment dialogs ask before recording: principal up to the bill
+  (+ 0.005) is a payment, the last bill and its rest included;
+  settlement only for more than the bill that also clears the balance
+  before the row; open-term unchanged. A
+  fixed-term interest shortfall is not carried; none can be recorded
+  today (#154). No earlier golden moved: the last-bill rule equals `min(P, balance +
+  interest)` on every earlier scenario. Two completion tests in
+  `payment_center_confirm_test.dart` had a paid final row holding 5,000;
+  their fixture now holds 0.
+- **G14** (`test/services/open_term_billing_golden_test.dart`, 51 scenarios)
+  pins R1-R5 with the owner's numbers; its derivations are at the top of the
+  file. Run it under `TZ=Asia/Manila` too (G14m compares zones). Since the
+  #146 review the engine counts days in calendar days, so G5 and G5b pass
+  under `America/New_York` as well.
 
 ## Gate check
 

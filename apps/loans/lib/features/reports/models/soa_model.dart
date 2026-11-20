@@ -16,6 +16,7 @@ final class SOAModel {
     required this.totalInterestCharge,
     required this.lessAdvanceInterest,
     required this.lessTotalInterestCollected,
+    required this.rebates,
     required this.deductions,
     required this.outstandingPrincipalBalance,
     required this.totalAmount,
@@ -33,12 +34,16 @@ final class SOAModel {
   final double lessAdvanceInterest;
   final double lessTotalInterestCollected;
 
+  /// Interest charged less advance interest less interest collected, over
+  /// the rows above: history only, not part of the amount due.
+  final double rebates;
+
   // NOTE: less interests and deductions are separated
   // for clarity.
   final List<ChargeSimple> deductions;
 
-  // NOTE: these are unpaid loan balance.
-  // Used for Open Term loans
+  /// The early-settlement principal: the balance after the last confirmed
+  /// payment, top-ups included (#116).
   final double outstandingPrincipalBalance;
 
   // NOTE: in calculating totalAmount, deductions are
@@ -46,13 +51,12 @@ final class SOAModel {
   // deducted from the outstandingPrincipalBalance.
   final double totalAmount;
 
-  // NOTE: Additional charges are anything that's charged, added
-  // on top of the loan.
-  // But in this model, additionalCharges are remaining loan
-  // outstanding principal balances.
+  /// Added to [totalAmount]: interest to date, unpaid penalties and each
+  /// special loan's own settlement amount.
   final List<ChargeSimple> additionalCharges;
 
-  // totalAmountDue is the sum of the totalAmount + the additional charges.
+  /// What settling the loan and its special loans costs today, the figure
+  /// the settlement records (`LoanCalculationService.settlementOf`).
   final double totalAmountDue;
 
   // the total size of the data, including the fields that are not

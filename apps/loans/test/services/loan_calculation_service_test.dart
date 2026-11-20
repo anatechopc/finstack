@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/services/loan_calculation_service.dart';
+import 'package:loooans/services/payment_confirmation_service.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 
 // Golden scenarios G1-G3 (finstack#112, campaign Gate 1) for
@@ -43,6 +44,28 @@ import 'package:loooans_helpers/data_helpers.dart';
 //   row 1: interest 4.0557, amort min(40.92, 40.9257) = 40.92, OB 0.0057
 //   row 2: interest 0.0006, amort min(40.92, 0.0063) = 0.0063, OB 0
 //   count = 3 - 1 = 2; the amortization comes from paidSchedules.first.
+//
+// G1t — the teller records G1's row 1 (PaymentConfirmationService
+// .recordTellerPayment, which every teller path calls; finstack#140). The
+// row holds OB 6827.9144, the balance after its scheduled principal
+// 3172.0856, so the stored balance is 10000 - principal paid:
+//   exact 3172.0856 (bulk): OB 6827.9144; rows 2-3 as G1's table, 3672.0856
+//     each; total 3 * P = 11016.26.
+//   the dialog's 3172.09 (0.0044 above the schedule, the extra payment):
+//     OB 6827.91; row 2 interest 341.3955, principal 3330.6901, OB
+//     3497.2199; row 3 interest 174.8610, amort min(P, 3672.0809) =
+//     3672.0809 (3,672.08); total 3672.09 + 3672.0856 + 3672.0809 =
+//     11016.26.
+//   1000 extra (4172.09): OB 5827.91, extra 1000.0044; row 2 interest
+//     291.3955, principal 3380.6901, OB 2447.2199; row 3 interest 122.3610,
+//     amort 2569.5809; total 4672.09 + 3672.0856 + 2569.5809 = 10913.76
+//     (10000 principal + 913.76 interest).
+//   3000 (short of the schedule): OB 7000, no extra payment.
+//   Before the fix the handlers subtracted the principal again: 3655.82
+//   (dialog; the dev row PRxL6LHifFWQjITEaQzq), rows 3672.09 + 174.86;
+//   2655.82 with the 1000 extra; 3827.91 for 3000.
+//   Open-term rows hold the balance before the payment: 10000 paying 2000
+//   principal stores 8000; interest only stores 10000 (unchanged).
 
 LoanCalculationResult fixedTerm(String term) =>
     LoanCalculationService.calculateFixedTerm(
@@ -185,6 +208,122 @@ void main() {
         DateUtils.dateOnly(result.schedules.first.dueAt),
         DateTime(2025, 1, 19),
       );
+    });
+  });
+
+  group('G1t the teller records row 1 (#140)', () {
+    /// G1's row 1 recorded by a teller paying [principal] (interest as
+    /// billed), and the rows the app computes after it.
+    ({LoanSchedule stored, List<LoanSchedule> rest, double total}) payRow1(
+      double principal,
+    ) {
+      final row = fixedTerm('1m').schedules.first;
+      PaymentConfirmationService.recordTellerPayment(
+        row,
+        interestPayment: row.interestPayment,
+        principalPayment: principal,
+      );
+      final rest = LoanCalculationService.calculateFixedTerm(
+        amount: 10000,
+        monthsToPay: 3,
+        date: DateTime(2026, 1, 10),
+        interestRate: 5,
+        term: '1m',
+        companyId: 'co-1',
+        paidSchedules: [row],
+      ).schedules;
+      final total = rest.fold<double>(
+        row.interestPayment + row.principalPayment,
+        (sum, s) => sum + s.amortization,
+      );
+
+      return (stored: row, rest: rest, total: total);
+    }
+
+    test('the scheduled principal: 6,827.91, then two of 3,672.09', () {
+      final paid = payRow1(fixedTerm('1m').schedules.first.principalPayment);
+
+      expect(paid.stored.outstandingBalance, closeTo(6827.9144, 0.0001));
+      expect(paid.stored.extraPayment, 0);
+      expect(paid.rest, hasLength(2));
+      expect(
+        paid.rest.map((s) => s.amortization),
+        everyElement(closeTo(3672.0856, 0.0001)),
+      );
+      expect(paid.rest.map((s) => s.interestCharge), [
+        closeTo(341.3957, 0.0001),
+        closeTo(174.8612, 0.0001),
+      ]);
+      expect(paid.rest.last.outstandingBalance, closeTo(0, 0.0001));
+      expect(paid.total, closeTo(11016.2569, 0.0001));
+    });
+
+    test("the dialog's 3,172.09: 6,827.91, then 3,672.09 and 3,672.08", () {
+      final paid = payRow1(3172.09);
+
+      expect(paid.stored.outstandingBalance, closeTo(6827.91, 0.000001));
+      expect(paid.stored.principalPayment, 3172.09);
+      expect(paid.stored.extraPayment, closeTo(0.0044, 0.0001));
+      expect(paid.rest.map((s) => s.amortization.toStringAsFixed(2)), [
+        '3672.09',
+        '3672.08',
+      ]);
+      expect(paid.rest.first.interestCharge, closeTo(341.3955, 0.0001));
+      expect(paid.rest.last.outstandingBalance, closeTo(0, 0.0001));
+      expect(paid.total.toStringAsFixed(2), '11016.26');
+    });
+
+    test('1,000 above the schedule lowers the balance once: 5,827.91', () {
+      final paid = payRow1(4172.09);
+
+      expect(paid.stored.outstandingBalance, closeTo(5827.91, 0.000001));
+      expect(paid.stored.extraPayment, closeTo(1000.0044, 0.0001));
+      expect(paid.rest.map((s) => s.amortization), [
+        closeTo(3672.0856, 0.0001),
+        closeTo(2569.5809, 0.0001),
+      ]);
+      expect(paid.rest.last.outstandingBalance, closeTo(0, 0.0001));
+      expect(paid.total, closeTo(10913.7565, 0.0001));
+    });
+
+    test('a principal short of the schedule: 7,000, no extra payment', () {
+      final paid = payRow1(3000);
+
+      expect(paid.stored.outstandingBalance, closeTo(7000, 0.000001));
+      expect(paid.stored.extraPayment, 0);
+    });
+
+    test('an open-term row holds the balance before the payment', () {
+      LoanSchedule bill() => LoanSchedule.create(
+            dueAt: DateTime(2026, 2, 9),
+            outstandingBalance: 10000,
+            amortization: 500,
+            principalPayment: 0,
+            interestCharge: 500,
+            loanId: 'loan-1',
+            interestDayMultiplier: 1,
+            companyId: 'co-1',
+            isOpenTerm: true,
+          );
+
+      final withPrincipal = bill();
+      PaymentConfirmationService.recordTellerPayment(
+        withPrincipal,
+        interestPayment: 500,
+        principalPayment: 2000,
+      );
+      final interestOnly = bill();
+      PaymentConfirmationService.recordTellerPayment(
+        interestOnly,
+        interestPayment: 500,
+        principalPayment: 0,
+      );
+
+      expect(withPrincipal.outstandingBalance, 8000);
+      expect(withPrincipal.principalPayment, 2000);
+      expect(withPrincipal.extraPayment, 0);
+      expect(interestOnly.outstandingBalance, 10000);
+      expect(interestOnly.interestPayment, 500);
     });
   });
 }

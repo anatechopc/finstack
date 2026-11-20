@@ -98,10 +98,12 @@ class _DefaultPenaltiesSectionState extends State<DefaultPenaltiesSection> {
                   return Chip(
                     label: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 260),
+                      // The base can take a second line (a company default
+                      // serves both loan types).
                       child: Text(
-                        penalty.chipLabel,
+                        penalty.chipLabel(),
                         overflow: TextOverflow.ellipsis,
-                        softWrap: false,
+                        maxLines: 3,
                       ),
                     ),
                     backgroundColor: AppColors.white,
