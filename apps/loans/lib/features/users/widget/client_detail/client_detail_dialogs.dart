@@ -14,6 +14,7 @@ import 'package:loooans/features/loans/bloc/loans_bloc.dart';
 import 'package:loooans/features/loans/bloc/payment_bloc.dart';
 import 'package:loooans/features/users/widget/client_detail/payment_otp_dialog.dart';
 import 'package:loooans/features/loans/screens/statement_of_account_screen.dart';
+import 'package:loooans/services/payment_confirmation_service.dart';
 import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
@@ -223,7 +224,9 @@ Future<void> showMakePaymentDialog(
 
                               final tempParsed = double.parse(value);
 
-                              if (tempParsed <= 0) {
+                              // Read-only on a fixed-term row; a remainder
+                              // row bills no interest (#152).
+                              if (tempParsed <= 0 && schedule.isOpenTerm) {
                                 return 'Amount should be greater than 0';
                               }
 
@@ -298,7 +301,10 @@ Future<void> showMakePaymentDialog(
                   );
                   final totalPayment = interestPayment + payment;
 
-                  if (payment >= schedule.outstandingBalance) {
+                  if (PaymentConfirmationService.isEarlyPayoff(
+                    schedule,
+                    principal: payment,
+                  )) {
                     final settleAccountConfirmation =
                         await showDialog<bool>(
                       context: context,

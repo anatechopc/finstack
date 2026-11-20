@@ -272,16 +272,35 @@ PenaltyResult _penaltiesFor({
   _Stretch? stretch;
   final lines = <PenaltyLine>[];
   var total = 0.0;
+  // The rest of a part-paid bill (#152): the part payment was charged the
+  // periods up to it, counted from the bill's due date; the rest is charged
+  // only the periods that start after them (daily: the days after it;
+  // monthly: a month that starts after it; once: nothing more).
+  final partPaidAt = row.partPaidAt;
+  final daysAtPart = partPaidAt == null
+      ? 0
+      : calculateDaysLate(dueAt: row.lateFrom, collectedAt: partPaidAt);
 
   for (final penalty in loan.penalties) {
     final PenaltyLine? line;
     if (penalty.baseFor(isOpenTerm: row.isOpenTerm) == PenaltyBase.missedBill) {
-      line = computePenalties(
-        amountDue: row.amortization,
-        penalties: [penalty],
-        daysLate: daysLate,
-        termDays: termDays,
-      ).lines.single;
+      PenaltyLine lineFor(int days) => computePenalties(
+            amountDue: row.amortization,
+            penalties: [penalty],
+            daysLate: days,
+            termDays: termDays,
+          ).lines.single;
+      final now = lineFor(daysLate);
+      final before = daysAtPart > 0 ? lineFor(daysAtPart) : null;
+      line = before == null
+          ? now
+          : now.periods > before.periods
+              ? PenaltyLine(
+                  penalty: penalty,
+                  periods: now.periods - before.periods,
+                  amount: now.amount - before.amount,
+                )
+              : null;
     } else {
       stretch ??= _Stretch.of(
         row: row,
@@ -395,6 +414,16 @@ final class _Stretch {
       }
       final end = settledOn.isAfter(collectedOn) ? collectedOn : settledOn;
       if (chargedTo == null || end.isAfter(chargedTo)) {
+        chargedTo = end;
+      }
+    }
+    // The rest of a part-paid bill (#152): its part payment was charged up
+    // to its collection day, even when the list holds only the rest.
+    final partPaidAt = row.partPaidAt;
+    if (partPaidAt != null) {
+      final partOn = _localDay(partPaidAt);
+      final end = partOn.isAfter(collectedOn) ? collectedOn : partOn;
+      if (end.isAfter(start) && (chargedTo == null || end.isAfter(chargedTo))) {
         chargedTo = end;
       }
     }

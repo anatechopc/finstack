@@ -270,7 +270,7 @@ func findFixes(loans, rows []doc) (fixes []fix, manual []manualRepair) {
 		}
 		loanRows := byLoan[loan.id]
 		sort.SliceStable(loanRows, func(i, j int) bool {
-			return millis(loanRows[i].data["due_at"]) < millis(loanRows[j].data["due_at"])
+			return millis(loanRows[i].data["due_at"]) < millis(loanRows[j].data["due_at"]) || millis(loanRows[i].data["due_at"]) == millis(loanRows[j].data["due_at"]) && millis(loanRows[i].data["created_at"]) < millis(loanRows[j].data["created_at"])
 		})
 
 		// prev is the stored balance before the row; owed is the starting
