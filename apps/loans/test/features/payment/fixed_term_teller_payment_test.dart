@@ -1,4 +1,5 @@
 import 'package:company_repository/company_repository.dart';
+import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:loan_repository/loan_repository.dart';
@@ -9,9 +10,12 @@ import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loan_schedule_repository/src/model/loan_schedule_entity.dart';
 import 'package:loooans/features/loans/bloc/payment_bloc.dart';
 import 'package:loooans/features/payment_center/bloc/payment_center_bloc.dart';
+import 'package:loooans/features/products/screen/loan_schedule_widget.dart';
 import 'package:loooans/features/users/widget/client_detail/client_detail_schedule_item.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/loan_calculation_service.dart';
+import 'package:loooans/services/payment_confirmation_service.dart';
+import 'package:loooans/utils/extensions.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:payment_repository/payment_repository.dart';
@@ -36,6 +40,13 @@ import '../../helpers/helpers.dart';
 //   Payment Center bulk, rows 1 and 2 at the scheduled principal: stored
 //     6,827.91 and 3,497.22 (was 3,655.83 and 166.53); next bill 3,672.09.
 // #150: in client detail only the earliest unpaid installment can be paid.
+// #152 (golden G16a): bill 1 paid 500 + 3,000 (172.09 short) stores 7,000;
+//   bill 2 is 3,844.18 = 350.00 + 3,494.18 (was 3,672.09), bill 3 3,681.11
+//   before and after bill 2 is paid as the dialog fills it (was 3,672.09). A
+//   last bill paid 175.29 + 3,000 leaves 505.82: the loan stays open (was
+//   completed) and one more row bills it on bill 3's due date; paying it
+//   completes the loan. The loan is stored on a fake Firestore here, so its
+//   status is what the next screen reads.
 
 class _Users extends Mock implements UserRepository {}
 
@@ -75,8 +86,9 @@ Loan fixedTermLoan() => Loan.create(
       ..additionalLoanAmounts = [];
 
 /// The rows client detail lists after [stored]: the stored rows, then the
-/// computed ones (LoansBloc's `_calculateLoan`).
-List<LoanSchedule> clientRows(List<LoanSchedule> stored) => [
+/// computed ones, one bill per due date (LoansBloc's `_calculateLoan`).
+List<LoanSchedule> clientRows(List<LoanSchedule> stored) =>
+    LoanCalculationService.oneBillPerDueDate([
       ...stored,
       ...LoanCalculationService.calculateFixedTerm(
         amount: 10000,
@@ -87,7 +99,7 @@ List<LoanSchedule> clientRows(List<LoanSchedule> stored) => [
         companyId: 'co-1',
         paidSchedules: List.of(stored),
       ).schedules,
-    ];
+    ]);
 
 /// [row] as Firestore hands it back.
 LoanSchedule readBack(LoanSchedule row) =>
@@ -245,45 +257,45 @@ void main() {
     });
   });
 
+  PaymentCenterBloc newBloc() {
+    final bloc = PaymentCenterBloc.withDependencies(
+      userRepository: users,
+      loanRepository: loans,
+      loanScheduleRepository: schedules,
+      paymentRepository: payments,
+      storageRepository: _Storage(),
+      authService: auth,
+    );
+    addTearDown(bloc.close);
+    return bloc;
+  }
+
+  /// What the Payment Center lists to pay for the borrower now.
+  Future<List<LoanSchedule>> actionable() async {
+    final bloc = newBloc()
+      ..add(SelectBorrowerEvent(borrower: User()..id = 'u1'));
+    final state = await bloc.stream.firstWhere(
+      (s) =>
+          s.status == PaymentCenterStatus.borrowerSelected ||
+          s.status == PaymentCenterStatus.error,
+    );
+    expect(state.status, PaymentCenterStatus.borrowerSelected);
+
+    return state.borrowerLoans.single.actionableSchedules;
+  }
+
+  Future<void> run(PaymentCenterEvent event) async {
+    final bloc = newBloc()..add(event);
+    // The handler writes every row and the loan, then stops at the
+    // cash-pool step (its repository cannot be mocked).
+    await bloc.stream.firstWhere(
+      (s) =>
+          s.status == PaymentCenterStatus.error ||
+          s.status == PaymentCenterStatus.paymentSuccess,
+    );
+  }
+
   group('Payment Center (PaymentCenterBloc)', () {
-    PaymentCenterBloc newBloc() {
-      final bloc = PaymentCenterBloc.withDependencies(
-        userRepository: users,
-        loanRepository: loans,
-        loanScheduleRepository: schedules,
-        paymentRepository: payments,
-        storageRepository: _Storage(),
-        authService: auth,
-      );
-      addTearDown(bloc.close);
-      return bloc;
-    }
-
-    /// What the Payment Center lists to pay for the borrower now.
-    Future<List<LoanSchedule>> actionable() async {
-      final bloc = newBloc()
-        ..add(SelectBorrowerEvent(borrower: User()..id = 'u1'));
-      final state = await bloc.stream.firstWhere(
-        (s) =>
-            s.status == PaymentCenterStatus.borrowerSelected ||
-            s.status == PaymentCenterStatus.error,
-      );
-      expect(state.status, PaymentCenterStatus.borrowerSelected);
-
-      return state.borrowerLoans.single.actionableSchedules;
-    }
-
-    Future<void> run(PaymentCenterEvent event) async {
-      final bloc = newBloc()..add(event);
-      // The handler writes every row and the loan, then stops at the
-      // cash-pool step (its repository cannot be mocked).
-      await bloc.stream.firstWhere(
-        (s) =>
-            s.status == PaymentCenterStatus.error ||
-            s.status == PaymentCenterStatus.paymentSuccess,
-      );
-    }
-
     test('before paying: rows 1 and 2 overdue, row 3 upcoming', () async {
       final rows = await actionable();
 
@@ -427,5 +439,304 @@ void main() {
       expect(buttons[1].onPressed, isNull);
       expect(buttons[2].onPressed, isNull);
     });
+  });
+
+  group('#152 a short principal is added to the next bill', () {
+    late LoanRepository real;
+    late String loanId;
+
+    setUp(() async {
+      real = LoanRepository.withFirestore(FakeFirebaseFirestore());
+      loanId = (await real.add(data: fixedTermLoan())).id;
+      when(() => loans.get(id: any(named: 'id'))).thenAnswer(
+        (i) => real.get(id: i.namedArguments[#id] as String),
+      );
+      // The loan view needs the real Firestore; the loan itself is written.
+      when(
+        () => loans.update(
+          data: any(named: 'data'),
+          updateView: any(named: 'updateView'),
+        ),
+      ).thenAnswer((i) => real.update(data: i.namedArguments[#data] as Loan));
+      when(
+        () => loans.load(
+          statements: any(named: 'statements'),
+          limit: any(named: 'limit'),
+          page: any(named: 'page'),
+          reset: any(named: 'reset'),
+          includeAdditionalLoanAmounts:
+              any(named: 'includeAdditionalLoanAmounts'),
+        ),
+      ).thenAnswer((i) async {
+        final statements =
+            i.namedArguments[#statements] as List<QueryStatement>;
+        return statements.first.field == 'user_id'
+            ? [await real.get(id: loanId)]
+            : <Loan>[];
+      });
+    });
+
+    Future<LoanStatus> loanStatus() async =>
+        (await real.get(id: loanId)).status;
+
+    /// Client detail records [row] with the dialog's [interest] and
+    /// [principal].
+    Future<void> payInClientDetail(
+      LoanSchedule row,
+      List<LoanSchedule> rows, {
+      required String interest,
+      required String principal,
+    }) async {
+      final bloc = PaymentBloc.withDependencies(
+        userRepository: users,
+        loanRepository: loans,
+        loanScheduleRepository: schedules,
+        storageRepository: _Storage(),
+        paymentRepository: payments,
+        authService: auth,
+      );
+      addTearDown(bloc.close);
+
+      bloc.makePayment(
+        loan: await real.get(id: loanId),
+        schedule: row,
+        loanRows: rows,
+        interestPayment: interest,
+        payment: principal,
+        otpVerified: true,
+      );
+      await bloc.stream.firstWhere((s) => s.message?.isNotEmpty ?? false);
+    }
+
+    /// The Payment Center records [row]; the interest as the dialog fills
+    /// it unless given.
+    Future<void> payInPaymentCenter(
+      LoanSchedule row, {
+      required double principal,
+      double? interest,
+    }) async =>
+        run(
+          MakePaymentEvent(
+            loan: await real.get(id: loanId),
+            schedule: row,
+            interestPayment: interest ??
+                double.parse(row.interestPayment.toStringAsFixed(2)),
+            payment: principal,
+            otpVerified: true,
+          ),
+        );
+
+    test('client detail: 500 + 3,000 stores 7,000; bill 2 is 3,844.18, '
+        'then bill 3 is 3,681.11', () async {
+      var rows = clientRows(const []);
+      await payInClientDetail(
+        rows.first,
+        rows,
+        interest: '500.00',
+        principal: '3000.00',
+      );
+
+      final stored = readBack(written.single);
+      expect(stored.outstandingBalance, closeTo(7000, 0.000001));
+      expect(stored.principalPayment, 3000);
+      expect(stored.interestPayment, 500);
+      expect(stored.extraPayment, 0);
+      rows = clientRows([stored]);
+      final bill2 = rows[1];
+      expect(bill2.amortization.toStringAsFixed(2), '3844.18');
+      expect(bill2.interestPayment.toStringAsFixed(2), '350.00');
+      expect(bill2.principalPayment.toStringAsFixed(2), '3494.18');
+      expect(rows[2].amortization.toStringAsFixed(2), '3681.11');
+
+      await payInClientDetail(
+        bill2,
+        rows,
+        interest: bill2.interestPayment.toStringAsFixed(2),
+        principal: bill2.principalPayment.toStringAsFixed(2),
+      );
+      final storedTwo = written.map(readBack).toList();
+      expect(storedTwo.last.outstandingBalance, closeTo(3505.82, 0.000001));
+      final bill3 = clientRows(storedTwo).last;
+      expect(bill3.interestPayment.toStringAsFixed(2), '175.29');
+      expect(bill3.principalPayment.toStringAsFixed(2), '3505.82');
+      expect(bill3.amortization.toStringAsFixed(2), '3681.11');
+      expect(
+        bill3.amortization,
+        closeTo(rows[2].amortization, 0.000001),
+        reason: 'the projection equals the bill after bill 2 is paid',
+      );
+    });
+
+    test('Payment Center single: 500 + 3,000 stores 7,000; bill 2 is '
+        '3,844.18', () async {
+      await payInPaymentCenter((await actionable()).first, principal: 3000);
+
+      expect(written.single.outstandingBalance, closeTo(7000, 0.000001));
+      expect(written.single.principalPayment, 3000);
+      final next = await actionable();
+      expect(next.map((s) => s.status), [
+        LoanStatus.not_paid_overdue,
+        LoanStatus.not_paid,
+      ]);
+      expect(next.map((s) => s.amortization.toStringAsFixed(2)), [
+        '3844.18',
+        '3681.11',
+      ]);
+      expect(next.first.interestPayment, closeTo(350, 0.000001));
+      expect(next.first.principalPayment.toStringAsFixed(2), '3494.18');
+      expect(await loanStatus(), LoanStatus.paid_late);
+    });
+
+    /// The Payment Center's expanded history of the loan.
+    Future<List<LoanSchedule>> history() async {
+      final bloc = newBloc()
+        ..add(ExpandLoanEvent(loanId: loanId, loan: await real.get(id: loanId)));
+      final state = await bloc.stream.firstWhere(
+        (s) =>
+            s.status == PaymentCenterStatus.loanExpanded ||
+            s.status == PaymentCenterStatus.error,
+      );
+
+      return state.expandedLoanSchedules[loanId]!;
+    }
+
+    test('Payment Center: a short last bill keeps the loan open as one bill; '
+        'paying the 505.82 rest completes it', () async {
+      await payInPaymentCenter((await actionable()).first, principal: 3000);
+      final bill2 = (await actionable()).first;
+      await payInPaymentCenter(
+        bill2,
+        principal: double.parse(bill2.principalPayment.toStringAsFixed(2)),
+      );
+      final bill3 = (await actionable()).single;
+      expect(bill3.amortization.toStringAsFixed(2), '3681.11');
+
+      await payInPaymentCenter(bill3, principal: 3000);
+      expect(written.last.outstandingBalance, closeTo(505.82, 0.000001));
+      expect(
+        await loanStatus(),
+        LoanStatus.paid_on_time,
+        reason: 'before #152 this was completed with 505.82 owed',
+      );
+
+      final rest = (await actionable()).single;
+      expect(rest.amortization, closeTo(505.82, 0.000001));
+      expect(rest.principalPayment, closeTo(505.82, 0.000001));
+      expect(rest.interestPayment, 0);
+      expect(rest.dueAt.isAtSameMomentAs(bill3.dueAt), isTrue);
+      expect(rest.status, LoanStatus.not_paid);
+      expect(rest.partPaidAt, isNotNull);
+      final open = await history();
+      expect(open, hasLength(3), reason: 'one bill per due date');
+      expect(open.last.amortization, closeTo(505.82, 0.000001));
+
+      await payInPaymentCenter(rest, principal: 505.82, interest: 0);
+      // Each receipt its own row and payment (the trigger books each
+      // row when it is created).
+      expect(written, hasLength(4));
+      verify(() => payments.add(data: any(named: 'data'))).called(4);
+      expect(written.last.partPaidAt, isNotNull);
+      expect(written.last.outstandingBalance, closeTo(0, 0.000001));
+      expect(await loanStatus(), LoanStatus.completed);
+      expect(await actionable(), isEmpty);
+      final paid = await history();
+      expect(paid, hasLength(3));
+      expect(paid.last.principalPayment, closeTo(3505.82, 0.000001));
+      expect(paid.last.status, LoanStatus.paid_on_time);
+    });
+
+    test('Payment Center: the last bill as billed completes the loan',
+        () async {
+      await payInPaymentCenter((await actionable()).first, principal: 3000);
+      final bill2 = (await actionable()).first;
+      await payInPaymentCenter(
+        bill2,
+        principal: double.parse(bill2.principalPayment.toStringAsFixed(2)),
+      );
+      final bill3 = (await actionable()).single;
+      await payInPaymentCenter(bill3, principal: 3505.82);
+
+      expect(written.last.outstandingBalance, closeTo(0, 0.000001));
+      expect(await loanStatus(), LoanStatus.completed);
+    });
+
+    /// Client detail records the next bill, as the dialog fills it unless
+    /// [principal] is given (#155: the last bill and its rest are recorded,
+    /// not sent to settlement).
+    Future<LoanSchedule> payNextInClientDetail({String? principal}) async {
+      final rows = clientRows(written.map(readBack).toList());
+      final next = rows.firstWhere((s) => s.id == NO_ID);
+      await payInClientDetail(
+        next,
+        rows,
+        interest: next.interestPayment.toStringAsFixed(2),
+        principal: principal ?? next.principalPayment.toStringAsFixed(2),
+      );
+
+      return next;
+    }
+
+    test('client detail: the last bill as billed completes the loan (#155)',
+        () async {
+      await payNextInClientDetail(principal: '3000.00');
+      await payNextInClientDetail();
+      expect(await loanStatus(), LoanStatus.paid_late);
+      final bill3 = await payNextInClientDetail();
+
+      expect(bill3.principalPayment, closeTo(3505.82, 0.000001));
+      expect(written.last.outstandingBalance, closeTo(0, 0.000001));
+      expect(await loanStatus(), LoanStatus.completed);
+    });
+
+    test('client detail: a short last bill stays open as one bill; its '
+        '505.82 rest completes the loan', () async {
+      await payNextInClientDetail(principal: '3000.00');
+      await payNextInClientDetail();
+      await payNextInClientDetail(principal: '3000.00');
+      expect(written.last.outstandingBalance, closeTo(505.82, 0.000001));
+      expect(await loanStatus(), LoanStatus.paid_on_time);
+      final open = clientRows(written.map(readBack).toList());
+      expect(open, hasLength(3), reason: 'one bill per due date');
+      expect(open.last.amortization, closeTo(505.82, 0.000001));
+      expect(open.last.status, LoanStatus.not_paid);
+
+      final rest = await payNextInClientDetail();
+      expect(rest.amortization, closeTo(505.82, 0.000001));
+      expect(rest.interestPayment, 0);
+      expect(written, hasLength(4), reason: 'each receipt its own row');
+      verify(() => payments.add(data: any(named: 'data'))).called(4);
+      expect(written.last.outstandingBalance, closeTo(0, 0.000001));
+      expect(await loanStatus(), LoanStatus.completed);
+      final paid = clientRows(written.map(readBack).toList());
+      expect(paid, hasLength(3));
+      expect(paid.last.principalPayment, closeTo(3505.82, 0.000001));
+      expect(paid.last.interestPayment, closeTo(175.29, 0.000001));
+    });
+  });
+
+  testWidgets("#152 the borrower's compact schedule shows bill 2 as "
+      '3,844.18, not the 3,672.09 amortization', (tester) async {
+    final stored = clientRows(const []).first;
+    PaymentConfirmationService.recordTellerPayment(
+      stored,
+      interestPayment: 500,
+      principalPayment: 3000,
+    );
+    stored
+      ..id = 'sched-1'
+      ..status = LoanStatus.paid_late;
+    final bill2 = clientRows([stored])[1];
+
+    await tester.pumpApp(
+      Scaffold(
+        body: Builder(
+          builder: (context) =>
+              LoanScheduleWidget.scheduleItem(context, schedule: bill2),
+        ),
+      ),
+    );
+
+    expect(find.text(bill2.amortization.toCurrency()), findsOneWidget);
+    expect(bill2.amortization.toCurrency(), contains('3,844.18'));
   });
 }

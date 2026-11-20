@@ -255,6 +255,15 @@ class PaymentBloc extends Bloc<PaymentEvent, PaymentState> {
           _log.warning('Loan payment is null. Please check.');
         }
 
+        // The last bill or a remainder row can be recorded here since #155:
+        // complete the loan once no principal is owed, as the Payment
+        // Center does. After the row is written, so it is counted.
+        await PaymentConfirmationService(
+          loanScheduleRepository: loanScheduleRepository,
+          loanRepository: loanRepository,
+          paymentRepository: paymentRepository,
+        ).completeLoanIfFullyPaid(loan.id);
+
         final cashPoolList = await cashPoolRepository.load(
           reset: true,
           limit: null,

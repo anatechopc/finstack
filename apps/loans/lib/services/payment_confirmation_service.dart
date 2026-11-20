@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
+import 'package:loooans/services/loan_calculation_service.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:payment_repository/payment_repository.dart';
 
@@ -94,6 +95,27 @@ class PaymentConfirmationService {
     if (schedules.any((s) => s.isPrincipalRelease)) {
       throw Exception('The principal release is not a payment');
     }
+  }
+
+  /// Whether a teller entering [principal] on [schedule] is paying the loan
+  /// off early, for the settlement flow, rather than making a payment
+  /// (#155). Both payment dialogs ask this. Fixed-term: only principal
+  /// above the row's bill (its `principalPayment`, a carried shortfall
+  /// included) that also clears the balance before the row; the last bill
+  /// and a remainder row paid as billed are payments, and the 0.005 rule
+  /// completes the loan. Open-term, unchanged: principal of at least the
+  /// balance.
+  static bool isEarlyPayoff(
+    LoanSchedule schedule, {
+    required double principal,
+  }) {
+    if (schedule.isOpenTerm) {
+      return principal >= schedule.outstandingBalance;
+    }
+    final owed = schedule.outstandingBalance + schedule.principalPayment;
+
+    return principal > schedule.principalPayment + 0.005 &&
+        principal >= owed - 0.005;
   }
 
   /// Records a teller payment of [interestPayment] and [principalPayment] on
@@ -281,19 +303,22 @@ class PaymentConfirmationService {
     );
   }
 
-  /// True when a fixed-term loan has all of its scheduled payments paid.
+  /// True when a fixed-term loan has all of its scheduled payments paid and
+  /// a paid row left no principal owed (#152: a short payment leaves a
+  /// remainder, so the count alone is not enough).
   /// Open-term loans (period == 0) are indefinite and never "fully paid" here.
   /// 15-day-term loans have twice the period's number of schedules.
   bool _fixedTermFullyPaid(Loan loan, List<LoanSchedule> schedules) {
     if (loan.period == 0) return false;
-    final paidCount = schedules
+    final paid = schedules
         .where(
           (s) =>
               s.status == LoanStatus.paid_on_time ||
               s.status == LoanStatus.paid_late,
         )
-        .length;
+        .toList();
     final expectedSchedules = loan.period * (loan.term == '15d' ? 2 : 1);
-    return paidCount >= expectedSchedules;
+    return paid.length >= expectedSchedules &&
+        !paid.every(LoanCalculationService.leavesPrincipal);
   }
 }

@@ -1,10 +1,8 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gap/gap.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
-import 'package:loooans/features/loans/bloc/loans_bloc.dart';
 import 'package:loooans/services/loan_calculation_service.dart';
 import 'package:loooans/utils/constants.dart';
 import 'package:loooans/utils/extensions.dart';
@@ -127,9 +125,10 @@ class LoanScheduleWidget extends StatelessWidget {
     Loan? loan,
     List<LoanSchedule> loanRows = const [],
   }) {
-    final trailingText = !schedule.isOpenTerm
-        ? context.read<LoansBloc>().monthlyAmortization
-        : schedule.interestCharge;
+    // The row's own bill: a carried shortfall or the last bill differs from
+    // the monthly amortization (#152).
+    final trailingText =
+        !schedule.isOpenTerm ? schedule.amortization : schedule.interestCharge;
     return ListTile(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       onTap: () {},
