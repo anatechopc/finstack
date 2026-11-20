@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_form_builder/flutter_form_builder.dart';
-import 'package:form_builder_validators/form_builder_validators.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loan_repository/loan_repository.dart';
@@ -12,6 +11,7 @@ import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/app/routing/paths.dart';
 import 'package:loooans/features/loans/bloc/additional_loan_bloc.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
+import 'package:loooans/features/loans/widget/top_up_amount_form.dart';
 import 'package:loooans/features/loans/widget/top_up_overdue_dialogs.dart';
 import 'package:loooans/features/payment_center/bloc/payment_center_bloc.dart';
 import 'package:loooans/features/products/requirement_temp_container.dart';
@@ -329,55 +329,7 @@ Future<void> _showAdditionalAmountDialog(
     builder: (dialogContext) {
       return AlertDialog(
         title: const Text('Add loan amount'),
-        content: FormBuilder(
-          key: formKey,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minWidth: 350),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AppWidgets.defaultFormBuilderTextField(
-                  name: 'amount',
-                  label: 'Add amount',
-                  validator: FormBuilderValidators.required(),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(
-                      RegExp(r'^[0-9]*[.]?[0-9]*'),
-                    ),
-                  ],
-                ),
-                if (product != null) ...[
-                  const Gap(16),
-                  for (final charge in product.additionalCharges)
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Add: ${charge.description}:'),
-                        Text(
-                          charge.isPercentage
-                              ? '${charge.amount}%'
-                              : '${charge.amount}',
-                        ),
-                      ],
-                    ),
-                  for (final charge in product.deductions)
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Less: ${charge.description}:'),
-                        Text(
-                          charge.isPercentage
-                              ? '${charge.amount}%'
-                              : '${charge.amount}',
-                        ),
-                      ],
-                    ),
-                ],
-              ],
-            ),
-          ),
-        ),
+        content: TopUpAmountForm(formKey: formKey, product: product),
         actions: [
           AppWidgets.defaultFilledButton(
             child: const Text('Add'),

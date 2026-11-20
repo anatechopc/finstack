@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/features/reports/models/soa_model.dart';
+import 'package:loooans/services/loan_calculation_service.dart';
 import 'package:loooans/utils/constants.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:pdf/pdf.dart';
@@ -99,6 +100,23 @@ class PdfGenerator {
           product: product,
         );
       },
+    );
+  }
+
+  /// The bytes [generatePdf] hands to the print dialog, for tests.
+  @visibleForTesting
+  static Future<Uint8List> buildPdfBytes({
+    required List<LoanSchedule> schedules,
+    required Loan loan,
+    required Product product,
+    required User user,
+  }) {
+    return _buildPdf(
+      PdfPageFormat.a4,
+      schedules: schedules,
+      loan: loan,
+      product: product,
+      user: user,
     );
   }
 

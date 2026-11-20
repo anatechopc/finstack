@@ -83,7 +83,7 @@ class QuotationWidget extends StatelessWidget {
 
                 AppWidgets.showDefaultLoadingDialog(context);
                 await PdfGenerator.generatePdf(
-                  schedules: loansBloc.clientLoanSchedules,
+                  schedules: loansBloc.clientLoanRows,
                   loan: loansBloc.selectedLoan,
                   user: userBloc.user,
                   userAddress: userBloc.address,

@@ -682,19 +682,14 @@ class LoanCalculationService {
   /// charged. Every other row is listed as it is. [rows] are in display
   /// order and are not changed.
   static List<LoanSchedule> oneBillPerDueDate(List<LoanSchedule> rows) {
-    String dayOf(LoanSchedule row) {
-      final day = _localDay(row.dueAt);
-      return '${day.year}-${day.month}-${day.date}';
-    }
-
     final split = {
       for (final row in rows)
-        if (!row.isOpenTerm && row.partPaidAt != null) dayOf(row),
+        if (!row.isOpenTerm && row.partPaidAt != null) _dueDay(row),
     };
     final shown = <String>{};
     final bills = <LoanSchedule>[];
     for (final row in rows) {
-      final day = dayOf(row);
+      final day = _dueDay(row);
       if (row.isOpenTerm || !split.contains(day)) {
         bills.add(row);
         continue;
@@ -704,13 +699,50 @@ class LoanCalculationService {
       }
       // Paid in order: the balance only falls.
       final parts = rows
-          .where((other) => !other.isOpenTerm && dayOf(other) == day)
+          .where((other) => !other.isOpenTerm && _dueDay(other) == day)
           .sortedBy<num>((other) => -other.outstandingBalance);
       final open = parts.where((part) => !_isPaid(part));
       bills.add(open.isNotEmpty ? open.last : _paidBill(parts));
     }
 
     return bills;
+  }
+
+  /// The bills a print lists (the PDF quotation, #126): [oneBillPerDueDate],
+  /// except that a bill still owed after a part payment is listed whole too.
+  /// Its row holds the bill's amount and the interest and principal of its
+  /// parts (what was paid plus the rest, at what the rest bills), so the
+  /// bills total the same before and after a part payment. `owed` is the
+  /// rest still owed, 0 for every other bill. [rows] are every row of the
+  /// loan, not yet folded by [oneBillPerDueDate].
+  static List<({LoanSchedule bill, double owed})> wholeBills(
+    List<LoanSchedule> rows,
+  ) {
+    return [
+      for (final bill in oneBillPerDueDate(rows))
+        if (bill.isOpenTerm || bill.partPaidAt == null || _isPaid(bill))
+          (bill: bill, owed: 0)
+        else
+          (
+            bill: _paidBill(
+              rows
+                  .where(
+                    (row) =>
+                        !row.isOpenTerm &&
+                        _dueDay(row) == _dueDay(bill) &&
+                        (_isPaid(row) || identical(row, bill)),
+                  )
+                  .sortedBy<num>((row) => -row.outstandingBalance),
+            )..status = bill.status,
+            owed: bill.amortization,
+          ),
+    ];
+  }
+
+  /// [row]'s due date as a local calendar day, for grouping a bill's rows.
+  static String _dueDay(LoanSchedule row) {
+    final day = _localDay(row.dueAt);
+    return '${day.year}-${day.month}-${day.date}';
   }
 
   /// One paid row for the paid [parts] of a bill, the first holding the

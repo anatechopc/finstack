@@ -32,7 +32,10 @@ List<({String title, String detail})> pdfPenaltyLines(Loan loan) =>
 pw.Widget _quotationWidget({
   required Loan loan,
   required Product product,
+  required List<LoanSchedule> schedules,
 }) {
+  final totalPayable = pdfTotalPayable(loan, schedules);
+
   return pw.Column(
     mainAxisSize: pw.MainAxisSize.min,
     crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -90,10 +93,11 @@ pw.Widget _quotationWidget({
       for (final line in pdfPenaltyLines(loan))
         _quotationItem(title: line.title, detail: line.detail),
       pw.Divider(),
-      _quotationItem(
-        title: 'Total payable',
-        detail: _computeTotalPayable(loan).toCurrency(),
-      ),
+      if (totalPayable != null)
+        _quotationItem(
+          title: 'Total payable',
+          detail: totalPayable.toCurrency(),
+        ),
       _quotationItem(
         title: 'Monthly Amortization',
         detail: loan.amortization.toCurrency(),
@@ -127,10 +131,40 @@ pw.Widget _quotationItem({
   );
 }
 
-double _computeTotalPayable(Loan loan) {
-  return (loan.amortization * loan.period) +
-      loan.additionalCharges -
-      loan.deductions;
+/// The line under the schedule for bill [number] (1-based, as the table
+/// numbers it), still owed after a part payment (#126): its amount, what was
+/// paid on it and what is still owed.
+@visibleForTesting
+String pdfPartPaidNote(int number, LoanSchedule bill, double owed) {
+  final amount = bill.interestPayment + bill.principalPayment;
+
+  return 'Bill $number, due ${bill.dueAt.toDefaultDateFormat()}: '
+      '${amount.toCurrency()}, of which ${(amount - owed).toCurrency()} is '
+      'paid and ${owed.toCurrency()} is still owed.';
+}
+
+/// The PDF quotation's "Total payable" (finstack#124): the sum of the
+/// interest and principal the PDF prints for each of [schedules], the bills
+/// of `LoanCalculationService.wholeBills`. A bill not paid yet prints its
+/// own split, which adds up to its amortization. A paid row prints what was
+/// paid, which differs from its amortization when the bill was paid short
+/// (#156: the rest is carried into the next bill, so summing amortizations
+/// would count it twice). A last bill still owed after a part payment
+/// prints whole, so the total does not change when a part is paid. Charges and deductions
+/// are already inside every bill (it is computed on the charge-adjusted
+/// principal), so they are not added again. The sum also covers 15-day
+/// loans, whose stored `period` is in months while each bill is per 15 days.
+///
+/// Null for an open-term loan (`period` 0): it has no total known in advance,
+/// and the PDF hides the line.
+@visibleForTesting
+double? pdfTotalPayable(Loan loan, List<LoanSchedule> schedules) {
+  if (loan.period <= 0) return null;
+
+  return schedules.fold<double>(
+    0,
+    (sum, s) => sum + s.interestPayment + s.principalPayment,
+  );
 }
 
 pw.Widget signatories({
