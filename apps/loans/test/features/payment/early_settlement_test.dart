@@ -1,5 +1,6 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:cash_pool_repository/cash_pool_repository.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -30,7 +31,70 @@ import 'package:user_repository/user_repository.dart';
 
 class _Loans extends Mock implements LoanRepository {}
 
-class _Schedules extends Mock implements LoanScheduleRepository {}
+/// The fake runs a transaction's writes the moment they are queued and
+/// lets two transactions run at once. Firestore commits a transaction's
+/// writes together when its handler returns, and retries a transaction
+/// whose reads another one changed, so the retry's checks see the other's
+/// writes. This fake keeps that: transactions run one at a time and their
+/// writes wait for the handler. That the server behaves so is read from
+/// the Firestore documentation, not tested here.
+class _AtomicFirestore extends FakeFirebaseFirestore {
+  Future<void> _previous = Future.value();
+
+  @override
+  Future<T> runTransaction<T>(
+    TransactionHandler<T> transactionHandler, {
+    Duration timeout = const Duration(seconds: 30),
+    int maxAttempts = 5,
+  }) {
+    final run = _previous.then((_) async {
+      final transaction = _BufferedTransaction();
+      final result = await transactionHandler(transaction);
+      for (final write in transaction.writes) {
+        await write();
+      }
+      return result;
+    });
+    _previous = run.then((_) {}, onError: (Object _) {});
+
+    return run;
+  }
+}
+
+class _BufferedTransaction implements Transaction {
+  final writes = <Future<void> Function()>[];
+
+  @override
+  Future<DocumentSnapshot<T>> get<T extends Object?>(
+    DocumentReference<T> documentReference,
+  ) =>
+      documentReference.get();
+
+  @override
+  Transaction set<T>(
+    DocumentReference<T> documentReference,
+    T data, [
+    SetOptions? options,
+  ]) {
+    writes.add(() => documentReference.set(data, options));
+    return this;
+  }
+
+  @override
+  Transaction update(
+    DocumentReference documentReference,
+    Map<Object, Object?> data,
+  ) {
+    writes.add(() => documentReference.update(data));
+    return this;
+  }
+
+  @override
+  Transaction delete(DocumentReference documentReference) {
+    writes.add(documentReference.delete);
+    return this;
+  }
+}
 
 class _Auth extends Mock implements AuthenticationService {}
 
@@ -41,7 +105,7 @@ class _Settlement extends MockBloc<LoanSettlementEvent, LoanSettlementState>
     implements LoanSettlementBloc {}
 
 void main() {
-  late FakeFirebaseFirestore firestore;
+  late _AtomicFirestore firestore;
   late LoanRepository real;
   late _Loans loans;
   late LoanScheduleRepository schedules;
@@ -56,11 +120,11 @@ void main() {
 
   setUpAll(() {
     registerFallbackValue(Loan());
-    registerFallbackValue(LoanSchedule());
+    registerFallbackValue(_BufferedTransaction());
   });
 
   setUp(() async {
-    firestore = FakeFirebaseFirestore();
+    firestore = _AtomicFirestore();
     real = LoanRepository.withFirestore(firestore);
     schedules = LoanScheduleRepository.withFirestore(firestore);
     payments = PaymentRepository.withFirestore(firestore);
@@ -135,6 +199,18 @@ void main() {
         updateView: any(named: 'updateView'),
       ),
     ).thenAnswer((i) => real.update(data: i.namedArguments[#data] as Loan));
+    when(() => loans.getIn(any(), any())).thenAnswer(
+      (i) => real.getIn(
+        i.positionalArguments[0] as Transaction,
+        i.positionalArguments[1] as String,
+      ),
+    );
+    when(() => loans.updateIn(any(), any())).thenAnswer(
+      (i) => real.updateIn(
+        i.positionalArguments[0] as Transaction,
+        i.positionalArguments[1] as Loan,
+      ),
+    );
 
     auth = _Auth();
     when(() => auth.user).thenReturn(
@@ -415,82 +491,99 @@ void main() {
     expect((await real.get(id: loanId)).status, LoanStatus.completed);
   });
 
+  /// The loan's settlement documents: rows (bill 1 aside), payments and
+  /// acknowledged cash-pool entries.
+  Future<(int, int, int)> settlementDocs() async => (
+        (await schedules.allByLoanId(loanId: loanId, onlyPaid: false)).length -
+            1,
+        (await payments.load(
+          reset: true,
+          limit: null,
+          statements: [QueryStatement(field: 'loan_id', isEqualTo: loanId)],
+        ))
+            .length,
+        (await cashPool.load(
+          reset: true,
+          limit: null,
+          statements: [
+            const QueryStatement(field: 'user_id', isEqualTo: 'u1'),
+          ],
+        ))
+            .where((e) => e.status == CashPoolStatus.acknowledged_payment)
+            .length,
+      );
+
   // Review of #157: two devices that both read the loan before either wrote
   // both passed the checks; the second wrote another row and payment.
-  test('a second device that read before the first wrote records nothing',
-      () async {
-    // Device B's reads, taken before device A writes anything.
-    final staleLoan = await real.get(id: loanId);
-    final staleRows = await schedules.allByLoanId(
-      loanId: loanId,
-      onlyPaid: false,
-    );
-    final staleLoans = _Loans();
-    when(() => staleLoans.get(id: any(named: 'id')))
-        .thenAnswer((_) async => staleLoan);
-    when(
-      () => staleLoans.load(
-        statements: any(named: 'statements'),
-        limit: any(named: 'limit'),
-        page: any(named: 'page'),
-        reset: any(named: 'reset'),
-        includeAdditionalLoanAmounts:
-            any(named: 'includeAdditionalLoanAmounts'),
-      ),
-    ).thenAnswer((_) async => []);
-    final staleSchedules = _Schedules();
-    when(
-      () => staleSchedules.load(
-        statements: any(named: 'statements'),
-        limit: any(named: 'limit'),
-        page: any(named: 'page'),
-        reset: any(named: 'reset'),
-      ),
-    ).thenAnswer((_) async => staleRows);
-    when(() => staleSchedules.create(data: any(named: 'data'))).thenAnswer(
-      (i) => schedules.create(data: i.namedArguments[#data] as LoanSchedule),
-    );
-
+  test('two devices confirming at once record one settlement', () async {
     final a = newBloc();
-    final shown = await settle(a);
+    final b = newBloc();
+    final shownA = await settle(a);
+    final shownB = await settle(b);
+
+    final outcomes = await Future.wait([
+      confirm(a, shownA.remainingBalance!),
+      confirm(b, shownB.remainingBalance!),
+    ]);
+
     expect(
-      (await confirm(a, shown.remainingBalance!)).status,
-      LoanSettlementStatus.success,
+      outcomes.map((s) => s.status),
+      unorderedEquals(
+        [LoanSettlementStatus.success, LoanSettlementStatus.error],
+      ),
     );
-
-    final b = LoanSettlementBloc.withDependencies(
-      loanRepository: staleLoans,
-      loanScheduleRepository: staleSchedules,
-      paymentRepository: payments,
-      cashPoolRepository: cashPool,
-      authService: auth,
+    expect(
+      outcomes
+          .singleWhere((s) => s.status == LoanSettlementStatus.error)
+          .message,
+      contains('already settled'),
     );
-    addTearDown(b.close);
-    final done = await confirm(b, shown.remainingBalance!);
+    expect(await settlementDocs(), (1, 1, 1));
+    expect((await real.get(id: loanId)).status, LoanStatus.completed);
+  });
 
+  test('a stop inside the transaction leaves nothing, and a retry works',
+      () async {
+    // The last write of the transaction, the loan's completion, fails.
+    when(() => loans.updateIn(any(), any()))
+        .thenThrow(Exception('connection lost'));
+    final bloc = newBloc();
+    final shown = await settle(bloc);
+
+    final done = await confirm(bloc, shown.remainingBalance!);
+    expect(done.status, LoanSettlementStatus.error);
+    expect(done.message, contains('connection lost'));
+    expect(await settlementDocs(), (0, 0, 0));
+    expect((await real.get(id: loanId)).status, LoanStatus.paid_on_time);
+
+    when(() => loans.updateIn(any(), any())).thenAnswer(
+      (i) => real.updateIn(
+        i.positionalArguments[0] as Transaction,
+        i.positionalArguments[1] as Loan,
+      ),
+    );
+    final again = await confirm(bloc, shown.remainingBalance!);
+    expect(again.status, LoanSettlementStatus.success, reason: again.message);
+    expect(await settlementDocs(), (1, 1, 1));
+  });
+
+  test('a settlement document already present stops the confirm', () async {
+    await payments.set(
+      data: Payment.create(
+        userId: 'u1',
+        loanScheduleId: '$loanId-settlement',
+        loanId: loanId,
+        bypassPaymentProof: true,
+      )..id = '$loanId-settlement',
+    );
+    final bloc = newBloc();
+    final shown = await settle(bloc);
+
+    final done = await confirm(bloc, shown.remainingBalance!);
     expect(done.status, LoanSettlementStatus.error);
     expect(done.message, contains('already recorded'));
-    expect(
-      await schedules.allByLoanId(loanId: loanId, onlyPaid: false),
-      hasLength(2),
-    );
-    expect(
-      await payments.load(
-        reset: true,
-        limit: null,
-        statements: [QueryStatement(field: 'loan_id', isEqualTo: loanId)],
-      ),
-      hasLength(1),
-    );
-    final pool = await cashPool.load(
-      reset: true,
-      limit: null,
-      statements: [const QueryStatement(field: 'user_id', isEqualTo: 'u1')],
-    );
-    expect(
-      pool.where((e) => e.status == CashPoolStatus.acknowledged_payment),
-      hasLength(1),
-    );
+    expect(await settlementDocs(), (0, 1, 0));
+    expect((await real.get(id: loanId)).status, LoanStatus.paid_on_time);
   });
 
   // A fixed-term loan has no statement (it is refused as not open-term), so

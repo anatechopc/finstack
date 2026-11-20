@@ -18,10 +18,13 @@ final class CashPoolRepository implements BaseRepository<CashPool> {
 
   late final CashPoolFirestoreService _firestoreService;
 
-  /// Writes [data] at its own id only when no entry has it; otherwise
-  /// throws a [DocumentExistsException] and writes nothing.
-  Future<void> create({required CashPool data}) =>
-      _firestoreService.createOnly(id: data.id, json: data.toEntity().toJson());
+  /// Whether entry [id] exists, read inside [transaction].
+  Future<bool> existsIn(Transaction transaction, String id) async =>
+      await _firestoreService.getIn(transaction, id) != null;
+
+  /// Queues writing [data] at its own id in [transaction].
+  void setIn(Transaction transaction, CashPool data) =>
+      _firestoreService.setIn(transaction, data.id, data.toEntity().toJson());
 
   @override
   Future<CashPool> add({required CashPool data}) async {

@@ -82,13 +82,7 @@ class LoanSettlementBloc
     required String loanId,
   }) async {
     final loan = await loanRepository.get(id: loanId);
-    if (_notActive.contains(loan.status)) {
-      throw Exception(
-        loan.status == LoanStatus.completed
-            ? 'This loan is already settled'
-            : 'Only an active loan can be settled',
-      );
-    }
+    _refuseInactive(loan);
 
     final specialLoans = await loanRepository.load(
       limit: null,
@@ -120,17 +114,31 @@ class LoanSettlementBloc
         ),
       ],
     );
-    // A submission confirmed after the settlement would be collected twice,
-    // and its confirmation or rejection would reopen the loan (review of
-    // #157).
-    if (rows.any((row) => row.status == LoanStatus.payment_submitted)) {
+    _refusePending(rows);
+
+    return (loans: loans, rows: rows);
+  }
+
+  static void _refuseInactive(Loan loan) {
+    if (_notActive.contains(loan.status)) {
+      throw Exception(
+        loan.status == LoanStatus.completed
+            ? 'This loan is already settled'
+            : 'Only an active loan can be settled',
+      );
+    }
+  }
+
+  /// A submission confirmed after the settlement would be collected twice,
+  /// and its confirmation or rejection would reopen the loan (review of
+  /// #157).
+  static void _refusePending(Iterable<LoanSchedule?> rows) {
+    if (rows.any((row) => row?.status == LoanStatus.payment_submitted)) {
       throw Exception(
         'A payment is waiting for confirmation. Confirm or reject it first, '
         'then settle.',
       );
     }
-
-    return (loans: loans, rows: rows);
   }
 
   Future<void> _handleSettleLoanAccountEvent(
@@ -166,9 +174,9 @@ class LoanSettlementBloc
   }
 
   /// Records each loan's settlement as a paid row, its payment and its
-  /// cash-pool entry, the way the teller payment paths write them, then
-  /// completes the loans (#116). The rows come first: Go's loanChanges
-  /// reads them when it books the completion.
+  /// cash-pool entry, the way the teller payment paths write them, and
+  /// completes the loans, all in one transaction (#116, review of #157):
+  /// Go's loanChanges sees the rows when it books the completion.
   Future<void> _handleConfirmLoanAccountSettlementEvent(
     ConfirmLoanAccountSettlementEvent event,
     Emitter<LoanSettlementState> emit,
@@ -204,74 +212,121 @@ class LoanSettlementBloc
       }
 
       final teller = authService.user;
+      // The borrower's prepaid pool, read once (a query cannot run inside a
+      // transaction); the family's loans deduct from it in turn.
+      var poolBalance = (await processCashPoolDisplay(
+        await cashPoolRepository.load(
+          reset: true,
+          limit: null,
+          statements: [
+            QueryStatement(field: 'user_id', isEqualTo: loans.first.userId),
+          ],
+        ),
+      ))
+          .balance;
+      // One settlement per loan: its row, payment and cash-pool entry share
+      // this id and are written only where none exists.
+      final documents =
+          <({LoanSchedule row, Payment payment, CashPool entry})>[];
       for (final (:loan, :row) in settlements) {
         final amount = LoanCalculationService.settlementAmount(row);
-        // One settlement per loan: the row, its payment and its cash-pool
-        // entry share this id and are only ever created, never overwritten.
-        // The row goes first, so a second device confirming at the same
-        // time fails there and writes nothing (review of #157).
         final id = '${loan.id}-settlement';
-        try {
-          await loanScheduleRepository.create(
-            data: row
+        final poolBefore = poolBalance;
+        final deducted = min(amount, poolBefore);
+        poolBalance -= deducted;
+        documents.add(
+          (
+            row: row
               ..id = id
               ..paymentId = id,
-          );
-        } on DocumentExistsException {
-          throw Exception('The settlement of this loan is already recorded');
-        }
-        final payment = Payment.create(
-          userId: loan.userId,
-          loanScheduleId: id,
-          loanId: loan.id,
-          // The settlement dialog takes no proof; the comment records who
-          // confirmed the cash.
-          bypassPaymentProof: true,
-          comment: '''
+            payment: Payment.create(
+              userId: loan.userId,
+              loanScheduleId: id,
+              loanId: loan.id,
+              // The settlement dialog takes no proof; the comment records who
+              // confirmed the cash.
+              bypassPaymentProof: true,
+              comment: '''
           Early settlement confirmed by:
           user:id: ${teller.id}
           user:name: ${teller.completeNameEasternOrder}
           user:email: ${teller.emailAddress}
           amount: $amount
           confirmed_at: ${DateTime.timestamp().toDefaultDateFormatExtended()}''',
-          confirmedBy: teller.id,
-          confirmedAt: DateTime.timestamp(),
-        )..id = id;
-        await paymentRepository.create(data: payment);
-
-        final pool = await processCashPoolDisplay(
-          await cashPoolRepository.load(
-            reset: true,
-            limit: null,
-            statements: [
-              QueryStatement(field: 'user_id', isEqualTo: loan.userId),
-            ],
-          ),
-        );
-        final deducted = min(amount, pool.balance);
-        await cashPoolRepository.create(
-          data: CashPool.create(
-            userId: loan.userId,
-            amount: deducted,
-            status: CashPoolStatus.acknowledged_payment,
-            paymentId: id,
-            loanId: loan.id,
-            comment: '''
+              confirmedBy: teller.id,
+              confirmedAt: DateTime.timestamp(),
+            )..id = id,
+            entry: CashPool.create(
+              userId: loan.userId,
+              amount: deducted,
+              status: CashPoolStatus.acknowledged_payment,
+              paymentId: id,
+              loanId: loan.id,
+              comment: '''
           Early settlement: $amount
-          Cash pool balance: ${pool.balance}
+          Cash pool balance: $poolBefore
           ${deducted < amount ? 'Excess payment is collected from user in person.' : 'Full payment is deducted from the cash pool.'}
 
           Teller: ${teller.completeNameEasternOrder}
           ''',
-          )..id = id,
+            )..id = id,
+          ),
         );
       }
 
+      // One transaction (review of #157): it reads each loan, each
+      // settlement document and each stored row first, and writes nothing
+      // unless every loan is still active, no settlement document exists
+      // and no row has been submitted since. Then every row, payment, pool
+      // entry and completion lands together or none does: a stop midway
+      // leaves nothing, and a second device's transaction, retried by
+      // Firestore after the first commits, sees it and stops. Four writes a
+      // loan: Firestore's 500-write limit is a family of 125 loans; past it
+      // the commit is refused and nothing is written.
+      await loanScheduleRepository.runTransaction((transaction) async {
+        final current = <Loan>[];
+        for (final (:row, payment: _, entry: _) in documents) {
+          final loan = await loanRepository.getIn(transaction, row.loanId);
+          if (loan == null) {
+            throw Exception('Loan ${row.loanId} no longer exists');
+          }
+          _refuseInactive(loan);
+          current.add(loan);
+          if (await loanScheduleRepository.getIn(transaction, row.id) != null ||
+              await paymentRepository.existsIn(transaction, row.id) ||
+              await cashPoolRepository.existsIn(transaction, row.id)) {
+            throw Exception('The settlement of this loan is already recorded');
+          }
+        }
+        _refusePending([
+          for (final stored in rows)
+            await loanScheduleRepository.getIn(transaction, stored.id),
+        ]);
+
+        for (final (:row, :payment, :entry) in documents) {
+          loanScheduleRepository.setIn(transaction, row);
+          paymentRepository.setIn(transaction, payment);
+          cashPoolRepository.setIn(transaction, entry);
+        }
+        for (final loan in current) {
+          loanRepository.updateIn(
+            transaction,
+            loan..status = LoanStatus.completed,
+          );
+        }
+      });
+
+      // The loan lists read the borrower's loan view, which the transaction
+      // cannot write; the settlement is recorded whatever happens here.
       for (final loan in loans) {
-        await loanRepository.update(
-          data: loan..status = LoanStatus.completed,
-          updateView: true,
-        );
+        try {
+          await loanRepository.update(
+            data: loan..status = LoanStatus.completed,
+            updateView: true,
+          );
+        } catch (err) {
+          _log.warning('Settled loan ${loan.id}: view not refreshed: $err');
+        }
       }
 
       emit(const LoanSettlementState.loading());

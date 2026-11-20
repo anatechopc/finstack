@@ -4,6 +4,7 @@ import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_repository/src/data/database/additional_loan_amount_firestore_service.dart';
 import 'package:loan_repository/src/data/database/loan_firestore_service.dart';
 import 'package:loan_repository/src/data/database/loan_realtime_database_service.dart';
+import 'package:loan_repository/src/model/loan_entity.dart';
 import 'package:loan_repository/src/model/sales.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:user_loan_view_repository/user_loan_view_repository.dart';
@@ -80,6 +81,21 @@ class LoanRepository implements BaseRepository<Loan> {
             .map((item) => item.toAdditionalLoanAmount())
             .toList();
     });
+  }
+
+  /// Loan [id] read inside [transaction] (without its top-ups), or null
+  /// when there is none.
+  Future<Loan?> getIn(Transaction transaction, String id) async {
+    final json = await _firestoreService.getIn(transaction, id);
+
+    return json == null ? null : LoanEntity.fromJson(json).toLoan();
+  }
+
+  /// Queues updating [data] in [transaction], as [update] does without the
+  /// loan view and the top-ups.
+  void updateIn(Transaction transaction, Loan data) {
+    final entity = data.toEntity()..updatedAt = DateTime.timestamp();
+    _firestoreService.updateIn(transaction, entity.id, entity.toJson());
   }
 
   @override

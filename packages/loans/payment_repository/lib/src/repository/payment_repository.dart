@@ -23,10 +23,13 @@ class PaymentRepository implements BaseRepository<Payment> {
         .then((value) => value.toPayment());
   }
 
-  /// Writes [data] at its own id only when no payment has it; otherwise
-  /// throws a [DocumentExistsException] and writes nothing.
-  Future<void> create({required Payment data}) =>
-      _firestoreService.createOnly(id: data.id, json: data.toEntity().toJson());
+  /// Whether payment [id] exists, read inside [transaction].
+  Future<bool> existsIn(Transaction transaction, String id) async =>
+      await _firestoreService.getIn(transaction, id) != null;
+
+  /// Queues writing [data] at its own id in [transaction].
+  void setIn(Transaction transaction, Payment data) =>
+      _firestoreService.setIn(transaction, data.id, data.toEntity().toJson());
 
   /// Writes [data] at its own id (create or overwrite): a retry with the
   /// same id never adds a second payment.
