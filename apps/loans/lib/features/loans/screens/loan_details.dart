@@ -20,10 +20,92 @@ import 'package:loooans/features/products/screen/loan_schedule_widget.dart';
 import 'package:loooans/features/products/widget/quotation_widget.dart';
 import 'package:loooans/features/search/widget/search_app_bar_action.dart';
 import 'package:loooans/services/authentication_service.dart';
+import 'package:loooans/services/loan_calculation_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
 import 'package:user_loan_view_repository/user_loan_view_repository.dart';
+
+/// What the borrower's Next payment and Pay in full panels charge: each
+/// unpaid installment's amortization + any extraPayment, plus the running
+/// late penalty as of [asOf] (default now), which is what the teller charges
+/// when the collection date defaults to the submission time.
+///
+/// Open-term placeholder rows (the principal release and top-ups) are not
+/// installments: the principal release is dated on the loan's creation day,
+/// so it would otherwise be the "next" payment of every open-term loan.
+///
+/// On an open-term loan "Pay now" (`payNow`) is every bill already due
+/// (missed bills and one due today) with the overdue stretch's penalty
+/// once, or the next bill when none is due yet (owner rules R2, R3). A
+/// fixed-term loan pays its next installment.
+({
+  List<LoanSchedule> unpaid,
+  LoanSchedule? nextDue,
+  List<LoanSchedule> payNow,
+  double nextDuePenalty,
+  double nextDueAmount,
+  double remainingPenalty,
+  double remainingTotal,
+}) borrowerAmountsDue({
+  required List<LoanSchedule> schedules,
+  required Loan loan,
+  DateTime? asOf,
+}) {
+  // A pending, declined, settled or bad-debt open-term loan owes nothing.
+  final bills = loan.period != 0 || LoanCalculationService.billsOpenTerm(loan);
+  final unpaid = schedules
+      .where(
+        (s) =>
+            bills &&
+            !s.isPlaceholder &&
+            !s.isPrincipalRelease &&
+            s.status != LoanStatus.paid_on_time &&
+            s.status != LoanStatus.paid_late &&
+            s.status != LoanStatus.payment_submitted,
+      )
+      .toList()
+    ..sort((a, b) => a.dueAt.compareTo(b.dueAt));
+  final nextDue = unpaid.isNotEmpty ? unpaid.first : null;
+  final today = DateUtils.dateOnly(asOf ?? DateTime.now());
+  final dueNow = unpaid
+      .where(
+        (s) =>
+            s.isOpenTerm &&
+            !DateUtils.dateOnly(s.lateFrom.toLocal()).isAfter(today),
+      )
+      .toList();
+  final payNow = dueNow.isNotEmpty || nextDue == null ? dueNow : [nextDue];
+  // An open-term stretch penalty shows on its earliest unpaid bill only, so
+  // these sums count it once.
+  double penaltyOf(LoanSchedule s) => previewPenalty(
+        schedule: s,
+        loan: loan,
+        asOf: asOf,
+        loanRows: schedules,
+      ).total;
+  final nextDuePenalty = payNow.fold<double>(0, (sum, s) => sum + penaltyOf(s));
+  final remainingPenalty =
+      unpaid.fold<double>(0, (sum, s) => sum + penaltyOf(s));
+
+  return (
+    unpaid: unpaid,
+    nextDue: nextDue,
+    payNow: payNow,
+    nextDuePenalty: nextDuePenalty,
+    nextDueAmount: payNow.fold<double>(
+          0,
+          (sum, s) => sum + s.amortization + s.extraPayment,
+        ) +
+        nextDuePenalty,
+    remainingPenalty: remainingPenalty,
+    remainingTotal: unpaid.fold<double>(
+          0,
+          (sum, s) => sum + s.amortization + s.extraPayment,
+        ) +
+        remainingPenalty,
+  );
+}
 
 class LoanDetails extends StatefulWidget {
   const LoanDetails({
@@ -258,6 +340,7 @@ class _LoanDetailsState extends State<LoanDetails> {
                             interestRate: loan.interestRate,
                             penalties: loan.penalties,
                             allowLatePayments: loan.allowLatePayments,
+                            isOpenTerm: loan.period == 0,
                           ),
                         ),
                       ],
@@ -274,6 +357,7 @@ class _LoanDetailsState extends State<LoanDetails> {
                       schedule: schedules[index - 5],
                       index: index - 5,
                       loan: loan,
+                      loanRows: schedules,
                     ),
                 };
               },
@@ -339,6 +423,7 @@ class _LoanDetailsState extends State<LoanDetails> {
                       interestRate: loan.interestRate,
                       penalties: loan.penalties,
                       allowLatePayments: loan.allowLatePayments,
+                      isOpenTerm: loan.period == 0,
                     ),
                   ),
                   const Gap(24),
@@ -439,40 +524,29 @@ class _LoanDetailsState extends State<LoanDetails> {
     final userLoanView =
         widget.userLoanView ?? context.read<LoansBloc>().selectedUserLoanView;
     final loan = context.read<LoansBloc>().selectedLoan;
-    final schedules = context.read<LoansBloc>().clientLoanSchedules;
-
-    final unpaid = schedules
-        .where(
-          (s) =>
-              s.status != LoanStatus.paid_on_time &&
-              s.status != LoanStatus.paid_late &&
-              s.status != LoanStatus.payment_submitted,
-        )
-        .toList()
-      ..sort((a, b) => a.dueAt.compareTo(b.dueAt));
-    final nextDue = unpaid.isNotEmpty ? unpaid.first : null;
-    // The lender side collects amortization + any extraPayment, plus the
-    // running late penalty as of now (what the teller will charge when the
-    // collection date defaults to the submission time).
-    final nextDuePenalty =
-        nextDue == null ? 0.0 : previewPenalty(schedule: nextDue, loan: loan).total;
-    final nextDueAmount = nextDue == null
-        ? 0.0
-        : nextDue.amortization + nextDue.extraPayment + nextDuePenalty;
-    final remainingPenalty = unpaid.fold<double>(
-      0,
-      (sum, s) => sum + previewPenalty(schedule: s, loan: loan).total,
+    final (
+      :unpaid,
+      :nextDue,
+      :payNow,
+      :nextDuePenalty,
+      :nextDueAmount,
+      :remainingPenalty,
+      :remainingTotal,
+    ) = borrowerAmountsDue(
+      schedules: context.read<LoansBloc>().clientLoanSchedules,
+      loan: loan,
     );
-    final remainingTotal = unpaid.fold<double>(
-          0,
-          (sum, s) => sum + s.amortization + s.extraPayment,
-        ) +
-        remainingPenalty;
 
     // Nothing left to pay (or the loan has completed) — show a "fully paid"
     // panel instead of the Pay now / Pay in full buttons, which would otherwise
     // invite payment on a zero-balance loan.
     if (unpaid.isEmpty || loan.status == LoanStatus.completed) {
+      // A pending, declined or bad-debt loan bills nothing: no payment due,
+      // but not "fully paid" either.
+      final label = loan.status == LoanStatus.completed ||
+              LoanCalculationService.billsOpenTerm(loan)
+          ? 'Loan fully paid'
+          : 'No payment due';
       return Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -484,8 +558,8 @@ class _LoanDetailsState extends State<LoanDetails> {
           crossAxisAlignment: !fullScreen
               ? CrossAxisAlignment.start
               : CrossAxisAlignment.center,
-          children: const [
-            Row(
+          children: [
+            const Row(
               children: [
                 Text(
                   'Next payment',
@@ -497,15 +571,19 @@ class _LoanDetailsState extends State<LoanDetails> {
                 ),
               ],
             ),
-            Gap(16),
+            const Gap(16),
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.check_circle, color: AppColors.green1, size: 18),
-                Gap(8),
+                const Icon(
+                  Icons.check_circle,
+                  color: AppColors.green1,
+                  size: 18,
+                ),
+                const Gap(8),
                 Text(
-                  'Loan fully paid',
-                  style: TextStyle(
+                  label,
+                  style: const TextStyle(
                     color: AppColors.green1,
                     fontSize: 12,
                   ),
@@ -577,7 +655,7 @@ class _LoanDetailsState extends State<LoanDetails> {
                 }
                 showSubmitPaymentDialog(
                   context,
-                  schedules: [nextDue],
+                  schedules: payNow,
                   loanId: loan.id,
                   companyId: userLoanView.companyId,
                   amount: nextDueAmount,

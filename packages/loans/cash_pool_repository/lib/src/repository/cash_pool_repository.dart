@@ -1,5 +1,7 @@
 import 'package:cash_pool_repository/src/data/database/cash_pool_firestore_service.dart';
 import 'package:cash_pool_repository/src/model/cash_pool.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 
 /// {@template company_repository}
@@ -9,7 +11,20 @@ final class CashPoolRepository implements BaseRepository<CashPool> {
   /// constructor
   CashPoolRepository() : _firestoreService = CashPoolFirestoreService();
 
+  /// On [firestore] (a fake in tests) instead of the app's Firestore.
+  @visibleForTesting
+  CashPoolRepository.withFirestore(FirebaseFirestore firestore)
+      : _firestoreService = CashPoolFirestoreService(firestore: firestore);
+
   late final CashPoolFirestoreService _firestoreService;
+
+  /// Whether entry [id] exists, read inside [transaction].
+  Future<bool> existsIn(Transaction transaction, String id) async =>
+      await _firestoreService.getIn(transaction, id) != null;
+
+  /// Queues writing [data] at its own id in [transaction].
+  void setIn(Transaction transaction, CashPool data) =>
+      _firestoreService.setIn(transaction, data.id, data.toEntity().toJson());
 
   @override
   Future<CashPool> add({required CashPool data}) async {

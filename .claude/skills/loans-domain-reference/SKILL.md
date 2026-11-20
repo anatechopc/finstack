@@ -42,7 +42,7 @@ lint disabled for this):
 | `pending` | Pending | Loan creation (`loans_bloc.dart:553`) |
 | `declined` / `approved` | — | Staff status update (`_handleUpdateLoanStatusEvent`, `loans_bloc.dart:671`) |
 | `payment_submitted` | Payment submitted | Borrower self-submits payment proof, awaits lender confirm (`apps/loans/lib/features/payments/bloc/payment_submission_bloc.dart:80`) |
-| `paid_on_time` / `paid_late` | — | Teller records payment; picked by `schedule.dueAt` vs now (`payment_bloc.dart:92-99`) |
+| `paid_on_time` / `paid_late` | — | Every confirmation path; `PaymentConfirmationService.applyLateness` compares the collection date with `schedule.lateFrom` (`original_due_at ?? due_at`, see §5) and the loan's allow-late flag |
 | `not_paid` / `not_paid_overdue` | — | Default schedule display state / overdue (`apps/loans/lib/features/products/screen/loan_schedule_widget.dart:191-207`) |
 | `completed` | **Fully paid** | Early Settlement confirm (`apps/loans/lib/features/loans/bloc/loan_settlement_bloc.dart:166-173`) |
 | `bad_debt` | Bad debt | Staff status update; excluded from settlement queries (`loan_settlement_bloc.dart:68,153`) |
@@ -65,7 +65,7 @@ set at creation (`apps/loans/lib/features/loans/bloc/loans_bloc.dart:550-557`:
 | `dueAt` | last schedule due date | `null` |
 | Payments | amortized principal + interest | **interest-only**; principal only reduced by extra/closing payments |
 | Ends when | schedule exhausted | borrower closes via **Early Settlement** (§8) |
-| Schedule | full table generated upfront | one next-due row generated at a time |
+| Schedule | full table generated upfront | every missed bill since the last stored row, plus the next bill (R1/R2, 2026-11-19) |
 | Calculator | `LoanCalculationService.calculateFixedTerm` | `calculateOpenTerm` / `calculateOpenTermSchedules` |
 
 Both live in `apps/loans/lib/services/loan_calculation_service.dart` (the arithmetic
@@ -77,7 +77,7 @@ core of the whole product — treat with campaign-level care).
 |---|---|---|
 | `'1m'` | monthly | fixed: `loan_calculation_service.dart:88-92`; open: fallthrough `+30 days` (`:225-227`) |
 | `'15d'` | every 15 days (twice-monthly). Fixed-term: payment count ×2, monthly rate ÷2 (`:77-80`; also `extensions.dart:157-160`). UI-entered payment count is halved into months at `loans_bloc.dart:457-461` | both calculators |
-| `'D1,D2'` (e.g. `'15,30'`) | two salary days-of-month — **open-term only**. Comes from the borrower's profile: `employmentDetails.salaryDays` joined with `,` (`loans_bloc.dart:476-485`). Next due date advances to the other salary day / next month (`loan_calculation_service.dart:189-222`) | `calculateOpenTermSchedules`, `Loan.completeTerm` (`loan.dart:57-93`) |
+| `'D1,D2'` (e.g. `'15,30'`) | two salary days-of-month — **open-term only**. Comes from the borrower's profile: `employmentDetails.salaryDays` joined with `,` (`loans_bloc.dart:476-485`). Each bill falls on the next salary day after the previous bill, never computed from today (`_nextOpenTermDueDate`, #144) | `calculateOpenTermSchedules`, `Loan.completeTerm` (`loan.dart:57-93`) |
 
 Always check `term` before assuming monthly. Human-readable rendering:
 `Loan.completeTerm` getter.
@@ -90,7 +90,7 @@ On a loan doc (`loan_entity.dart`): `amount` (principal requested),
 
 - **`loanAmount = amount + additionalCharges - deductions`** — `LoanCalculationService.calculateLoanAmount` (`loan_calculation_service.dart:30-32`). This is the amount that gets amortized.
 - **Upfront-collection charges are NOT rolled into the amortized amount** — they are collected at release: `receivable = totalAmount - totalUpfrontCollection` (`loans_bloc.dart:381`, `:472`).
-- Settlement uses `(amount + additionalCharges) - (deductions + additionalChargeUpfrontCollection)` (`LoanCalculationService.calculateSettlementBalance`, `loan_calculation_service.dart`; extracted from the bloc 2026-09-08 — the whole formula is under review as finstack#116).
+- Settlement (`LoanCalculationService.settlementOf`, finstack#116, owner 2026-11-20) = the balance after the last confirmed row (with none: `amount + additionalCharges - deductions`), approved top-ups included, + interest accrued since that row's due date + penalties on missed bills.
 
 Charges are defined per product as `Charge` objects
 (`packages/loans/product_repository/lib/src/model/charge.dart`): `amount`,
@@ -113,18 +113,46 @@ Verified example: Pv=10,000, rate 3%/month (`interestRate` field = `3.0`), 6 mon
 term `'1m'` → **P = 1,845.98**, total paid **11,075.85**, row 1 interest 300.00 /
 principal 1,545.98 → OB 8,454.02. Same loan at `'15d'`: n=12, R=1.5% → P = 916.80.
 
-**Open-term proration** — "1 month = 30 days" convention (comment at
-`loan_calculation_service.dart:146`):
-`interestDayMultiplier = diffDays / 30` (`:262`), where `diffDays` = days between the
-last schedule's due date and the next due date. Then
-`interestCharge = outstandingBalance * monthlyRate * interestDayMultiplier` (`:265-266`)
-and the scheduled `amortization` collapses to the interest charge — interest-only,
-`principalPayment: 0` (`:280-284`). `totalLoanPayment` is `double.infinity` as a
-sentinel: an open-term loan has no fixed total (`:241`).
+**Open-term bills (owner rules R1-R5, 2026-11-19; golden G14)** — "1 month =
+30 days" convention: `interestCharge = balance * monthlyRate * days / 30`,
+interest-only, `principalPayment: 0`, `totalLoanPayment = double.infinity`
+(sentinel). Bills keep their scheduled dates (R1): `'1m'` / `'15d'` every
+30 / 15 calendar days from the loan's creation day, salary days on the next
+salary day after the previous bill. Every bill due before today is its own
+row, then the bill due today or later (R2; no accrual to today, no one-month
+cap). The last stored row's interest shortfall is added to the next bill's
+`amortization` (R4: 600 paid of 1,000 → 1,400). A top-up splits its cycle
+(R5: G9 83.33 + 504.17 = 587.50; approved top-ups only, #137). Open-term
+penalties are charged once per overdue stretch, not per bill (R3: 40,000, bills
+Sep 15 and Sep 30 paid Oct 2, 0.1%/day → 680), on the balance in force each
+day; a submitted bill is settled at its transfer. Only an active loan bills
+(`LoanCalculationService.billsOpenTerm`: not pending, declined, completed or bad
+debt). All days are local calendar days. The engine never changes its inputs
+(#145). Worked tables
+and rules: [references/schedule-math.md](references/schedule-math.md) §2-§3;
+spec `docs/superpowers/specs/2026-09-04-penalties-design.md` §5.1.
 Verified example: OB=10,000, 5%/month, salary days `'15,30'`, 15 days elapsed →
-multiplier 0.5, interest **250.00**, scheduled amortization **250.00**, principal 0.
+multiplier 0.5, interest **250.00**, amount due **250.00**, principal 0.
 The multiplier is persisted on the schedule doc as `interest_day_multiplier`
-(`packages/loans/loan_schedule_repository/lib/src/model/loan_schedule_entity.dart:143-146`).
+(`packages/loans/loan_schedule_repository/lib/src/model/loan_schedule_entity.dart`).
+
+**Lateness (finstack#114, 2026-11-13; R3).** Lateness, overdue labels and
+penalties count from `LoanSchedule.lateFrom` (`original_due_at ?? due_at`).
+New rows keep their own date and leave `original_due_at` null; rows stored by
+#143's app between 2026-11-13 and R1 have `due_at` = the day they were computed
+and the cycle date in `original_due_at`, and the next bill after one is the
+first scheduled date after its `due_at`. An open-term loan whose product does
+not allow late payments is late and penalized from each bill's due date; one
+that allows them records the days late and charges nothing. Placeholder rows
+(the principal release and top-ups) are not installments: no penalty, never
+late at confirmation, no "Make payment", and not in the borrower's Next
+payment / Pay in full. Computed open-term bills are paid oldest first (the
+engine bills only after the last stored row): client detail offers "Make
+payment" on the earliest one, the Payment Center hides the upcoming tile's Pay
+while bills are overdue. Known limits: no approval date is recorded on a top-up,
+so one approved after a bill was stored while it was pending counts as already
+in that bill; days late can be off by one across a daylight-saving change
+(#125).
 
 ## 6. Additional loans (top-ups) — the sort invariant
 
@@ -135,13 +163,31 @@ Open-term loans accept top-ups: `Loan.additionalLoanAmounts`
 `LoanStatus`). Related: a child loan can carry `parent_id` (`loan_entity.dart:134-137`);
 Early Settlement completes parent + children together (`loan_settlement_bloc.dart:142-173`).
 
-**INVARIANT: merge additional loans into the schedule sorted by `createdAt`
-ascending** — `loan_calculation_service.dart:354-358`
-(`loan.additionalLoanAmounts.sortedBy((a) => a.createdAt)`). Processing newest-first
+**INVARIANT: merge additional loans into the schedule sorted by the day they
+take effect, ascending** — `loan_calculation_service.dart`
+(`loan.additionalLoanAmounts.sortedBy((a) => a.effectiveAt)`; `effectiveAt` =
+`approvedAt ?? createdAt`, review of #149; it was `createdAt`, which is the same
+order when every top-up is approved the day it is added). Processing newest-first
 made later iterations overwrite earlier schedules' outstanding balances →
 double-counted principal. That was the first real production bug
 (finstack#4, fixed by PR finstack#33) — full narrative in `finstack-failure-archaeology`.
 If you touch `calculateOpenTerm`, do not remove or reorder this sort.
+
+**Top-ups exist only on open-term loans** (the UI offers them only when
+`loan.dueAt == null` / `period == 0`; `AdditionalLoanBloc` itself does not
+check). A teller or admin adds one (pending); a loan officer or admin of a
+self-managed company approves it. **Overdue soft block (owner, 2026-11-19):**
+adding a top-up while a bill is past due asks the lender to deduct the
+overdue amount (Pay now's) from it, add it to the next bill, or cancel; only
+the choice (`overdue_choice`) is stored then. Approval applies "deduct" once,
+on the approval day: a Firestore transaction claims the pending top-up with
+the plan (`deduction_plan`, `overdue_deduction`, `deducted_payment_ids`), then
+the payments and rows are written at ids `<topUpId>-<n>` (a retry overwrites
+them and an approval that stopped part way is completed from the plan), then
+the top-up is approved. No cash-pool entry; the rest is handed over outside
+the app. `TopUpOverdueService`. **A top-up moves the balance and the penalty
+base from its approval day** (`effectiveAt`; the creation day for top-ups
+approved before `approved_at` existed).
 
 ## 7. Capital vs cash pool (two different pots)
 

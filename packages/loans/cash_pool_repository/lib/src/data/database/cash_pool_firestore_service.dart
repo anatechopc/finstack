@@ -8,7 +8,9 @@ import 'package:loooans_helpers/data_helpers.dart';
 /// address firestore database service
 final class CashPoolFirestoreService
     extends BaseFirestoreService<CashPoolEntity> {
-  CashPoolFirestoreService() {
+  CashPoolFirestoreService({FirebaseFirestore? firestore})
+      : super(firestore: firestore) {
+    if (firestore != null) return;
     FirebaseFirestore.instance.settings = const Settings(
       persistenceEnabled: true,
       cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,

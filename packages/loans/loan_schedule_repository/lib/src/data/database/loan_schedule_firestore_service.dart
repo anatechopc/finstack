@@ -6,7 +6,9 @@ import 'package:loooans_helpers/data_helpers.dart';
 
 final class LoanScheduleFirestoreService
     extends BaseFirestoreService<LoanScheduleEntity> {
-  LoanScheduleFirestoreService() {
+  LoanScheduleFirestoreService({FirebaseFirestore? firestore})
+      : super(firestore: firestore) {
+    if (firestore != null) return;
     FirebaseFirestore.instance.settings = const Settings(
       persistenceEnabled: true,
       cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
@@ -23,6 +25,14 @@ final class LoanScheduleFirestoreService
     await doc.set(updatedData.toJson());
 
     return updatedData;
+  }
+
+  /// Writes [data] at its own id, creating or overwriting the document, so
+  /// a retried write with the same id never makes a second one.
+  Future<LoanScheduleEntity> set({required LoanScheduleEntity data}) async {
+    await root.doc(data.id).set(data.toJson());
+
+    return data;
   }
 
   @override

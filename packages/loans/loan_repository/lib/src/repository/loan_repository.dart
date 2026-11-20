@@ -1,7 +1,10 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_repository/src/data/database/additional_loan_amount_firestore_service.dart';
 import 'package:loan_repository/src/data/database/loan_firestore_service.dart';
 import 'package:loan_repository/src/data/database/loan_realtime_database_service.dart';
+import 'package:loan_repository/src/model/loan_entity.dart';
 import 'package:loan_repository/src/model/sales.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:user_loan_view_repository/user_loan_view_repository.dart';
@@ -14,6 +17,14 @@ class LoanRepository implements BaseRepository<Loan> {
         _realtimeDatabaseService = LoanRealtimeDatabaseService(),
         _additionalLoanAmountFirestoreService =
             AdditionalLoanAmountFirestoreService();
+
+  /// On [firestore] (a fake in tests) instead of the app's Firestore.
+  @visibleForTesting
+  LoanRepository.withFirestore(FirebaseFirestore firestore)
+      : _firestoreService = LoanFirestoreService(firestore: firestore),
+        _realtimeDatabaseService = LoanRealtimeDatabaseService(),
+        _additionalLoanAmountFirestoreService =
+            AdditionalLoanAmountFirestoreService(firestore: firestore);
 
   late final LoanFirestoreService _firestoreService;
   late final AdditionalLoanAmountFirestoreService
@@ -72,6 +83,21 @@ class LoanRepository implements BaseRepository<Loan> {
     });
   }
 
+  /// Loan [id] read inside [transaction] (without its top-ups), or null
+  /// when there is none.
+  Future<Loan?> getIn(Transaction transaction, String id) async {
+    final json = await _firestoreService.getIn(transaction, id);
+
+    return json == null ? null : LoanEntity.fromJson(json).toLoan();
+  }
+
+  /// Queues updating [data] in [transaction], as [update] does without the
+  /// loan view and the top-ups.
+  void updateIn(Transaction transaction, Loan data) {
+    final entity = data.toEntity()..updatedAt = DateTime.timestamp();
+    _firestoreService.updateIn(transaction, entity.id, entity.toJson());
+  }
+
   @override
   Future<Loan> get({required String id}) async {
     return _firestoreService
@@ -119,10 +145,32 @@ class LoanRepository implements BaseRepository<Loan> {
     });
   }
 
+  /// Reads top-up [id] and writes what [change] returns in one Firestore
+  /// transaction (see `AdditionalLoanAmountFirestoreService.transact`).
+  Future<AdditionalLoanAmount> transactAdditionalLoanAmount({
+    required String id,
+    required AdditionalLoanAmount? Function(AdditionalLoanAmount current)
+        change,
+  }) {
+    return _additionalLoanAmountFirestoreService
+        .transact(
+          id: id,
+          change: (current) =>
+              change(current.toAdditionalLoanAmount())?.toEntity(),
+        )
+        .then((value) => value.toAdditionalLoanAmount());
+  }
+
+  /// Writes the loan [data]. Its new top-ups (no id) are added; the top-ups
+  /// it already has are written back only with [updateAdditionalLoanAmounts],
+  /// for a caller that changes one (approval, decline). A copy loaded before
+  /// a top-up was approved would otherwise reset it to pending, and an
+  /// unapproved top-up is not billed (review of finstack#149).
   @override
   Future<Loan> update({
     required Loan data,
     bool updateView = false,
+    bool updateAdditionalLoanAmounts = false,
   }) async {
     if (updateView) {
       UserLoanViewRepository().updateLoanData(
@@ -142,6 +190,8 @@ class LoanRepository implements BaseRepository<Loan> {
           data: additionalLoanAmount.toEntity(),
         );
         addedAdditionalLoanData.add(addedAdditionalLoanAmount.toAdditionalLoanAmount());
+      } else if (!updateAdditionalLoanAmounts) {
+        addedAdditionalLoanData.add(additionalLoanAmount);
       } else {
         final updatedAdditionalLoanAmount = await _additionalLoanAmountFirestoreService.update(
           data: additionalLoanAmount.toEntity(),

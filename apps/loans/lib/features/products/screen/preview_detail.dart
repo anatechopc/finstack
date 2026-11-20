@@ -129,6 +129,7 @@ class PreviewDetail extends StatelessWidget {
           period: productView.maxPeriod,
           interestRate: productView.interestRate,
           foregroundColor: AppColors.white,
+          isOpenTerm: productView.maxPeriod <= 0,
         ),
         const Gap(16),
         AppWidgets.defaultOutlinedButton(

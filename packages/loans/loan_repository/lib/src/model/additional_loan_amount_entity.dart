@@ -100,6 +100,49 @@ class AdditionalLoanAmountEntity implements BaseEntity {
   )
   late LoanStatus status;
 
+  /// When the top-up was approved (its money released). Null on top-ups not
+  /// approved yet and on those approved before this field existed. The
+  /// open-term engine reads it to tell whether a stored bill already holds
+  /// the top-up (review of finstack#146).
+  @JsonKey(
+    name: 'approved_at',
+    toJson: handleDateTimeToJson,
+    fromJson: handleDateTimeNullableFromJson,
+  )
+  DateTime? approvedAt;
+
+  /// The lender's choice when the top-up was added to an open-term loan
+  /// with overdue bills (owner, 2026-11-19). Null when nothing was overdue
+  /// then, and on top-ups added before this field existed.
+  @JsonKey(name: 'overdue_choice')
+  OverdueChoice? overdueChoice;
+
+  /// What approval paid from the top-up's proceeds: the overdue bills plus
+  /// their penalties on the approval day. The cash released is the
+  /// proceeds (amount less deductions and advance charges) less this.
+  @JsonKey(name: 'overdue_deduction', defaultValue: 0.0)
+  double overdueDeduction = 0;
+
+  /// The confirmed payment documents of the bills paid from the top-up,
+  /// one per bill (each payment's `loan_schedule_id` names its row).
+  @JsonKey(name: 'deducted_payment_ids', defaultValue: <String>[])
+  List<String> deductedPaymentIds = [];
+
+  /// When approval claimed the top-up for a deduction: the collection time
+  /// of the bills paid from it. Null until then.
+  @JsonKey(
+    name: 'deducted_at',
+    toJson: handleDateTimeToJson,
+    fromJson: handleDateTimeNullableFromJson,
+  )
+  DateTime? deductedAt;
+
+  /// The deduction claimed at approval, written once in a transaction
+  /// before any bill: per bill `{row, payment}` as their stored JSON, ids
+  /// included. An approval that stopped part way is completed from it.
+  @JsonKey(name: 'deduction_plan', defaultValue: <Map<String, dynamic>>[])
+  List<Map<String, dynamic>> deductionPlan = [];
+
   Map<String, dynamic> toJson() {
     return _$AdditionalLoanAmountEntityToJson(this);
   }
@@ -119,6 +162,12 @@ class AdditionalLoanAmountEntity implements BaseEntity {
         uploadedFilesUrls,
         loanId,
         status,
+        approvedAt,
+        overdueChoice,
+        overdueDeduction,
+        deductedPaymentIds,
+        deductedAt,
+        deductionPlan,
       ];
 
   @override
@@ -139,6 +188,12 @@ class AdditionalLoanAmountEntity implements BaseEntity {
       ..uploadedFilesUrls = uploadedFilesUrls
       ..selfiePhotoUrl = selfiePhotoUrl
       ..signatureUrl = signatureUrl
-      ..status = status;
+      ..status = status
+      ..approvedAt = approvedAt
+      ..overdueChoice = overdueChoice
+      ..overdueDeduction = overdueDeduction
+      ..deductedPaymentIds = List.of(deductedPaymentIds)
+      ..deductedAt = deductedAt
+      ..deductionPlan = List.of(deductionPlan);
   }
 }

@@ -4,6 +4,12 @@ Log of work done on the loans Cloud Functions (Go backend).
 
 ---
 
+## Fixed-term balance repair tool for #140 (2026-11-19)
+
+Branch `fix/fixed-term-payments-140` (with the app fix). `cmd/repair_fixed_balance`: required `-env dev|stg|prod`; default dry run. A row matches when teller-paid (`paid_on_time`/`paid_late`) and `outstanding_balance` = previous stored − P − (P − extra) within 0.005 (first row's previous = amount + additional_charges − deductions); correct = previous − P. A loan is rewritten only when exactly one row matches, it is the loan's last stored row, no row is negative, and every earlier row holds its correct schedule balance within 0.005 (re-check of #151: a short row 1 then a matched row 2 was rewritten from the wrong base; now listed). Every other loan with a match or a negative balance is listed under "needs a manual or recompute repair" with each row (status, interest, principal, extra, balance, correct schedule balance = start − principal of every row so far) and is never written: after the first double subtraction every later split was computed on the wrong balance (review of #151: shifting balances along a chain left r3 at 0.00 with 3,172.09 owed; chains go to the recompute path, #132). `-apply` writes a marker `{prefix}repair_runs/{runId}` (before/after per row, `applied` false, then true), rewrites only `outstanding_balance` with a `LastUpdateTime` precondition, leaves `updated_at`; prod also needs `-confirm-prod loooans-prod`. No trigger fires on loan_schedules updates. Tests: 11 unit (fakes; reviewer's chain, two consecutive matches, partly written chain, match not last, lone last row) + 2 emulator (`-tags emulator`, local Firestore emulator jar on a free port). Dry run 2026-11-19: dev PRxL6LHifFWQjITEaQzq row W4PYWSxbNfziUVlJRe7X 3,655.82 → 6,827.91; stg ta3EhKPebk913GDxCGAJ row Khh5ytQT5jypns2qmMv8 74,078.52 → 87,039.26; 0 loans listed in either. Not applied anywhere; production not read. Limit: a row paid with principal short of the schedule by more than 0.005 is not matched (#152).
+
+---
+
 ## Dev reset tool: plan written, backups taken, nothing deleted (2026-11-13)
 
 Branch `chore/dev-reset-tool` → develop (draft PR). The owner wants dev emptied because data written by years of different code versions makes its computations unreliable; his constraint is that users who are registered in Firebase Auth stay.

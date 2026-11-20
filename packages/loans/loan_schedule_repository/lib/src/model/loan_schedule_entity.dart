@@ -101,6 +101,17 @@ class LoanScheduleEntity implements BaseEntity {
   )
   late DateTime dueAt;
 
+  /// The cycle's own due date when the open-term engine moved an overdue
+  /// row's [dueAt] to today so that interest accrues to today. Null when
+  /// [dueAt] was not moved. Lateness and overdue status count from this
+  /// date (finstack#114); billing keeps using [dueAt].
+  @JsonKey(
+    name: 'original_due_at',
+    toJson: handleDateTimeToJson,
+    fromJson: handleDateTimeNullableFromJson,
+  )
+  DateTime? originalDueAt;
+
   late LoanStatus status;
 
   @JsonKey(
@@ -154,6 +165,18 @@ class LoanScheduleEntity implements BaseEntity {
   )
   DateTime? collectedAt;
 
+  /// On the rest of a fixed-term bill that a short payment left (owner,
+  /// 2026-11-20, finstack#152): when that payment was collected. The rest
+  /// is the same bill (same [dueAt], late from it); its penalties are only
+  /// the periods after those that payment was charged, so no period of the
+  /// bill is charged twice. Null on every other row.
+  @JsonKey(
+    name: 'part_paid_at',
+    toJson: handleDateTimeToJson,
+    fromJson: handleDateTimeNullableFromJson,
+  )
+  DateTime? partPaidAt;
+
   /// Calendar days between [dueAt] and [collectedAt], floored at 0.
   @JsonKey(name: 'days_late', defaultValue: 0)
   int daysLate = 0;
@@ -192,6 +215,7 @@ class LoanScheduleEntity implements BaseEntity {
         paymentId,
         paidAt,
         dueAt,
+        originalDueAt,
         extraPayment,
         status,
         isOpenTerm,
@@ -200,6 +224,7 @@ class LoanScheduleEntity implements BaseEntity {
         companyId,
         advanceInterestPayments,
         collectedAt,
+        partPaidAt,
         daysLate,
         penalty,
         penalties,
@@ -228,6 +253,7 @@ class LoanScheduleEntity implements BaseEntity {
       ..paymentId = paymentId
       ..paidAt = paidAt
       ..dueAt = dueAt
+      ..originalDueAt = originalDueAt
       ..extraPayment = extraPayment
       ..status = status
       ..isOpenTerm = isOpenTerm
@@ -236,6 +262,7 @@ class LoanScheduleEntity implements BaseEntity {
       ..companyId = companyId
       ..advanceInterestPayments = advanceInterestPayments
       ..collectedAt = collectedAt
+      ..partPaidAt = partPaidAt
       ..daysLate = daysLate
       ..penalty = penalty
       ..penalties = penalties

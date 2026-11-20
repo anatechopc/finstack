@@ -68,6 +68,7 @@ void main() {
       (_) async => Loan()
         ..id = 'loan-1'
         ..period = 1
+        ..status = LoanStatus.approved
         ..term = '1m',
     );
     when(
@@ -100,6 +101,7 @@ void main() {
       (_) async => Loan()
         ..id = 'loan-1'
         ..period = 1
+        ..status = LoanStatus.approved
         ..term = '1m'
         ..penalties = [
           const Penalty(
@@ -132,6 +134,7 @@ void main() {
       (_) async => Loan()
         ..id = 'loan-1'
         ..period = 1
+        ..status = LoanStatus.approved
         ..term = '1m'
         ..penalties = [
           const Penalty(
@@ -170,6 +173,7 @@ void main() {
       (_) async => Loan()
         ..id = 'loan-1'
         ..period = 1
+        ..status = LoanStatus.approved
         ..term = '1m'
         ..penalties = [
           const Penalty(
@@ -238,7 +242,12 @@ void main() {
         reset: any(named: 'reset'),
       ),
     ).thenAnswer(
-      (_) async => [sched()..status = LoanStatus.paid_on_time],
+      // A paid final row holds the balance after it: 0 (#152).
+      (_) async => [
+        sched()
+          ..status = LoanStatus.paid_on_time
+          ..outstandingBalance = 0,
+      ],
     );
 
     await svc.confirm(payment: pay(), confirmedById: 'lender-1');
@@ -258,6 +267,7 @@ void main() {
       (_) async => Loan()
         ..id = 'loan-1'
         ..period = 1
+        ..status = LoanStatus.approved
         ..term = '1m'
         ..status = LoanStatus.paid_late,
     );
@@ -268,7 +278,13 @@ void main() {
         page: any(named: 'page'),
         reset: any(named: 'reset'),
       ),
-    ).thenAnswer((_) async => [sched()..status = LoanStatus.paid_on_time]);
+    ).thenAnswer(
+      (_) async => [
+        sched()
+          ..status = LoanStatus.paid_on_time
+          ..outstandingBalance = 0,
+      ],
+    );
 
     await svc.completeLoanIfFullyPaid('loan-1');
 

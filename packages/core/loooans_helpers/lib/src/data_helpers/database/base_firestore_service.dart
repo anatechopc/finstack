@@ -40,6 +40,33 @@ abstract class BaseFirestoreService<T extends BaseEntity>
   /// name of the collection or table
   String get collectionName;
 
+  /// Runs [handler] as one Firestore transaction on this service's
+  /// instance (every collection of the app shares it): its reads see one
+  /// moment and its writes land together or not at all. Reads come first.
+  Future<R> runTransaction<R>(
+    Future<R> Function(Transaction transaction) handler,
+  ) =>
+      fs.runTransaction(handler);
+
+  /// Document [id] read inside [transaction], or null when there is none.
+  Future<Map<String, dynamic>?> getIn(
+    Transaction transaction,
+    String id,
+  ) async =>
+      (await transaction.get(root.doc(id))).data() as Map<String, dynamic>?;
+
+  /// Queues writing [json] as document [id] in [transaction].
+  void setIn(Transaction transaction, String id, Map<String, dynamic> json) =>
+      transaction.set(root.doc(id), json);
+
+  /// Queues updating document [id] with [json] in [transaction].
+  void updateIn(
+    Transaction transaction,
+    String id,
+    Map<String, dynamic> json,
+  ) =>
+      transaction.update(root.doc(id), json);
+
   @override
   Future<T> get({required String id, bool isCache = false});
 

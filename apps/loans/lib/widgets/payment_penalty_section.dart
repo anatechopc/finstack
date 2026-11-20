@@ -17,11 +17,17 @@ class PaymentPenaltySection extends StatefulWidget {
     required this.schedules,
     required this.loan,
     this.initialCollectedAt,
+    this.loanRows = const [],
     super.key,
   });
 
   final List<LoanSchedule> schedules;
   final Loan loan;
+
+  /// The loan's other rows (stored and computed). An open-term penalty is
+  /// one per overdue stretch (owner rule R3); these tell where the stretch
+  /// starts and what earlier payments in it already charged.
+  final List<LoanSchedule> loanRows;
 
   /// Defaults to now. Borrower submissions pass the submission time.
   final DateTime? initialCollectedAt;
@@ -37,24 +43,21 @@ class _PaymentPenaltySectionState extends State<PaymentPenaltySection> {
   @override
   Widget build(BuildContext context) {
     final loan = widget.loan;
+    final latenesses = resolveLatenessTogether(
+      schedules: widget.schedules,
+      loan: loan,
+      collectedAt: _collectedAt,
+      loanRows: widget.loanRows,
+    );
     final results = [
-      for (final schedule in widget.schedules)
-        (
-          schedule: schedule,
-          lateness: resolveLateness(
-            schedule: schedule,
-            loan: loan,
-            collectedAt: _collectedAt,
-          ),
-        ),
+      for (var i = 0; i < widget.schedules.length; i++)
+        (schedule: widget.schedules[i], lateness: latenesses[i]),
     ];
+    // Each bill's amount due: an open-term bill's includes a carried
+    // shortfall (R4); its balance is not owed now (#142).
     final amountDue = results.fold<double>(
       0,
-      (sum, r) =>
-          sum +
-          (r.schedule.isOpenTerm
-              ? r.schedule.outstandingBalance
-              : r.schedule.amortization),
+      (sum, r) => sum + r.schedule.amortization,
     );
     final penaltyTotal = results.fold<double>(
       0,
@@ -115,8 +118,10 @@ class _PaymentPenaltySectionState extends State<PaymentPenaltySection> {
               for (final r in results)
                 for (final line in r.lateness.penalties.lines)
                   _row(
-                    '${line.penalty.name} · ${line.penalty.amountLabel} '
-                    '× ${line.periods}',
+                    '${line.penalty.name} · '
+                    '${line.penalty.amountLabel(
+                      isOpenTerm: r.schedule.isOpenTerm,
+                    )} × ${line.periods}',
                     line.amount.toCurrency(),
                     sub: true,
                   ),

@@ -103,6 +103,7 @@ class ClientDetailLoanBody extends StatelessWidget {
                 index: finalIndex,
                 schedule: schedule,
                 loan: selectedLoan,
+                loanRows: clientLoanSchedules,
                 onMakePayment: (schedule) =>
                     _onMakePayment(context, schedule),
                 onReviewPayment: (schedule) =>
@@ -123,6 +124,7 @@ class ClientDetailLoanBody extends StatelessWidget {
       context,
       schedule: schedule,
       userId: userId,
+      loanRows: context.read<LoansBloc>().clientLoanSchedules,
     );
   }
 
@@ -263,6 +265,7 @@ class ClientDetailLoanBody extends StatelessWidget {
                       schedules: [schedule],
                       loan: context.read<LoansBloc>().selectedLoan,
                       initialCollectedAt: payment.createdAt,
+                      loanRows: context.read<LoansBloc>().clientLoanSchedules,
                     ),
                   ],
                 ),
@@ -450,6 +453,7 @@ class ClientDetailLoanBody extends StatelessWidget {
                     interestRate: selectedLoan.interestRate,
                     penalties: selectedLoan.penalties,
                     allowLatePayments: selectedLoan.allowLatePayments,
+                    isOpenTerm: selectedLoan.period == 0,
                   );
                 },
               ),
@@ -498,6 +502,7 @@ class ClientDetailLoanBody extends StatelessWidget {
                 interestRate: selectedLoan.interestRate,
                 penalties: selectedLoan.penalties,
                 allowLatePayments: selectedLoan.allowLatePayments,
+                isOpenTerm: selectedLoan.period == 0,
               );
             },
           ),

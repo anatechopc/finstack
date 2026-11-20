@@ -4,10 +4,14 @@ import 'package:gap/gap.dart';
 import 'package:jiffy/jiffy.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
+import 'package:loooans/features/products/screen/loan_schedule_widget.dart';
 import 'package:loooans/services/authentication_service.dart';
+import 'package:loooans/services/loan_calculation_service.dart';
+import 'package:loooans/services/top_up_overdue_service.dart';
 import 'package:loooans/utils/extensions.dart';
 import 'package:loooans/utils/screen_helpers.dart';
 import 'package:loooans/widgets/app_widgets.dart';
+import 'package:loooans_helpers/data_helpers.dart';
 
 class ClientDetailScheduleItem extends StatelessWidget {
   const ClientDetailScheduleItem({
@@ -17,8 +21,13 @@ class ClientDetailScheduleItem extends StatelessWidget {
     this.onReviewPayment,
     this.isHeader = false,
     this.loan,
+    this.loanRows = const [],
     super.key,
   });
+
+  /// Every row of the loan as listed. An open-term penalty is one per
+  /// overdue stretch, shown on its earliest unpaid bill (owner rule R3).
+  final List<LoanSchedule> loanRows;
 
   final int index;
   final LoanSchedule schedule;
@@ -38,6 +47,15 @@ class ClientDetailScheduleItem extends StatelessWidget {
       return schedule.status.label;
     }
 
+    // A pending application's projected bill: no money was released.
+    final currentLoan = loan;
+    if (schedule.isOpenTerm &&
+        schedule.id == NO_ID &&
+        currentLoan != null &&
+        currentLoan.status == LoanStatus.pending) {
+      return LoanScheduleWidget.projectedLabel;
+    }
+
     // Payment-meaningful statuses render as-is.
     if (schedule.status == LoanStatus.paid_on_time ||
         schedule.status == LoanStatus.paid_late ||
@@ -49,7 +67,7 @@ class ClientDetailScheduleItem extends StatelessWidget {
     // is not payment-meaningful — derive the label from the due date so a
     // schedule persisted at approval doesn't render a misleading "Approved".
     final now = Jiffy.now().startOf(Unit.day);
-    final dueAt = Jiffy.parseFromDateTime(schedule.dueAt);
+    final dueAt = Jiffy.parseFromDateTime(schedule.lateFrom);
 
     // Concise single-word label so the Status cell never wraps to two lines
     // (which would make rows uneven). Full form is "Not paid (overdue)".
@@ -59,6 +77,49 @@ class ClientDetailScheduleItem extends StatelessWidget {
 
     return LoanStatus.not_paid.label;
   }
+
+  static bool _isUnpaid(LoanSchedule s) =>
+      s.status == LoanStatus.not_paid ||
+      s.status == LoanStatus.not_paid_overdue;
+
+  /// Whether the loan bills open-term cycles at all: a pending, declined,
+  /// settled or bad-debt loan has nothing to pay or penalize.
+  bool get _loanBills {
+    final currentLoan = loan;
+    return currentLoan == null ||
+        LoanCalculationService.billsOpenTerm(currentLoan);
+  }
+
+  /// Open-term bills are paid oldest first: the engine bills only after the
+  /// last stored row, so paying a later computed bill first would drop the
+  /// earlier one. Only the earliest unpaid bill, stored (a rejected
+  /// submission) or computed, can be paid.
+  bool get _isPayableOpenTermBill =>
+      _loanBills &&
+      _isUnpaid(schedule) &&
+      // A top-up being approved is paying it (review of #149).
+      !(loan != null && TopUpOverdueService.isClaimedBill(loan!, schedule)) &&
+      !loanRows.any(
+        (other) =>
+            !identical(other, schedule) &&
+            other.isOpenTerm &&
+            !other.isPlaceholder &&
+            _isUnpaid(other) &&
+            other.dueAt.isBefore(schedule.dueAt),
+      );
+
+  /// Fixed-term installments are paid oldest first too (#150): paying a
+  /// later one first leaves the earlier ones overdue with their penalties
+  /// running. Only the earliest unpaid installment can be paid.
+  bool get _isPayableInstallment =>
+      _isUnpaid(schedule) &&
+      !loanRows.any(
+        (other) =>
+            !identical(other, schedule) &&
+            !other.isOpenTerm &&
+            _isUnpaid(other) &&
+            other.dueAt.isBefore(schedule.dueAt),
+      );
 
   String _displayAmount(double amount) {
     if (amount == 0) {
@@ -73,11 +134,15 @@ class ClientDetailScheduleItem extends StatelessWidget {
   List<Widget> _penaltyLines() {
     const style = TextStyle(color: AppColors.red2, fontSize: 11);
     final currentLoan = loan;
-    final preview = currentLoan == null
+    final preview = currentLoan == null || (schedule.isOpenTerm && !_loanBills)
         ? PenaltyResult.none
-        : previewPenalty(schedule: schedule, loan: currentLoan);
+        : previewPenalty(
+            schedule: schedule,
+            loan: currentLoan,
+            loanRows: loanRows,
+          );
     final daysLateNow = calculateDaysLate(
-      dueAt: schedule.dueAt,
+      dueAt: schedule.lateFrom,
       collectedAt: DateTime.now(),
     );
 
@@ -342,7 +407,9 @@ class ClientDetailScheduleItem extends StatelessWidget {
         company.managementType == CompanyManagementType.selfManaged;
     final showMakePaymentButton = isSelfManaged &&
         (user.isAdmin() || user.isTeller()) &&
-        schedule.status == LoanStatus.not_paid;
+        (schedule.isOpenTerm && !schedule.isPlaceholder
+            ? _isPayableOpenTermBill
+            : _isPayableInstallment);
     final showAdditionalLoanAmountDetailsButton = isSelfManaged &&
         (user.isLoanOfficer() || user.isAdmin()) &&
         schedule.status == LoanStatus.pending &&
@@ -364,7 +431,13 @@ class ClientDetailScheduleItem extends StatelessWidget {
       );
     }
 
-    if (schedule.paidAt == null && !schedule.isAdditionalLoanAmount) {
+    // Placeholder rows (the principal release and top-ups) are not
+    // installments: paying the principal release would record the whole
+    // principal as repaid on the loan's creation day. That includes the
+    // release row approval stores for app-managed companies (#138).
+    if (schedule.paidAt == null &&
+        !schedule.isPlaceholder &&
+        !schedule.isPrincipalRelease) {
       return Opacity(
         opacity: showMakePaymentButton ? 1.0 : 0.0,
         child: AppWidgets.defaultOutlinedButton(
