@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_form_builder/flutter_form_builder.dart';
-import 'package:form_builder_validators/form_builder_validators.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loan_repository/loan_repository.dart';
@@ -14,13 +13,12 @@ import 'package:loooans/features/chat/chat_context_label.dart';
 import 'package:loooans/features/chat/chat_participants.dart';
 import 'package:loooans/features/loans/bloc/additional_loan_bloc.dart';
 import 'package:loooans/features/loans/bloc/loans_bloc.dart';
+import 'package:loooans/features/loans/widget/top_up_amount_form.dart';
 import 'package:loooans/features/loans/widget/top_up_overdue_dialogs.dart';
 import 'package:loooans/features/products/bloc/product_bloc.dart';
-import 'package:loooans/features/products/bloc/product_status.dart';
 import 'package:loooans/features/products/requirement_temp_container.dart';
 import 'package:loooans/features/users/screens/additional_loan_docs_dialog.dart';
 import 'package:loooans/features/users/widget/client_detail/client_detail_dialogs.dart';
-import 'package:loooans/features/users/widget/client_detail/top_up_total_row.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/settings_service.dart';
 import 'package:loooans/services/top_up_overdue_service.dart';
@@ -308,80 +306,7 @@ class ClientDetailActionButtons extends StatelessWidget {
         builder: (context) {
           return AlertDialog(
             title: const Text('Add loan amount'),
-            content: FormBuilder(
-              key: formKey,
-              onChanged: () {
-                context.read<ProductBloc>().refresh();
-              },
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minWidth: 350),
-                child: BlocBuilder<ProductBloc, ProductState>(
-                  buildWhen: (prev, next) {
-                    return next.status == ProductStatus.refresh;
-                  },
-                  builder: (context, state) {
-                    return Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        AppWidgets.defaultFormBuilderTextField(
-                          name: 'amount',
-                          label: 'Add amount',
-                          validator: FormBuilderValidators.required(),
-                          inputFormatters: [
-                            FilteringTextInputFormatter.allow(
-                              RegExp(
-                                '^[0-9]*[.]?[0-9]*',
-                              ),
-                            ),
-                          ],
-                        ),
-                        const Gap(16),
-                        for (final charge in product!.additionalCharges)
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                'Add: ${charge.description}:',
-                                style: const TextStyle(
-                                  color: AppColors.black,
-                                ),
-                              ),
-                              Text(
-                                "${charge.isPercentage ? '${charge.amount}%' : charge.amount}",
-                              ),
-                            ],
-                          ),
-                        for (final charge in product.deductions)
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                'Less: ${charge.description}:',
-                                style: const TextStyle(
-                                  color: AppColors.black,
-                                ),
-                              ),
-                              Text(
-                                "${charge.isPercentage ? '${charge.amount}%' : charge.amount}",
-                              ),
-                            ],
-                          ),
-                        const Divider(
-                          color: AppColors.black,
-                        ),
-                        const Gap(8),
-                        TopUpTotalRow(
-                          product: product,
-                          amountText: formKey.currentState
-                              ?.simplifiedFields()['amount'] as String?,
-                        ),
-                      ],
-                    );
-                  },
-                ),
-              ),
-            ),
+            content: TopUpAmountForm(formKey: formKey, product: product),
             actions: [
               AppWidgets.defaultFilledButton(
                 child: const Text('Add'),
