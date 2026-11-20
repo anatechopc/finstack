@@ -34,6 +34,14 @@ extension ReportsBlocExtensionSoa on ReportsBloc {
         ),
       ]);
       final paidSchedules = results[1] as List<LoanSchedule>;
+      // The amount due is the settlement figure, as the settlement dialog
+      // shows and records it (#116, review of #157).
+      final now = DateTime.now();
+      final settlement = LoanCalculationService.settlementOf(
+        loan: loan,
+        rows: paidSchedules,
+        now: now,
+      );
 
       final (:schedules, :totalLoanPayment, :monthlyAmortization) =
           LoanCalculationService.calculateOpenTermSchedules(
@@ -56,12 +64,15 @@ extension ReportsBlocExtensionSoa on ReportsBloc {
       final otherLoans = await _getOtherLoans(
         userId: loan.userId,
         loanId: loan.id,
+        now: now,
       );
       soaModel = await _generateSOA(
         user: results[0] as User,
         loan: loan,
         schedules: schedules,
+        settlement: settlement,
         otherLoans: otherLoans,
+        now: now,
       );
 
       emit(const ReportsState.loading());
@@ -78,15 +89,18 @@ extension ReportsBlocExtensionSoa on ReportsBloc {
     }
   }
 
-  /// getting other loans other than the loan id
+  /// The loan's special loans still open, each with what settling it costs
+  /// on [now]'s day, as the settlement records it (#116).
   Future<List<LoanBalanceSimple>> _getOtherLoans({
     required String userId,
     required String loanId,
+    required DateTime now,
   }) async {
     final otherLoans = <LoanBalanceSimple>[];
     final loans = await loanRepository.load(
       reset: true,
       limit: null,
+      includeAdditionalLoanAmounts: true,
       statements: [
         QueryStatement(
           field: 'user_id',
@@ -111,32 +125,18 @@ extension ReportsBlocExtensionSoa on ReportsBloc {
     );
 
     for (final loan in loans) {
-      // there should only be one schedule.
-      // if there's no schedule, this will throw an error
-      LoanSchedule? schedule;
-
-      try {
-        schedule = (await loanScheduleRepository.load(
-          reset: true,
-          limit: 1,
-          statements: [
-            QueryStatement(
-              field: 'loan_id',
-              isEqualTo: loan.id,
-            ),
-          ],
-        ))
-            .single;
-      } catch (err) {
-        log.warning(
-            'No schedule retrieved. Make sure this is an intentional attempt.',);
-      }
-
+      final rows = await loanScheduleRepository.allByLoanId(loanId: loan.id);
       final product = await productRepository.get(id: loan.productId);
 
       otherLoans.add(
         LoanBalanceSimple(
-          outstandingBalance: schedule?.outstandingBalance ?? loan.amount,
+          outstandingBalance: LoanCalculationService.settlementAmount(
+            LoanCalculationService.settlementOf(
+              loan: loan,
+              rows: rows,
+              now: now,
+            ),
+          ),
           name: product.loanType,
         ),
       );
@@ -149,10 +149,11 @@ extension ReportsBlocExtensionSoa on ReportsBloc {
     required User user,
     required Loan loan,
     required List<LoanSchedule> schedules,
+    required LoanSchedule settlement,
+    required DateTime now,
     List<LoanBalanceSimple> otherLoans = const [],
   }) async {
     return Future<SOAModel>.microtask(() async {
-      final now = DateTime.now();
       schedules.sortBy((sched) => sched.dueAt);
 
       // add the first loan entry
@@ -298,37 +299,28 @@ extension ReportsBlocExtensionSoa on ReportsBloc {
         ),
       );
 
-      final deductions = [
+      // The amount due is the settlement figure of the loan and its special
+      // loans (#116): its principal, then its interest to date, unpaid
+      // penalties and each special loan's own figure. Before, it was the
+      // last row's balance less the rebates above plus every penalty ever
+      // charged, which the settlement never charged (review of #157).
+      const deductions = <ChargeSimple>[];
+      final additionalCharges = [
         ChargeSimple(
-          amount: results[0] - results[1] - results[2],
-          description: 'Rebates',
+          amount: settlement.interestPayment,
+          description: 'Interest to date',
         ),
+        if (settlement.penalty > 0)
+          ChargeSimple(amount: settlement.penalty, description: 'Penalties'),
+        for (final other in otherLoans)
+          ChargeSimple(
+            amount: other.outstandingBalance,
+            description: other.name,
+          ),
       ];
-
-      final additionalCharges = otherLoans
-          .map(
-            (other) => ChargeSimple(
-              amount: other.outstandingBalance,
-              description: other.name,
-            ),
-          )
-          .toList();
-
-      if (totalPenalties > 0) {
-        additionalCharges.add(
-          ChargeSimple(amount: totalPenalties, description: 'Penalties'),
-        );
-      }
-
-      final totalAmount = entries.last.principalBalance -
-          deductions.fold<double>(0, (prev, next) {
-            return prev + next.amount;
-          }).abs();
-
+      final totalAmount = settlement.principalPayment;
       final totalAmountDue = totalAmount +
-          additionalCharges.fold(0.0, (prev, next) {
-            return prev + next.amount;
-          });
+          additionalCharges.fold(0.0, (prev, next) => prev + next.amount);
 
       return SOAModel(
         userId: user.id,
@@ -340,8 +332,9 @@ extension ReportsBlocExtensionSoa on ReportsBloc {
         totalInterestCharge: results[0],
         lessAdvanceInterest: results[1],
         lessTotalInterestCollected: results[2],
+        rebates: results[0] - results[1] - results[2],
         deductions: deductions,
-        outstandingPrincipalBalance: entries.last.principalBalance,
+        outstandingPrincipalBalance: settlement.principalPayment,
         totalAmount: totalAmount,
         additionalCharges: additionalCharges,
         totalAmountDue: totalAmountDue,

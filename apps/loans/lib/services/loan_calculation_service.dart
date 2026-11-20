@@ -37,41 +37,192 @@ class LoanCalculationService {
     return outstandingBalance * monthlyInterestRate;
   }
 
-  /// Early-settlement balance for a loan family (parent + special loans) as
-  /// the settlement dialog computes it today: the net amount released per
-  /// loan minus what [schedules] (every row with a payment id) collected.
-  ///
-  /// BUG(finstack#116): extracted verbatim from `LoanSettlementBloc` and
-  /// pinned as-is by golden test G7. The formula needs a design decision,
-  /// not a patch: the loop ASSIGNS instead of accumulating (only the last
-  /// element counts, and the bloc's list is newest-first by updated_at, so
-  /// production credits the least recently updated row); [schedules] includes
-  /// borrower submissions not yet confirmed; open-term rows credit the
-  /// computed interestCharge rather than the recorded interestPayment; and
-  /// approved top-ups (loan.additionalLoanAmounts) are not part of the
-  /// released amount. Flip G7 in the change that fixes this, never silently.
+  /// What settling a loan family (the loan and its special loans) early
+  /// costs on [now]'s day: the sum of each loan's [settlementOf] amount.
+  /// [schedules] are the family's stored rows of any status; each loan
+  /// reads its own (golden G7, finstack#116).
   static double calculateSettlementBalance({
     required List<Loan> loans,
     required List<LoanSchedule> schedules,
+    DateTime? now,
   }) {
-    var totalLoanAmount = 0.0;
-    var totalLoanPayment = 0.0;
+    final at = now ?? DateTime.now();
 
-    for (final loan in loans) {
-      totalLoanAmount += (loan.amount + loan.additionalCharges) -
-          (loan.deductions + loan.additionalChargeUpfrontCollection);
-    }
-
-    for (final schedule in schedules) {
-      totalLoanPayment = (schedule.isOpenTerm
-              ? schedule.interestCharge
-              : schedule.interestPayment) +
-          schedule.principalPayment +
-          schedule.extraPayment;
-    }
-
-    return totalLoanAmount - totalLoanPayment;
+    return loans
+        .map(
+          (loan) => settlementAmount(
+            settlementOf(
+              loan: loan,
+              rows: [
+                for (final row in schedules)
+                  if (row.loanId == loan.id) row,
+              ],
+              now: at,
+            ),
+          ),
+        )
+        .sum;
   }
+
+  /// What a [settlementOf] row charges: principal, interest and penalties.
+  static double settlementAmount(LoanSchedule row) =>
+      row.principalPayment + row.interestPayment + row.penalty;
+
+  /// The early settlement of [loan] on [now]'s day, as the paid row that
+  /// records it (finstack#116, owner decision 2026-11-20): principal, the
+  /// balance after the last confirmed payment row with the approved top-ups
+  /// not yet in it; interest, accrued from that row's due date to the
+  /// settlement day; penalty, what the bills missed since then owe that
+  /// day. The balance after it is 0.
+  ///
+  /// - Only a confirmed row (paid on time or late) is credited: a submitted
+  ///   payment is not. With none, the balance is the amount released
+  ///   ([calculateLoanAmount]) and interest runs from the loan's creation
+  ///   day, where the engine starts the first cycle (a loan stores no
+  ///   release date).
+  /// - Interest accrues daily on the 30-day month, balance x rate x days /
+  ///   30, on the balance in force each day: a top-up counts from the day
+  ///   it was approved, as the engine splits a cycle (R5). The row's balance
+  ///   accrues nothing before the row's due date, so a row due after the
+  ///   settlement day accrues 0. An open-term row paid short adds its unpaid
+  ///   interest, as the next bill would (R4).
+  /// - Penalties: the bills due before the settlement day, charged as the
+  ///   Pay dialog charges bills paid together that day
+  ///   ([resolveLatenessTogether]); a submitted bill owes what it owed at
+  ///   its transfer ([previewPenalty]), nothing when sent on time.
+  ///
+  /// Interest and penalty are rounded to the centavo; the principal is the
+  /// stored balance as is. [rows] are the loan's stored rows of any status;
+  /// none is changed. [now] defaults to the wall clock.
+  static LoanSchedule settlementOf({
+    required Loan loan,
+    required List<LoanSchedule> rows,
+    DateTime? now,
+  }) {
+    final at = now ?? DateTime.now();
+    final today = _localDay(at);
+    final rate = loan.interestRate / 100;
+    final confirmed = rows
+        .where((row) => !row.isPrincipalRelease && _isConfirmed(row))
+        .sorted(_inPaymentOrder);
+    final last = confirmed.lastOrNull;
+
+    var balance = last?.outstandingBalance ?? calculateLoanAmount(loan);
+    final rowDay = _localDay(last?.dueAt ?? loan.createdAt);
+    var from = rowDay;
+    var interest = 0.0;
+    for (final topUp in loan.additionalLoanAmounts
+        .where(movesBalance)
+        .where((topUp) => last == null || !_includesTopUp(last, topUp))
+        .sortedBy((topUp) => topUp.effectiveAt)) {
+      final approved = _localDay(topUp.effectiveAt);
+      final day = approved.isAfter(today) ? today : approved;
+      final added = topUp.amount + topUp.additionalCharges;
+      if (day.isBefore(from)) {
+        // Approved inside the row's period, which billed the old balance
+        // only: the top-up accrues from its day.
+        final to = from.isAfter(today) ? today : from;
+        interest += added * rate * _days(day, to) / 30;
+      } else {
+        interest += balance * rate * _days(from, day) / 30;
+        from = day;
+      }
+      balance += added;
+    }
+    interest =
+        _centavos(interest + balance * rate * max(0, _days(from, today)) / 30);
+    final carried = last == null ? 0.0 : _interestShortfall(last);
+
+    // Penalties as the Pay dialog sees the loan: a submitted bill owes what
+    // it owed at its transfer (previewPenalty), and only the bills after it
+    // are billed (review of #157: one submitted on time was charged).
+    final billed = rows
+        .where(
+          (row) =>
+              !row.isPrincipalRelease &&
+              (_isConfirmed(row) || row.status == LoanStatus.payment_submitted),
+        )
+        .sorted(_inPaymentOrder);
+    final bills = loan.period == 0
+        ? calculateOpenTermSchedules(
+            amount: calculateLoanAmount(loan),
+            date: loan.createdAt,
+            interestRate: loan.interestRate,
+            term: loan.term,
+            companyId: loan.companyId,
+            paidSchedules: billed,
+            now: at,
+            additionalLoans: loan.additionalLoanAmounts,
+          ).schedules
+        : calculateFixedTerm(
+            amount: calculateLoanAmount(loan),
+            monthsToPay: loan.period,
+            date: loan.createdAt,
+            interestRate: loan.interestRate,
+            term: loan.term,
+            companyId: loan.companyId,
+            paidSchedules: List.of(billed),
+          ).schedules;
+    final missed = [
+      for (final bill in bills)
+        if (_localDay(bill.lateFrom).isBefore(today)) bill,
+    ];
+    final latenesses = resolveLatenessTogether(
+      schedules: missed,
+      loan: loan,
+      collectedAt: at,
+      loanRows: billed,
+    );
+    final penalty = _centavos(
+      latenesses.map((l) => l.penalties.total).sum +
+          billed
+              .where((row) => row.status == LoanStatus.payment_submitted)
+              .map(
+                (row) => previewPenalty(
+                  schedule: row,
+                  loan: loan,
+                  asOf: at,
+                  loanRows: [...billed, ...missed],
+                ).total,
+              )
+              .sum,
+    );
+    final isLate = latenesses.any((l) => l.isLate);
+    final isOpenTerm = loan.period == 0;
+
+    return LoanSchedule.create(
+      dueAt: at,
+      loanId: loan.id,
+      outstandingBalance: 0,
+      principalPayment: balance,
+      interestCharge: interest,
+      amortization: (isOpenTerm ? 0 : balance) + interest + carried,
+      interestDayMultiplier: max(0, _days(rowDay, today)) / 30,
+      companyId: loan.companyId,
+      isOpenTerm: isOpenTerm,
+      status: isLate ? LoanStatus.paid_late : LoanStatus.paid_on_time,
+    )
+      ..interestPayment = interest + carried
+      ..paidAt = at
+      ..collectedAt = at
+      ..daysLate = latenesses.map((l) => l.daysLate).maxOrNull ?? 0
+      ..penalty = penalty
+      ..penalties = isLate ? List.of(loan.penalties) : [];
+  }
+
+  static bool _isConfirmed(LoanSchedule row) =>
+      row.status == LoanStatus.paid_on_time ||
+      row.status == LoanStatus.paid_late;
+
+  /// Stored rows in the order they were paid: by due date, and the rows of
+  /// one short-paid fixed-term bill (one due date) by balance, highest
+  /// first, since the balance only falls (#152).
+  static int _inPaymentOrder(LoanSchedule a, LoanSchedule b) =>
+      a.dueAt != b.dueAt
+          ? a.dueAt.compareTo(b.dueAt)
+          : b.outstandingBalance.compareTo(a.outstandingBalance);
+
+  static double _centavos(double amount) => (amount * 100).round() / 100;
 
   /// Calculates loan schedules for fixed-term loans.
   ///
@@ -101,12 +252,7 @@ class LoanCalculationService {
     var totalLoanPayment = 0.0;
     // A remainder row shares the last due date; the balance only falls, so
     // the lower balance is the later row.
-    paidSchedules.sortByCompare(
-      (sched) => sched,
-      (a, b) => a.dueAt != b.dueAt
-          ? a.dueAt.compareTo(b.dueAt)
-          : b.outstandingBalance.compareTo(a.outstandingBalance),
-    );
+    paidSchedules.sortByCompare((sched) => sched, _inPaymentOrder);
     var monthlyInterestRate = interestRate / 100;
     var outstandingBalance = amount;
     var numOfPayments = monthsToPay;

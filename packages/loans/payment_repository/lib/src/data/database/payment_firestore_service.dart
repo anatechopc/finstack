@@ -6,7 +6,9 @@ import 'package:payment_repository/src/model/payment_entity.dart';
 
 final class PaymentFirestoreService
     extends BaseFirestoreService<PaymentEntity> {
-  PaymentFirestoreService() {
+  PaymentFirestoreService({FirebaseFirestore? firestore})
+      : super(firestore: firestore) {
+    if (firestore != null) return;
     FirebaseFirestore.instance.settings = const Settings(
       persistenceEnabled: true,
       cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,

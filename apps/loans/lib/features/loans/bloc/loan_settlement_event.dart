@@ -5,27 +5,25 @@ sealed class LoanSettlementEvent extends Equatable {
 }
 
 final class SettleAccountEvent extends LoanSettlementEvent {
-  const SettleAccountEvent({
-    required this.userId,
-    required this.loanId,
-  });
+  const SettleAccountEvent({required this.loanId});
 
-  final String userId;
   final String loanId;
 
   @override
-  List<Object?> get props => [userId, loanId];
+  List<Object?> get props => [loanId];
 }
 
 final class ConfirmLoanAccountSettlementEvent extends LoanSettlementEvent {
   const ConfirmLoanAccountSettlementEvent({
-    required this.userId,
     required this.loanId,
+    required this.amount,
   });
 
-  final String userId;
   final String loanId;
 
+  /// The settlement amount the teller was shown and collected.
+  final double amount;
+
   @override
-  List<Object?> get props => [userId, loanId];
+  List<Object?> get props => [loanId, amount];
 }

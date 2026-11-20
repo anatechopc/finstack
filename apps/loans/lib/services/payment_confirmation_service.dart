@@ -166,6 +166,19 @@ class PaymentConfirmationService {
     }
   }
 
+  /// Throws when [loan] is settled: confirming a submission then would
+  /// collect it a second time and move the loan back to paid, rejecting it
+  /// would move the loan back to not paid (review of #157). Nothing is
+  /// written.
+  static void rejectSettled(Loan loan) {
+    if (loan.status == LoanStatus.completed) {
+      throw Exception(
+        'This loan is settled: its pending payment can no longer be '
+        'confirmed or rejected',
+      );
+    }
+  }
+
   /// Pure: on rejection, a schedule reverts to not_paid (or overdue if its
   /// dueAt is already past).
   static LoanStatus revertedStatus({required DateTime dueAt}) {
@@ -190,6 +203,7 @@ class PaymentConfirmationService {
         await loanScheduleRepository.get(id: payment.loanScheduleId);
     rejectPrincipalRelease([schedule]);
     final loan = await loanRepository.get(id: schedule.loanId);
+    rejectSettled(loan);
     // A penalty on the balance is one per overdue stretch (R3): rows of the
     // same submission confirmed before this one are stored with their
     // collection date, and unpaid earlier bills mark where the stretch
@@ -241,11 +255,14 @@ class PaymentConfirmationService {
     required String confirmedById,
     required String reason,
   }) async {
+    final schedule =
+        await loanScheduleRepository.get(id: payment.loanScheduleId);
+    final loan = await loanRepository.get(id: schedule.loanId);
+    rejectSettled(loan);
+
     payment.markRejected(confirmedById: confirmedById, reason: reason);
     await paymentRepository.update(data: payment);
 
-    final schedule =
-        await loanScheduleRepository.get(id: payment.loanScheduleId);
     schedule
       ..paidAt = null
       ..paymentId = null

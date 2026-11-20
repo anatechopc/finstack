@@ -175,26 +175,34 @@ its own `LoanStatus` rides along (pending top-ups also count, #137).
 
 ## 4. Early Settlement arithmetic
 
-`LoanCalculationService.calculateSettlementBalance`
-(`apps/loans/lib/services/loan_calculation_service.dart`; extracted verbatim
-from `loan_settlement_bloc.dart` on 2026-09-08, the bloc delegates):
+`LoanCalculationService.calculateSettlementBalance` sums
+`settlementOf` over the parent and its `parent_id` children
+(`apps/loans/lib/services/loan_calculation_service.dart`; owner decision
+2026-11-20, finstack#116). Per loan, on the settlement day:
 
 ```
-totalLoanAmount  = Σ over parent + parent_id children:
-                     (amount + additionalCharges) − (deductions + additionalChargeUpfrontCollection)
-totalLoanPayment = per schedule with a payment id: (isOpenTerm ? interestCharge : interestPayment)
-                     + principalPayment + extraPayment          // ASSIGNED, not summed — finstack#116
-remainingBalance = totalLoanAmount − totalLoanPayment
+last      = the last CONFIRMED row (paid_on_time / paid_late) by due date;
+            a submitted payment is not credited
+principal = last.outstandingBalance (or amount + additionalCharges − deductions
+            with no confirmed row) + approved top-ups not yet in that balance
+interest  = Σ balance in force × rate × days / 30, from last.dueAt (or the
+            loan's creation day) to the settlement day; a top-up counts from
+            its approval day; 0 when last is due after the settlement day;
+            + the open-term R4 shortfall of last
+penalty   = resolveLatenessTogether over the bills due before the settlement
+            day (as the Pay dialog charges them that day)
+amount    = principal + interest + penalty     (interest, penalty to centavo)
 ```
 
-CAUTION: the whole formula is wrong and under redesign (finstack#116): only
-the last row counts, unconfirmed submissions are credited, open-term rows
-credit the charge not the cash, and top-ups are ignored. Golden test G7
-pins the current 8800 for the reference family until that lands.
+Golden G7a-i (`test/services/loan_calculation_settlement_test.dart`); G1
+settled 10 days after bill 1 = 6,827.91 + 113.80 = 6,941.71.
 
-Confirmation marks parent + all children `LoanStatus.completed`
-(`loan_settlement_bloc.dart:155-162`). Do not fix the formula ad hoc; route via
-`finstack-loan-engine-and-reporting-campaign` (finstack#116).
+Confirmation (`loan_settlement_bloc.dart`) records, per loan, the settlement
+as a paid row (principal = balance, interest, penalty, balance after 0), a
+confirmed payment (no proof; the comment names the teller) and a cash-pool
+entry, then marks parent + children `LoanStatus.completed`. A completed loan
+is refused. Go books the row as a collection (`loanScheduleChanges`); the
+completion then books 0 remaining principal (`loanChanges`).
 
 ## 5. Charge application order (`apps/loans/lib/services/charge_calculator.dart`)
 

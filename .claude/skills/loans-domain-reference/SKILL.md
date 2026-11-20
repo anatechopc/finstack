@@ -90,7 +90,7 @@ On a loan doc (`loan_entity.dart`): `amount` (principal requested),
 
 - **`loanAmount = amount + additionalCharges - deductions`** — `LoanCalculationService.calculateLoanAmount` (`loan_calculation_service.dart:30-32`). This is the amount that gets amortized.
 - **Upfront-collection charges are NOT rolled into the amortized amount** — they are collected at release: `receivable = totalAmount - totalUpfrontCollection` (`loans_bloc.dart:381`, `:472`).
-- Settlement uses `(amount + additionalCharges) - (deductions + additionalChargeUpfrontCollection)` (`LoanCalculationService.calculateSettlementBalance`, `loan_calculation_service.dart`; extracted from the bloc 2026-09-08 — the whole formula is under review as finstack#116).
+- Settlement (`LoanCalculationService.settlementOf`, finstack#116, owner 2026-11-20) = the balance after the last confirmed row (with none: `amount + additionalCharges - deductions`), approved top-ups included, + interest accrued since that row's due date + penalties on missed bills.
 
 Charges are defined per product as `Charge` objects
 (`packages/loans/product_repository/lib/src/model/charge.dart`): `amount`,

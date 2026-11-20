@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:payment_repository/src/data/database/payment_firestore_service.dart';
 import 'package:payment_repository/src/model/payment.dart';
@@ -7,6 +9,11 @@ class PaymentRepository implements BaseRepository<Payment> {
   /// constructor
   PaymentRepository() : _firestoreService = PaymentFirestoreService();
 
+  /// On [firestore] (a fake in tests) instead of the app's Firestore.
+  @visibleForTesting
+  PaymentRepository.withFirestore(FirebaseFirestore firestore)
+      : _firestoreService = PaymentFirestoreService(firestore: firestore);
+
   late final PaymentFirestoreService _firestoreService;
 
   @override
@@ -15,6 +22,14 @@ class PaymentRepository implements BaseRepository<Payment> {
         .add(data: data.toEntity())
         .then((value) => value.toPayment());
   }
+
+  /// Whether payment [id] exists, read inside [transaction].
+  Future<bool> existsIn(Transaction transaction, String id) async =>
+      await _firestoreService.getIn(transaction, id) != null;
+
+  /// Queues writing [data] at its own id in [transaction].
+  void setIn(Transaction transaction, Payment data) =>
+      _firestoreService.setIn(transaction, data.id, data.toEntity().toJson());
 
   /// Writes [data] at its own id (create or overwrite): a retry with the
   /// same id never adds a second payment.

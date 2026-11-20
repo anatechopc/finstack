@@ -199,15 +199,13 @@ Future<Uint8List> _buildPdfSoa(
               ),
               _soaTotalItem(
                 'Rebates',
-                soaModel.deductions.first.amount.toCurrency(
+                soaModel.rebates.toCurrency(
                   removeNegative: false,
                 ),
                 isDoubleBorder: true,
               ),
               _soaTotalItem('Outstanding principal balance',
                   soaModel.outstandingPrincipalBalance.toCurrency(),),
-              _soaTotalItem('Less: Total interest collected',
-                  soaModel.lessTotalInterestCollected.toCurrency(),),
               ...soaModel.deductions.mapIndexed(
                 (index, deduction) {
                   return _soaTotalItem(
