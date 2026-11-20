@@ -6,12 +6,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:loan_repository/loan_repository.dart';
 import 'package:loan_schedule_repository/loan_schedule_repository.dart';
 import 'package:loooans/services/loan_calculation_service.dart';
+import 'package:loooans/services/payment_confirmation_service.dart';
 import 'package:loooans/utils/pdf_generator.dart';
 import 'package:product_repository/product_repository.dart';
 import 'package:user_repository/user_repository.dart';
 
 // finstack#124: the PDF quotation's "Total payable" is the sum of the
-// amortization of the schedules it prints. Hand-derived (5% a month):
+// interest and principal it prints for each schedule row: a bill's own split
+// (its amortization) until it is paid, what was paid once it is.
+// Hand-derived (5% a month):
 //   G1 monthly: 10000, 3 months. A = 10000 * 0.05 / (1 - 1.05^-3)
 //               = 500 / 0.1361624 = 3672.0856;  3 * A = 11016.26
 //   G8 monthly: principal 10000 + charges 650 - deductions 150 = 10500 (the
@@ -25,7 +28,65 @@ import 'package:user_repository/user_repository.dart';
 //               The old formula A * period showed 5446.50.
 //   Open-term:  period 0, no total known in advance: the line is hidden.
 //               The old formula showed 650 - 150 = 500.00 for G8.
+//
+// After #156 (G16, fixed_term_shortfall_golden_test.dart), G1 dated
+// 2026-01-10, rows as client detail lists them (`_calculateLoan`: stored
+// rows, then the engine's, one bill per due date):
+//   Carried shortfall (G16a): bill 1 (3,672.0856 = 500 + 3,172.0856) paid
+//     500 + 3,000, so 172.09 is carried. Bill 2 = 3,672.09 + 172.09 =
+//     3,844.18 (350 + 3,494.18); bill 3 = 175.29 + 3,505.82 = 3,681.11.
+//     Printed: 3,500 + 3,844.18 + 3,681.11 = 11,025.29. Summing the
+//     amortizations gives 3,672.0856 + 3,844.18 + 3,681.11 = 11,197.38:
+//     the 172.09 once in bill 1 and again in bill 2.
+//   Part-paid last bill (G16c): bills 1 and 2 paid as billed (3,672.0856
+//     each); bill 3 (174.8612 + 3,497.2244) paid 174.8612 + 3,000, so
+//     497.2244 of it is still owed. While it is owed, bill 3 prints as
+//     that rest only (0 + 497.2244): 2 x 3,672.0856 + 497.2244 = 7,841.40.
+//     Once the rest is paid, bill 3 prints as one row, 174.8612 +
+//     3,497.2244: 3 x 3,672.0856 = 11,016.26.
 final _date = DateTime.utc(2026); // 2026-01-01
+final _g16Date = DateTime(2026, 1, 10);
+
+LoanCalculationResult _g1After(List<LoanSchedule> stored) =>
+    LoanCalculationService.calculateFixedTerm(
+      amount: 10000,
+      monthsToPay: 3,
+      date: _g16Date,
+      interestRate: 5,
+      term: '1m',
+      companyId: 'c',
+      paidSchedules: List.of(stored),
+    );
+
+/// The rows client detail lists, and the PDF prints, for G1 after [stored].
+List<LoanSchedule> _g1Shown(List<LoanSchedule> stored) =>
+    LoanCalculationService.oneBillPerDueDate([
+      ...stored,
+      ..._g1After(stored).schedules,
+    ]);
+
+/// [stored] plus the next G1 bill, paid at a teller as [interest] +
+/// [principal] (default: as billed).
+List<LoanSchedule> _payNext(
+  List<LoanSchedule> stored, {
+  double? interest,
+  double? principal,
+}) {
+  final next = _g1After(stored).schedules.first;
+  PaymentConfirmationService.recordTellerPayment(
+    next,
+    interestPayment: interest ?? next.interestPayment,
+    principalPayment: principal ?? next.principalPayment,
+  );
+
+  return [
+    ...stored,
+    next
+      ..id = 'row-${stored.length + 1}'
+      ..loanId = 'loan-1'
+      ..status = LoanStatus.paid_on_time,
+  ];
+}
 
 List<LoanSchedule> _fixed(double amount, int months, String term) {
   return LoanCalculationService.calculateFixedTerm(
@@ -155,6 +216,52 @@ void main() {
       );
       expect(pdfTotalPayable(loan, _open()), isNull);
     });
+
+    test('carried shortfall (G16a): 3,500 + 3,844.18 + 3,681.11 = 11,025.29',
+        () {
+      final shown = _g1Shown(_payNext(const [], interest: 500, principal: 3000));
+      final loan = _loan(
+        period: 3,
+        term: '1m',
+        amortization: shown.first.amortization,
+      );
+
+      expect(
+        shown.map((s) => (s.interestPayment + s.principalPayment).toStringAsFixed(2)),
+        ['3500.00', '3844.18', '3681.11'],
+      );
+      expect(pdfTotalPayable(loan, shown), closeTo(11025.29, 0.005));
+      final amortizations =
+          shown.fold<double>(0, (sum, s) => sum + s.amortization);
+      expect(amortizations, closeTo(11197.38, 0.005), reason: 'the old sum');
+    });
+
+    test('part-paid last bill (G16c): 7,841.40 while the rest is owed, '
+        '11,016.26 once it is paid', () {
+      final short = _payNext(
+        _payNext(_payNext(const [])),
+        interest: 174.8612,
+        principal: 3000,
+      );
+      final loan = _loan(
+        period: 3,
+        term: '1m',
+        amortization: short.first.amortization,
+      );
+
+      final owed = _g1Shown(short);
+      expect(owed, hasLength(3));
+      expect(owed.last.principalPayment, closeTo(497.2244, 0.0001));
+      expect(pdfTotalPayable(loan, owed), closeTo(7841.40, 0.005));
+
+      final paid = _g1Shown(_payNext(short));
+      expect(paid, hasLength(3));
+      expect(
+        paid.last.interestPayment + paid.last.principalPayment,
+        closeTo(3672.0856, 0.0001),
+      );
+      expect(pdfTotalPayable(loan, paid), closeTo(11016.26, 0.005));
+    });
   });
 
   group('PdfGenerator.buildPdfBytes', () {
@@ -202,6 +309,29 @@ void main() {
 
       expect(text, contains('Monthly Amortization'));
       expect(text, isNot(contains('Total payable')));
+    });
+
+    testWidgets('carried shortfall prints Total payable 11,025.29',
+        (tester) async {
+      final shown = _g1Shown(_payNext(const [], interest: 500, principal: 3000));
+      final loan = _loan(
+        period: 3,
+        term: '1m',
+        amortization: shown.first.amortization,
+      );
+      final bytes = await tester.runAsync(
+        () => PdfGenerator.buildPdfBytes(
+          schedules: shown,
+          loan: loan,
+          product: _product(),
+          user: _user(),
+        ),
+      );
+      final text = _contentText(bytes!);
+
+      expect(text, contains('Total payable'));
+      expect(text, contains('11,025.29'));
+      expect(text, isNot(contains('11,197.38')));
     });
   });
 }

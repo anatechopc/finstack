@@ -132,10 +132,14 @@ pw.Widget _quotationItem({
 }
 
 /// The PDF quotation's "Total payable" (finstack#124): the sum of the
-/// amortization of the schedules the PDF prints. Charges and deductions are
-/// already inside every amortization (it is computed on the charge-adjusted
-/// principal), so they are not added again. The sum also covers 15-day loans,
-/// whose stored `period` is in months while each amortization is per 15 days.
+/// interest and principal the PDF prints for each of [schedules]. A bill
+/// not paid yet prints its own split, which adds up to its amortization. A
+/// paid row prints what was paid, which differs from its amortization when
+/// the bill was paid short (#156: the rest is carried into the next bill,
+/// so summing amortizations would count it twice). Charges and deductions
+/// are already inside every bill (it is computed on the charge-adjusted
+/// principal), so they are not added again. The sum also covers 15-day
+/// loans, whose stored `period` is in months while each bill is per 15 days.
 ///
 /// Null for an open-term loan (`period` 0): it has no total known in advance,
 /// and the PDF hides the line.
@@ -143,7 +147,10 @@ pw.Widget _quotationItem({
 double? pdfTotalPayable(Loan loan, List<LoanSchedule> schedules) {
   if (loan.period <= 0) return null;
 
-  return schedules.fold<double>(0, (sum, s) => sum + s.amortization);
+  return schedules.fold<double>(
+    0,
+    (sum, s) => sum + s.interestPayment + s.principalPayment,
+  );
 }
 
 pw.Widget signatories({
