@@ -108,7 +108,7 @@ class LoanSettlementBloc
     final loans = [loan, ...specialLoans];
 
     // Every row, of any status: the calculation credits only confirmed
-    // payments (#116), and a submission is not one.
+    // payments (#116).
     final rows = await loanScheduleRepository.load(
       limit: null,
       page: 0,
@@ -120,6 +120,15 @@ class LoanSettlementBloc
         ),
       ],
     );
+    // A submission confirmed after the settlement would be collected twice,
+    // and its confirmation or rejection would reopen the loan (review of
+    // #157).
+    if (rows.any((row) => row.status == LoanStatus.payment_submitted)) {
+      throw Exception(
+        'A payment is waiting for confirmation. Confirm or reject it first, '
+        'then settle.',
+      );
+    }
 
     return (loans: loans, rows: rows);
   }
@@ -197,31 +206,38 @@ class LoanSettlementBloc
       final teller = authService.user;
       for (final (:loan, :row) in settlements) {
         final amount = LoanCalculationService.settlementAmount(row);
-        final payment = await paymentRepository.add(
-          data: Payment.create(
-            userId: loan.userId,
-            loanScheduleId: NO_ID,
-            loanId: loan.id,
-            // The settlement dialog takes no proof; the comment records who
-            // confirmed the cash.
-            bypassPaymentProof: true,
-            comment: '''
+        // One settlement per loan: the row, its payment and its cash-pool
+        // entry share this id and are only ever created, never overwritten.
+        // The row goes first, so a second device confirming at the same
+        // time fails there and writes nothing (review of #157).
+        final id = '${loan.id}-settlement';
+        try {
+          await loanScheduleRepository.create(
+            data: row
+              ..id = id
+              ..paymentId = id,
+          );
+        } on DocumentExistsException {
+          throw Exception('The settlement of this loan is already recorded');
+        }
+        final payment = Payment.create(
+          userId: loan.userId,
+          loanScheduleId: id,
+          loanId: loan.id,
+          // The settlement dialog takes no proof; the comment records who
+          // confirmed the cash.
+          bypassPaymentProof: true,
+          comment: '''
           Early settlement confirmed by:
           user:id: ${teller.id}
           user:name: ${teller.completeNameEasternOrder}
           user:email: ${teller.emailAddress}
           amount: $amount
           confirmed_at: ${DateTime.timestamp().toDefaultDateFormatExtended()}''',
-            confirmedBy: teller.id,
-            confirmedAt: DateTime.timestamp(),
-          ),
-        );
-        final stored = await loanScheduleRepository.add(
-          data: row..paymentId = payment.id,
-        );
-        await paymentRepository.update(
-          data: payment..loanScheduleId = stored.id,
-        );
+          confirmedBy: teller.id,
+          confirmedAt: DateTime.timestamp(),
+        )..id = id;
+        await paymentRepository.create(data: payment);
 
         final pool = await processCashPoolDisplay(
           await cashPoolRepository.load(
@@ -233,12 +249,12 @@ class LoanSettlementBloc
           ),
         );
         final deducted = min(amount, pool.balance);
-        await cashPoolRepository.add(
+        await cashPoolRepository.create(
           data: CashPool.create(
             userId: loan.userId,
             amount: deducted,
             status: CashPoolStatus.acknowledged_payment,
-            paymentId: payment.id,
+            paymentId: id,
             loanId: loan.id,
             comment: '''
           Early settlement: $amount
@@ -247,7 +263,7 @@ class LoanSettlementBloc
 
           Teller: ${teller.completeNameEasternOrder}
           ''',
-          ),
+          )..id = id,
         );
       }
 

@@ -23,6 +23,11 @@ class LoanScheduleRepository implements BaseRepository<LoanSchedule> {
         .then((value) => value.toLoanSchedule());
   }
 
+  /// Writes [data] at its own id only when no row has it; otherwise throws
+  /// a [DocumentExistsException] and writes nothing.
+  Future<void> create({required LoanSchedule data}) =>
+      _firestoreService.createOnly(id: data.id, json: data.toEntity().toJson());
+
   /// Writes [data] at its own id (create or overwrite): a retry with the
   /// same id never adds a second row.
   Future<LoanSchedule> set({required LoanSchedule data}) async {

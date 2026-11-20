@@ -68,6 +68,7 @@ void main() {
       (_) async => Loan()
         ..id = 'loan-1'
         ..period = 1
+        ..status = LoanStatus.approved
         ..term = '1m',
     );
     when(
@@ -100,6 +101,7 @@ void main() {
       (_) async => Loan()
         ..id = 'loan-1'
         ..period = 1
+        ..status = LoanStatus.approved
         ..term = '1m'
         ..penalties = [
           const Penalty(
@@ -132,6 +134,7 @@ void main() {
       (_) async => Loan()
         ..id = 'loan-1'
         ..period = 1
+        ..status = LoanStatus.approved
         ..term = '1m'
         ..penalties = [
           const Penalty(
@@ -170,6 +173,7 @@ void main() {
       (_) async => Loan()
         ..id = 'loan-1'
         ..period = 1
+        ..status = LoanStatus.approved
         ..term = '1m'
         ..penalties = [
           const Penalty(
@@ -258,6 +262,7 @@ void main() {
       (_) async => Loan()
         ..id = 'loan-1'
         ..period = 1
+        ..status = LoanStatus.approved
         ..term = '1m'
         ..status = LoanStatus.paid_late,
     );

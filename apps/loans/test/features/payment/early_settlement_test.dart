@@ -11,6 +11,7 @@ import 'package:loooans/features/loans/screens/statement_of_account_screen.dart'
 import 'package:loooans/features/reports/bloc/reports_bloc.dart';
 import 'package:loooans/services/authentication_service.dart';
 import 'package:loooans/services/loan_calculation_service.dart';
+import 'package:loooans/services/payment_confirmation_service.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:payment_repository/payment_repository.dart';
@@ -28,6 +29,8 @@ import 'package:user_repository/user_repository.dart';
 // wrote nothing but the loan's completed status.
 
 class _Loans extends Mock implements LoanRepository {}
+
+class _Schedules extends Mock implements LoanScheduleRepository {}
 
 class _Auth extends Mock implements AuthenticationService {}
 
@@ -53,6 +56,7 @@ void main() {
 
   setUpAll(() {
     registerFallbackValue(Loan());
+    registerFallbackValue(LoanSchedule());
   });
 
   setUp(() async {
@@ -193,6 +197,8 @@ void main() {
     final rows = await schedules.allByLoanId(loanId: loanId, onlyPaid: false);
     expect(rows, hasLength(2));
     final row = rows.singleWhere((r) => r.id != bill1.id);
+    expect(row.id, '$loanId-settlement');
+    expect(row.paymentId, '$loanId-settlement');
     expect(row.principalPayment, closeTo(6827.9144, 0.0001));
     expect(row.interestCharge, 113.80);
     expect(row.interestPayment, 113.80);
@@ -297,6 +303,194 @@ void main() {
       hasLength(1),
     );
     expect((await real.get(id: loanId)).status, LoanStatus.paid_on_time);
+  });
+
+  /// Bill 2 of G1 submitted by the borrower on [loan], not yet confirmed.
+  Future<(Payment, LoanSchedule)> submitBill2(String loan) async {
+    final payment = await payments.add(
+      data: Payment.create(
+        userId: 'u1',
+        loanScheduleId: NO_ID,
+        loanId: loan,
+        bypassPaymentProof: true,
+        status: PaymentStatus.pending,
+      ),
+    );
+    final row = await schedules.add(
+      data: LoanSchedule.create(
+        dueAt: DateUtils.addDaysToDate(today, 20),
+        loanId: loan,
+        outstandingBalance: 3497.22,
+        principalPayment: 3330.69,
+        interestCharge: 341.40,
+        amortization: 3672.09,
+        interestDayMultiplier: 1,
+        companyId: 'co-1',
+        status: LoanStatus.payment_submitted,
+      )..paymentId = payment.id,
+    );
+    await payments.update(data: payment..loanScheduleId = row.id);
+
+    return (payment, row);
+  }
+
+  // Review of #157: settled with a submission pending, the lender's later
+  // confirmation collected it a second time and moved the loan back to
+  // paid; a rejection moved it to not paid.
+  test('a payment waiting for confirmation stops the settlement', () async {
+    await submitBill2(loanId);
+    final bloc = newBloc();
+
+    final shown = await settle(bloc);
+    expect(shown.status, LoanSettlementStatus.error);
+    expect(shown.message, contains('waiting for confirmation'));
+    final done = await confirm(bloc, 6941.71);
+    expect(done.status, LoanSettlementStatus.error);
+    expect(done.message, contains('waiting for confirmation'));
+    expect(
+      await schedules.allByLoanId(loanId: loanId, onlyPaid: false),
+      hasLength(2),
+    );
+    expect((await real.get(id: loanId)).status, LoanStatus.paid_on_time);
+  });
+
+  test("a special loan's pending payment stops the settlement too", () async {
+    final special = await real.add(
+      data: Loan.create(
+        userId: 'u1',
+        companyId: 'co-1',
+        productId: 'pr-2',
+        amount: 5000,
+        additionalCharges: 0,
+        deductions: 0,
+        period: 0,
+        requirements: const [],
+        isForceCollect: false,
+        status: LoanStatus.approved,
+        dueAt: null,
+        reason: 'special',
+        interestRate: 5,
+        term: '1m',
+        amortization: 250,
+        parentId: loanId,
+      ),
+    );
+    await submitBill2(special.id);
+
+    final shown = await settle(newBloc());
+    expect(shown.status, LoanSettlementStatus.error);
+    expect(shown.message, contains('waiting for confirmation'));
+  });
+
+  test('a submission on a settled loan can be neither confirmed nor rejected',
+      () async {
+    final (payment, row) = await submitBill2(loanId);
+    // A loan settled before this check existed.
+    await real.update(
+      data: (await real.get(id: loanId))..status = LoanStatus.completed,
+    );
+    final service = PaymentConfirmationService(
+      loanScheduleRepository: schedules,
+      loanRepository: loans,
+      paymentRepository: payments,
+    );
+
+    await expectLater(
+      service.confirm(payment: payment, confirmedById: 'teller-1'),
+      throwsA(isA<Exception>()),
+    );
+    await expectLater(
+      service.reject(
+        payment: payment,
+        confirmedById: 'teller-1',
+        reason: 'duplicate',
+      ),
+      throwsA(isA<Exception>()),
+    );
+    expect((await payments.get(id: payment.id)).status, PaymentStatus.pending);
+    expect(
+      (await schedules.get(id: row.id)).status,
+      LoanStatus.payment_submitted,
+    );
+    expect((await real.get(id: loanId)).status, LoanStatus.completed);
+  });
+
+  // Review of #157: two devices that both read the loan before either wrote
+  // both passed the checks; the second wrote another row and payment.
+  test('a second device that read before the first wrote records nothing',
+      () async {
+    // Device B's reads, taken before device A writes anything.
+    final staleLoan = await real.get(id: loanId);
+    final staleRows = await schedules.allByLoanId(
+      loanId: loanId,
+      onlyPaid: false,
+    );
+    final staleLoans = _Loans();
+    when(() => staleLoans.get(id: any(named: 'id')))
+        .thenAnswer((_) async => staleLoan);
+    when(
+      () => staleLoans.load(
+        statements: any(named: 'statements'),
+        limit: any(named: 'limit'),
+        page: any(named: 'page'),
+        reset: any(named: 'reset'),
+        includeAdditionalLoanAmounts:
+            any(named: 'includeAdditionalLoanAmounts'),
+      ),
+    ).thenAnswer((_) async => []);
+    final staleSchedules = _Schedules();
+    when(
+      () => staleSchedules.load(
+        statements: any(named: 'statements'),
+        limit: any(named: 'limit'),
+        page: any(named: 'page'),
+        reset: any(named: 'reset'),
+      ),
+    ).thenAnswer((_) async => staleRows);
+    when(() => staleSchedules.create(data: any(named: 'data'))).thenAnswer(
+      (i) => schedules.create(data: i.namedArguments[#data] as LoanSchedule),
+    );
+
+    final a = newBloc();
+    final shown = await settle(a);
+    expect(
+      (await confirm(a, shown.remainingBalance!)).status,
+      LoanSettlementStatus.success,
+    );
+
+    final b = LoanSettlementBloc.withDependencies(
+      loanRepository: staleLoans,
+      loanScheduleRepository: staleSchedules,
+      paymentRepository: payments,
+      cashPoolRepository: cashPool,
+      authService: auth,
+    );
+    addTearDown(b.close);
+    final done = await confirm(b, shown.remainingBalance!);
+
+    expect(done.status, LoanSettlementStatus.error);
+    expect(done.message, contains('already recorded'));
+    expect(
+      await schedules.allByLoanId(loanId: loanId, onlyPaid: false),
+      hasLength(2),
+    );
+    expect(
+      await payments.load(
+        reset: true,
+        limit: null,
+        statements: [QueryStatement(field: 'loan_id', isEqualTo: loanId)],
+      ),
+      hasLength(1),
+    );
+    final pool = await cashPool.load(
+      reset: true,
+      limit: null,
+      statements: [const QueryStatement(field: 'user_id', isEqualTo: 'u1')],
+    );
+    expect(
+      pool.where((e) => e.status == CashPoolStatus.acknowledged_payment),
+      hasLength(1),
+    );
   });
 
   // A fixed-term loan has no statement (it is refused as not open-term), so

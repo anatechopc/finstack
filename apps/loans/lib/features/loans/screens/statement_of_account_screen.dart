@@ -491,7 +491,7 @@ class _StatementOfAccountScreenState extends State<StatementOfAccountScreen> {
           } else if (column == 5) {
             defaultCellDisplay = wrapTopBottomBorder(
               Text(
-                soaModel.deductions.first.amount.toCurrency(
+                soaModel.rebates.toCurrency(
                   removeNegative: false,
                 ),
               ),

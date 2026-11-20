@@ -40,6 +40,21 @@ abstract class BaseFirestoreService<T extends BaseEntity>
   /// name of the collection or table
   String get collectionName;
 
+  /// Writes [json] as the new document [id], or throws a
+  /// [DocumentExistsException] and writes nothing when [id] exists: a
+  /// transaction reads it first, so two clients cannot both create it.
+  Future<void> createOnly({
+    required String id,
+    required Map<String, dynamic> json,
+  }) =>
+      fs.runTransaction((transaction) async {
+        final ref = root.doc(id);
+        if ((await transaction.get(ref)).exists) {
+          throw DocumentExistsException('$collectionName/$id');
+        }
+        transaction.set(ref, json);
+      });
+
   @override
   Future<T> get({required String id, bool isCache = false});
 
@@ -53,4 +68,14 @@ abstract class BaseFirestoreService<T extends BaseEntity>
   void resetStreamController() {
     controller = StreamController.broadcast();
   }
+}
+
+/// [BaseFirestoreService.createOnly] found a document at [path] already.
+class DocumentExistsException implements Exception {
+  const DocumentExistsException(this.path);
+
+  final String path;
+
+  @override
+  String toString() => 'DocumentExistsException: $path already exists';
 }
