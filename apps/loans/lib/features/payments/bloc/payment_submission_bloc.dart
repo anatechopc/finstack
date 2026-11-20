@@ -18,6 +18,7 @@ class PaymentSubmissionBloc
     extends Bloc<PaymentSubmissionEvent, PaymentSubmissionState> {
   PaymentSubmissionBloc(BuildContext context)
       : this.withDependencies(
+          loanRepository: context.read<LoanRepository>(),
           paymentRepository: context.read<PaymentRepository>(),
           loanScheduleRepository: context.read<LoanScheduleRepository>(),
           storageRepository: context.read<StorageRepository>(),
@@ -25,6 +26,7 @@ class PaymentSubmissionBloc
         );
 
   PaymentSubmissionBloc.withDependencies({
+    required this.loanRepository,
     required this.paymentRepository,
     required this.loanScheduleRepository,
     required this.storageRepository,
@@ -35,6 +37,7 @@ class PaymentSubmissionBloc
     on<SubmitPaymentEvent>(_onSubmit);
   }
 
+  final BaseRepository<Loan> loanRepository;
   final BaseRepository<Payment> paymentRepository;
   final BaseRepository<LoanSchedule> loanScheduleRepository;
   final StorageRepository storageRepository;
@@ -54,6 +57,26 @@ class PaymentSubmissionBloc
           state.copyWith(
             status: PaymentSubmissionStatus.error,
             message: 'No schedule to pay.',
+          ),
+        );
+        return;
+      }
+
+      // A settled or closed loan takes no payment: a lender could neither
+      // confirm nor reject it (#116). Checked before anything is written.
+      final loan = await loanRepository.get(id: event.loanId);
+      if (const {
+        LoanStatus.pending,
+        LoanStatus.declined,
+        LoanStatus.completed,
+        LoanStatus.bad_debt,
+      }.contains(loan.status)) {
+        emit(
+          state.copyWith(
+            status: PaymentSubmissionStatus.error,
+            message: loan.status == LoanStatus.completed
+                ? 'This loan is already settled. No payment is needed.'
+                : 'This loan is not open for payments.',
           ),
         );
         return;

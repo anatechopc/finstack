@@ -12,6 +12,8 @@ import 'package:payment_repository/payment_repository.dart';
 import 'package:storage_repository/storage_repository.dart';
 import 'package:user_repository/user_repository.dart';
 
+class _MockLoanRepo extends Mock implements BaseRepository<Loan> {}
+
 class _MockPaymentRepo extends Mock implements BaseRepository<Payment> {}
 
 class _MockScheduleRepo extends Mock implements BaseRepository<LoanSchedule> {}
@@ -32,6 +34,7 @@ LoanSchedule _schedule(String id, {LoanStatus status = LoanStatus.not_paid}) =>
       ..amortization = 100;
 
 void main() {
+  late BaseRepository<Loan> loans;
   late BaseRepository<Payment> payments;
   late BaseRepository<LoanSchedule> schedules;
   late StorageRepository storage;
@@ -53,6 +56,12 @@ void main() {
   });
 
   setUp(() {
+    loans = _MockLoanRepo();
+    when(() => loans.get(id: any(named: 'id'))).thenAnswer(
+      (_) async => Loan()
+        ..id = 'loan-1'
+        ..status = LoanStatus.approved,
+    );
     payments = _MockPaymentRepo();
     schedules = _MockScheduleRepo();
     storage = _MockStorage();
@@ -84,6 +93,7 @@ void main() {
 
   PaymentSubmissionBloc build() {
     return PaymentSubmissionBloc.withDependencies(
+      loanRepository: loans,
       paymentRepository: payments,
       loanScheduleRepository: schedules,
       storageRepository: storage,
@@ -133,6 +143,53 @@ void main() {
         ),
       );
       verifyNever(() => payments.add(data: any(named: 'data')));
+    },
+  );
+
+  // #116: a submission on a settled loan could be neither confirmed nor
+  // rejected, so it stayed pending for good.
+  blocTest<PaymentSubmissionBloc, PaymentSubmissionState>(
+    'a settled loan takes no submission and nothing is written',
+    setUp: () => when(() => loans.get(id: any(named: 'id'))).thenAnswer(
+      (_) async => Loan()
+        ..id = 'loan-1'
+        ..status = LoanStatus.completed,
+    ),
+    build: build,
+    act: (b) => b.add(
+      SubmitPaymentEvent(
+        schedules: [_schedule('s1')],
+        loanId: 'loan-1',
+        fileBytes: bytes,
+        fileName: 'p.jpg',
+        bankDetailsId: 'bd-1',
+      ),
+    ),
+    expect: () => [
+      isA<PaymentSubmissionState>().having(
+        (s) => s.status,
+        'status',
+        PaymentSubmissionStatus.submitting,
+      ),
+      isA<PaymentSubmissionState>()
+          .having((s) => s.status, 'status', PaymentSubmissionStatus.error)
+          .having(
+            (s) => s.message,
+            'message',
+            'This loan is already settled. No payment is needed.',
+          ),
+    ],
+    verify: (_) {
+      verifyNever(
+        () => storage.upload(
+          data: any(named: 'data'),
+          folder: any(named: 'folder'),
+          fileName: any(named: 'fileName'),
+          includeOriginal: any(named: 'includeOriginal'),
+        ),
+      );
+      verifyNever(() => payments.add(data: any(named: 'data')));
+      verifyNever(() => schedules.update(data: any(named: 'data')));
     },
   );
 

@@ -52,6 +52,11 @@ import 'package:loooans_helpers/data_helpers.dart';
 //   G7i a family: G1 as in G7a plus an open-term special loan of 5,000
 //       created Sep 1 with no rows, settled Sep 11: 5,000 x 5% x 10/30 =
 //       83.33 -> 5,083.33; total 6,941.71 + 5,083.33 = 12,025.04.
+//   G7j G7d with G7e's penalties: the Oct 1 bill submitted Sep 30, on time,
+//       owes nothing at its transfer (as the Pay dialog shows it); the next
+//       bill, Oct 31, is not due -> 10,566.67 (was 10,566.67 + 100 + 1% x
+//       10,000 x 4 = 500 more, the review of #157's probe P1). Submitted
+//       Oct 3, 2 days late: 100 + 1% x 10,000 x 2 = 300 -> 10,866.67.
 void main() {
   Loan fixedTerm() => Loan.create(
         userId: 'u1',
@@ -346,6 +351,59 @@ void main() {
           now: DateTime(2026, 9, 11, 10),
         ),
         closeTo(12025.04, 0.005),
+      );
+    });
+
+    test('G7j a submitted bill owes the penalty of its transfer only', () {
+      const lateFee = Penalty(id: 'late-fee', name: 'Late fee', amount: 100);
+      const daily = Penalty(
+        id: 'daily',
+        name: 'Daily surcharge',
+        amount: 1,
+        isPercentage: true,
+        frequency: PenaltyFrequency.daily,
+      );
+      LoanSchedule submittedOn(DateTime sentAt) => LoanSchedule()
+        ..id = 'row-2'
+        ..loanId = 'loan-1'
+        ..companyId = 'co-1'
+        ..createdAt = sentAt
+        ..updatedAt = sentAt
+        ..dueAt = DateTime(2026, 10)
+        ..paymentId = 'payment-2'
+        ..collectedAt = sentAt
+        ..status = LoanStatus.payment_submitted
+        ..isOpenTerm = true
+        ..outstandingBalance = 10000
+        ..principalPayment = 0
+        ..interestCharge = 500
+        ..amortization = 500
+        ..interestPayment = 0
+        ..extraPayment = 0
+        ..advanceInterestPayments = 0
+        ..interestDayMultiplier = 1;
+      final loan = openTerm(penalties: const [lateFee, daily]);
+
+      final onTime = LoanCalculationService.settlementOf(
+        loan: loan,
+        rows: [sep1Bill(), submittedOn(DateTime(2026, 9, 30, 9))],
+        now: DateTime(2026, 10, 5, 10),
+      );
+      expect(onTime.penalty, 0);
+      expect(
+        LoanCalculationService.settlementAmount(onTime),
+        closeTo(10566.67, 0.005),
+      );
+
+      final late = LoanCalculationService.settlementOf(
+        loan: loan,
+        rows: [sep1Bill(), submittedOn(DateTime(2026, 10, 3, 9))],
+        now: DateTime(2026, 10, 5, 10),
+      );
+      expect(late.penalty, 300);
+      expect(
+        LoanCalculationService.settlementAmount(late),
+        closeTo(10866.67, 0.005),
       );
     });
   });

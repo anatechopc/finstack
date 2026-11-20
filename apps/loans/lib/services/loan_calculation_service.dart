@@ -88,7 +88,8 @@ class LoanCalculationService {
   ///   interest, as the next bill would (R4).
   /// - Penalties: the bills due before the settlement day, charged as the
   ///   Pay dialog charges bills paid together that day
-  ///   ([resolveLatenessTogether]).
+  ///   ([resolveLatenessTogether]); a submitted bill owes what it owed at
+  ///   its transfer ([previewPenalty]), nothing when sent on time.
   ///
   /// Interest and penalty are rounded to the centavo; the principal is the
   /// stored balance as is. [rows] are the loan's stored rows of any status;
@@ -132,6 +133,16 @@ class LoanCalculationService {
         _centavos(interest + balance * rate * max(0, _days(from, today)) / 30);
     final carried = last == null ? 0.0 : _interestShortfall(last);
 
+    // Penalties as the Pay dialog sees the loan: a submitted bill owes what
+    // it owed at its transfer (previewPenalty), and only the bills after it
+    // are billed (review of #157: one submitted on time was charged).
+    final billed = rows
+        .where(
+          (row) =>
+              !row.isPrincipalRelease &&
+              (_isConfirmed(row) || row.status == LoanStatus.payment_submitted),
+        )
+        .sortedBy((row) => row.dueAt);
     final bills = loan.period == 0
         ? calculateOpenTermSchedules(
             amount: calculateLoanAmount(loan),
@@ -139,7 +150,7 @@ class LoanCalculationService {
             interestRate: loan.interestRate,
             term: loan.term,
             companyId: loan.companyId,
-            paidSchedules: confirmed,
+            paidSchedules: billed,
             now: at,
             additionalLoans: loan.additionalLoanAmounts,
           ).schedules
@@ -150,18 +161,32 @@ class LoanCalculationService {
             interestRate: loan.interestRate,
             term: loan.term,
             companyId: loan.companyId,
-            paidSchedules: List.of(confirmed),
+            paidSchedules: List.of(billed),
           ).schedules;
+    final missed = [
+      for (final bill in bills)
+        if (_localDay(bill.lateFrom).isBefore(today)) bill,
+    ];
     final latenesses = resolveLatenessTogether(
-      schedules: [
-        for (final bill in bills)
-          if (_localDay(bill.lateFrom).isBefore(today)) bill,
-      ],
+      schedules: missed,
       loan: loan,
       collectedAt: at,
-      loanRows: confirmed,
+      loanRows: billed,
     );
-    final penalty = _centavos(latenesses.map((l) => l.penalties.total).sum);
+    final penalty = _centavos(
+      latenesses.map((l) => l.penalties.total).sum +
+          billed
+              .where((row) => row.status == LoanStatus.payment_submitted)
+              .map(
+                (row) => previewPenalty(
+                  schedule: row,
+                  loan: loan,
+                  asOf: at,
+                  loanRows: [...billed, ...missed],
+                ).total,
+              )
+              .sum,
+    );
     final isLate = latenesses.any((l) => l.isLate);
     final isOpenTerm = loan.period == 0;
 
