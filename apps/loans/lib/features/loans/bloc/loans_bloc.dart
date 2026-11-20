@@ -69,6 +69,10 @@ class LoansBloc extends Bloc<LoansEvent, LoansState> {
 
   List<LoanSchedule> get clientLoanSchedules => _clientLoanSchedules;
 
+  /// [clientLoanSchedules] before one bill per due date: what the PDF prints
+  /// from, so a part-paid bill prints whole.
+  List<LoanSchedule> get clientLoanRows => _clientLoanRows;
+
   double get monthlyAmortization => _monthlyAmortization;
 
   double get totalLoanPayment => _totalLoanPayment;
@@ -118,6 +122,7 @@ class LoansBloc extends Bloc<LoansEvent, LoansState> {
 
   void clear() {
     _clientLoanSchedules.clear();
+    _clientLoanRows.clear();
     _monthlyAmortization = 0;
     _totalLoanPayment = 0;
     _submittedRequirements?.clear();

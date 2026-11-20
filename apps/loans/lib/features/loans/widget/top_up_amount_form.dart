@@ -43,9 +43,10 @@ double topUpCashHandedOver(Product product, String? amountText) {
 }
 
 /// The form of both top-up dialogs (client detail and the Payment Center):
-/// the amount, the product's charges and deductions, and, in place of one
-/// total (owner, 2026-11-20), what the top-up adds to the loan and the cash
-/// it hands over. The dialogs read the amount through [formKey].
+/// the amount, then, in place of one total (owner, 2026-11-20), what the
+/// top-up adds to the loan with the charges added, and the cash it hands
+/// over with what is taken from it: the deductions and the upfront charges.
+/// The dialogs read the amount through [formKey].
 class TopUpAmountForm extends StatefulWidget {
   const TopUpAmountForm({
     required this.formKey,
@@ -88,20 +89,27 @@ class _TopUpAmountFormState extends State<TopUpAmountForm> {
             ),
             if (product != null) ...[
               const Gap(16),
-              for (final charge in product.additionalCharges)
-                _line('Add: ${charge.description}:', _rate(charge)),
-              for (final deduction in product.deductions)
-                _line('Less: ${deduction.description}:', _rate(deduction)),
-              const Divider(color: AppColors.black),
-              const Gap(8),
               _line(
                 'Added to the loan:',
                 topUpAddedToLoan(product, _amountText).toCurrency(),
               ),
+              for (final charge in product.additionalCharges)
+                if (!charge.isUpfrontCollection)
+                  _part('Add: ${charge.description}:', _rate(charge)),
+              const Divider(color: AppColors.black),
               _line(
                 'Cash handed over:',
                 topUpCashHandedOver(product, _amountText).toCurrency(),
               ),
+              for (final deduction in product.deductions)
+                _part('Less: ${deduction.description}:', _rate(deduction)),
+              // Collected from the cash, not added to the loan.
+              for (final charge in product.additionalCharges)
+                if (charge.isUpfrontCollection)
+                  _part(
+                    'Less: ${charge.description} (collected upfront):',
+                    _rate(charge),
+                  ),
             ],
           ],
         ),
@@ -112,11 +120,21 @@ class _TopUpAmountFormState extends State<TopUpAmountForm> {
   static String _rate(Charge charge) =>
       charge.isPercentage ? '${charge.amount}%' : '${charge.amount}';
 
+  /// A long label wraps; the figure stays on the right.
   static Widget _line(String label, String value) => Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(color: AppColors.black)),
+          Expanded(
+            child: Text(label, style: const TextStyle(color: AppColors.black)),
+          ),
+          const Gap(8),
           Text(value),
         ],
+      );
+
+  /// A charge or deduction under the figure it makes up.
+  static Widget _part(String label, String value) => Padding(
+        padding: const EdgeInsets.only(left: 12),
+        child: _line(label, value),
       );
 }

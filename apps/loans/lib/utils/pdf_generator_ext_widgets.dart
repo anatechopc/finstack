@@ -131,12 +131,26 @@ pw.Widget _quotationItem({
   );
 }
 
+/// The line under the schedule for bill [number] (1-based, as the table
+/// numbers it), still owed after a part payment (#126): its amount, what was
+/// paid on it and what is still owed.
+@visibleForTesting
+String pdfPartPaidNote(int number, LoanSchedule bill, double owed) {
+  final amount = bill.interestPayment + bill.principalPayment;
+
+  return 'Bill $number, due ${bill.dueAt.toDefaultDateFormat()}: '
+      '${amount.toCurrency()}, of which ${(amount - owed).toCurrency()} is '
+      'paid and ${owed.toCurrency()} is still owed.';
+}
+
 /// The PDF quotation's "Total payable" (finstack#124): the sum of the
-/// interest and principal the PDF prints for each of [schedules]. A bill
-/// not paid yet prints its own split, which adds up to its amortization. A
-/// paid row prints what was paid, which differs from its amortization when
-/// the bill was paid short (#156: the rest is carried into the next bill,
-/// so summing amortizations would count it twice). Charges and deductions
+/// interest and principal the PDF prints for each of [schedules], the bills
+/// of `LoanCalculationService.wholeBills`. A bill not paid yet prints its
+/// own split, which adds up to its amortization. A paid row prints what was
+/// paid, which differs from its amortization when the bill was paid short
+/// (#156: the rest is carried into the next bill, so summing amortizations
+/// would count it twice). A last bill still owed after a part payment
+/// prints whole, so the total does not change when a part is paid. Charges and deductions
 /// are already inside every bill (it is computed on the charge-adjusted
 /// principal), so they are not added again. The sum also covers 15-day
 /// loans, whose stored `period` is in months while each bill is per 15 days.

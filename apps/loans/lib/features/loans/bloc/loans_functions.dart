@@ -4,6 +4,10 @@ final log = Logger('loans_bloc');
 
 final List<LoanSchedule> _clientLoanSchedules = [];
 
+/// [_clientLoanSchedules] before the rows of one due date are folded into
+/// one bill. The PDF prints from these (#126: a part-paid bill prints whole).
+final List<LoanSchedule> _clientLoanRows = [];
+
 double _monthlyAmortization = 0;
 
 double _totalLoanPayment = 0;
@@ -36,11 +40,11 @@ void _calculateLoan({
   // loans drop their paid/submitted schedule from the view (showing a
   // recomputed "overdue" status and NO_ID, which also causes duplicate-on-pay).
   // One bill per due date (#152: a short last payment and its rest).
+  _clientLoanRows
+    ..clear()
+    ..addAll([...paidSchedules, ...result.schedules]);
   _clientLoanSchedules.addAll(
-    LoanCalculationService.oneBillPerDueDate([
-      ...paidSchedules,
-      ...result.schedules,
-    ]),
+    LoanCalculationService.oneBillPerDueDate(_clientLoanRows),
   );
   _monthlyAmortization = result.monthlyAmortization;
   _totalLoanPayment = result.totalLoanPayment;
@@ -68,6 +72,9 @@ void _calculateLoanOpen({
     loan: loan,
   );
   _clientLoanSchedules.addAll(result.schedules);
+  _clientLoanRows
+    ..clear()
+    ..addAll(result.schedules);
   _monthlyAmortization = result.monthlyAmortization;
   _totalLoanPayment = result.totalLoanPayment;
 }

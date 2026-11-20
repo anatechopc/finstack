@@ -15,6 +15,9 @@ Future<Uint8List> _buildPdf(
       icons: await PdfGoogleFonts.robotoRegular(),);
 // Create the Pdf documentf
   final doc = pw.Document(theme: pdfTheme);
+  // One bill per due date; a part-paid bill prints whole (#126).
+  final bills = LoanCalculationService.wholeBills(schedules);
+  final printed = [for (final bill in bills) bill.bill];
   debugPrint('pageFormat: $format');
   final finalFormat = format.copyWith(
     marginLeft: 1.0 * PdfPageFormat.cm,
@@ -83,7 +86,7 @@ Future<Uint8List> _buildPdf(
                         child: _quotationWidget(
                           loan: loan,
                           product: product,
-                          schedules: schedules,
+                          schedules: printed,
                         ),
                       ),
                     ],
@@ -211,7 +214,7 @@ Future<Uint8List> _buildPdf(
                   ),
                 ],
               ),
-              ...schedules.mapIndexed(
+              ...printed.mapIndexed(
                 (index, schedule) => pw.TableRow(
                   children: [
                     pw.Expanded(
@@ -287,6 +290,12 @@ Future<Uint8List> _buildPdf(
               ),
             ],
           ),
+          for (final (index, bill) in bills.indexed)
+            if (bill.owed > 0)
+              pw.Padding(
+                padding: const pw.EdgeInsets.only(top: 4),
+                child: pw.Text(pdfPartPaidNote(index + 1, bill.bill, bill.owed)),
+              ),
           pw.Expanded(
             child: pw.Container(),
           ),

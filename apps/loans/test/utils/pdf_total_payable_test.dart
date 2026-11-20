@@ -30,8 +30,9 @@ import 'package:user_repository/user_repository.dart';
 //               The old formula showed 650 - 150 = 500.00 for G8.
 //
 // After #156 (G16, fixed_term_shortfall_golden_test.dart), G1 dated
-// 2026-01-10, rows as client detail lists them (`_calculateLoan`: stored
-// rows, then the engine's, one bill per due date):
+// 2026-01-10. The PDF gets the loan's rows (`LoansBloc.clientLoanRows`:
+// stored rows, then the engine's) and prints one bill per due date
+// (`LoanCalculationService.wholeBills`):
 //   Carried shortfall (G16a): bill 1 (3,672.0856 = 500 + 3,172.0856) paid
 //     500 + 3,000, so 172.09 is carried. Bill 2 = 3,672.09 + 172.09 =
 //     3,844.18 (350 + 3,494.18); bill 3 = 175.29 + 3,505.82 = 3,681.11.
@@ -39,11 +40,17 @@ import 'package:user_repository/user_repository.dart';
 //     amortizations gives 3,672.0856 + 3,844.18 + 3,681.11 = 11,197.38:
 //     the 172.09 once in bill 1 and again in bill 2.
 //   Part-paid last bill (G16c): bills 1 and 2 paid as billed (3,672.0856
-//     each); bill 3 (174.8612 + 3,497.2244) paid 174.8612 + 3,000, so
-//     497.2244 of it is still owed. While it is owed, bill 3 prints as
-//     that rest only (0 + 497.2244): 2 x 3,672.0856 + 497.2244 = 7,841.40.
-//     Once the rest is paid, bill 3 prints as one row, 174.8612 +
-//     3,497.2244: 3 x 3,672.0856 = 11,016.26.
+//     each): bill 1 500 + 3,172.08565, balance 6,827.91435; bill 2
+//     341.39572 + 3,330.68993, balance 3,497.22443.
+//     Before the part payment bill 3 is 3,497.2244 x 5% = 174.8612 +
+//     3,497.2244 = 3,672.0856, and the total is 3 x 3,672.0856 = 11,016.26.
+//     Bill 3 paid 174.8612 + 3,000: 497.2244 is still owed. The screens
+//     show bill 3 as that rest; the PDF prints it whole: interest 174.8612,
+//     principal 3,000 + 497.2244 = 3,497.2244, amount 3,672.0856, of which
+//     3,174.8612 is paid and 497.2244 still owed. Total 11,016.26, as
+//     before the part payment (#126; summing the rest alone gave
+//     2 x 3,672.0856 + 497.2244 = 7,841.40). The rest paid: the same row,
+//     paid, 11,016.26.
 final _date = DateTime.utc(2026); // 2026-01-01
 final _g16Date = DateTime(2026, 1, 10);
 
@@ -58,12 +65,17 @@ LoanCalculationResult _g1After(List<LoanSchedule> stored) =>
       paidSchedules: List.of(stored),
     );
 
-/// The rows client detail lists, and the PDF prints, for G1 after [stored].
+/// The rows `LoansBloc.clientLoanRows` holds for G1 after [stored].
+List<LoanSchedule> _g1Rows(List<LoanSchedule> stored) =>
+    [...stored, ..._g1After(stored).schedules];
+
+/// The rows the PDF prints for [rows].
+List<LoanSchedule> _printed(List<LoanSchedule> rows) =>
+    [for (final bill in LoanCalculationService.wholeBills(rows)) bill.bill];
+
+/// The rows the PDF prints for G1 after [stored].
 List<LoanSchedule> _g1Shown(List<LoanSchedule> stored) =>
-    LoanCalculationService.oneBillPerDueDate([
-      ...stored,
-      ..._g1After(stored).schedules,
-    ]);
+    _printed(_g1Rows(stored));
 
 /// [stored] plus the next G1 bill, paid at a teller as [interest] +
 /// [principal] (default: as billed).
@@ -236,23 +248,44 @@ void main() {
       expect(amortizations, closeTo(11197.38, 0.005), reason: 'the old sum');
     });
 
-    test('part-paid last bill (G16c): 7,841.40 while the rest is owed, '
-        '11,016.26 once it is paid', () {
-      final short = _payNext(
-        _payNext(_payNext(const [])),
-        interest: 174.8612,
-        principal: 3000,
-      );
+    test('part-paid last bill (G16c): printed whole, 11,016.26 before the '
+        'part payment, while the rest is owed and once it is paid', () {
+      final twoPaid = _payNext(_payNext(const []));
+      // The bill's interest as billed (174.86122), principal 3,000.
+      final short = _payNext(twoPaid, principal: 3000);
       final loan = _loan(
         period: 3,
         term: '1m',
         amortization: short.first.amortization,
       );
 
-      final owed = _g1Shown(short);
-      expect(owed, hasLength(3));
-      expect(owed.last.principalPayment, closeTo(497.2244, 0.0001));
-      expect(pdfTotalPayable(loan, owed), closeTo(7841.40, 0.005));
+      final before = pdfTotalPayable(loan, _g1Shown(twoPaid));
+      expect(before, closeTo(11016.26, 0.005));
+
+      // The screens still show bill 3 as its rest.
+      expect(
+        LoanCalculationService.oneBillPerDueDate(_g1Rows(short)).last
+            .amortization,
+        closeTo(497.2244, 0.0001),
+      );
+      final bills = LoanCalculationService.wholeBills(_g1Rows(short));
+      expect(bills, hasLength(3));
+      expect(bills.map((b) => b.owed), [0, 0, closeTo(497.2244, 0.0001)]);
+      final bill3 = bills.last.bill;
+      expect(bill3.amortization, closeTo(3672.0856, 0.0001));
+      expect(bill3.interestPayment, closeTo(174.8612, 0.0001));
+      expect(bill3.principalPayment, closeTo(3497.2244, 0.0001));
+      expect(bill3.outstandingBalance, closeTo(0, 0.000001));
+      expect(
+        bill3.status,
+        isNot(anyOf(LoanStatus.paid_on_time, LoanStatus.paid_late)),
+      );
+      final owed = pdfTotalPayable(loan, [for (final b in bills) b.bill]);
+      expect(owed, closeTo(before!, 0.000001));
+      expect(
+        pdfPartPaidNote(3, bill3, bills.last.owed),
+        allOf(contains('3,672.09'), contains('3,174.86'), contains('497.22')),
+      );
 
       final paid = _g1Shown(_payNext(short));
       expect(paid, hasLength(3));
@@ -332,6 +365,38 @@ void main() {
       expect(text, contains('Total payable'));
       expect(text, contains('11,025.29'));
       expect(text, isNot(contains('11,197.38')));
+    });
+
+    testWidgets('part-paid last bill prints whole: Total payable 11,016.26, '
+        'the paid part once', (tester) async {
+      final rows = _g1Rows(
+        _payNext(_payNext(_payNext(const [])), principal: 3000),
+      );
+      final loan = _loan(
+        period: 3,
+        term: '1m',
+        amortization: rows.first.amortization,
+      );
+      final bytes = await tester.runAsync(
+        () => PdfGenerator.buildPdfBytes(
+          schedules: rows,
+          loan: loan,
+          product: _product(),
+          user: _user(),
+        ),
+      );
+      final text = _contentText(bytes!);
+
+      expect(text, contains('11,016.26'));
+      expect(text, isNot(contains('7,841.40')));
+      expect(text, contains('still owed'));
+      expect(RegExp(r'3,174\.86').allMatches(text), hasLength(1));
+      // Three bills: the short payment is not a row of its own.
+      expect(
+        RegExp('2026-Apr-10').allMatches(text),
+        hasLength(2),
+        reason: 'bill 3 row and its note',
+      );
     });
   });
 }

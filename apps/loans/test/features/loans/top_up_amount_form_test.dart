@@ -224,8 +224,25 @@ void main() {
       expect(lineValue(tester, 'Cash handed over:'), 9650.0.toCurrency());
       expect(find.text('Total:'), findsNothing);
       expect(find.text(10500.0.toCurrency()), findsNothing);
-      expect(find.text('Add: advance interest:'), findsOneWidget);
-      expect(find.text('Less: id card:'), findsOneWidget);
+      // What is added to the loan, then what comes out of the cash; the
+      // upfront charge is with the cash, not under "Add:".
+      expect(find.text('Add: advance interest:'), findsNothing);
+      expect(
+        [
+          'Added to the loan:',
+          'Add: processing:',
+          'Add: notarial:',
+          'Cash handed over:',
+          'Less: insurance:',
+          'Less: id card:',
+          'Less: advance interest (collected upfront):',
+        ].map((label) => tester.getTopLeft(find.text(label)).dy).toList(),
+        isA<List<double>>().having(
+          (ys) => [for (var i = 1; i < ys.length; i++) ys[i] > ys[i - 1]],
+          'each line below the one before',
+          everyElement(isTrue),
+        ),
+      );
       // The dialogs' Add button reads the amount through the key.
       expect(formKey.currentState!.saveAndValidate(), isTrue);
       expect(formKey.currentState!.value['amount'], '10000');
@@ -239,6 +256,7 @@ void main() {
 
       expect(lineValue(tester, 'Added to the loan:'), 5400.0.toCurrency());
       expect(lineValue(tester, 'Cash handed over:'), 4900.0.toCurrency());
+      expect(find.textContaining('(collected upfront)'), findsNothing);
     });
 
     testWidgets('no product: only the amount', (tester) async {
