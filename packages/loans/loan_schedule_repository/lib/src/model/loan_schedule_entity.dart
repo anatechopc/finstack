@@ -167,9 +167,9 @@ class LoanScheduleEntity implements BaseEntity {
 
   /// On the rest of a fixed-term bill that a short payment left (owner,
   /// 2026-11-20, finstack#152): when that payment was collected. The rest
-  /// is the same bill (same [dueAt]); its lateness and penalties count from
-  /// here when that is after [dueAt], so no day of the bill is charged
-  /// twice. Null on every other row.
+  /// is the same bill (same [dueAt], late from it); its penalties are only
+  /// the periods after those that payment was charged, so no period of the
+  /// bill is charged twice. Null on every other row.
   @JsonKey(
     name: 'part_paid_at',
     toJson: handleDateTimeToJson,

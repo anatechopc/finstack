@@ -127,12 +127,6 @@ class LoanSchedule extends LoanScheduleEntity
 
   /// The date lateness and overdue status count from: [originalDueAt] when
   /// the open-term engine moved an overdue row's [dueAt] to today, otherwise
-  /// [dueAt] (finstack#114); on the rest of a short-paid fixed-term bill,
-  /// [partPaidAt] when that is later (#152).
-  DateTime get lateFrom {
-    final from = originalDueAt ?? dueAt;
-    final partPaid = partPaidAt;
-
-    return partPaid != null && partPaid.isAfter(from) ? partPaid : from;
-  }
+  /// [dueAt] (finstack#114).
+  DateTime get lateFrom => originalDueAt ?? dueAt;
 }

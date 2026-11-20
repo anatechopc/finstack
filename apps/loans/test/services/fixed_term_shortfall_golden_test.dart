@@ -35,9 +35,11 @@ import 'package:payment_repository/payment_repository.dart';
 //      interest, `partPaidAt` = when the short payment was collected), so
 //      each payment is its own stored row; screens show one bill per due
 //      date (`oneBillPerDueDate`). Penalties within the bill (default, for
-//      the owner to confirm): a once-only penalty is charged once; the
-//      rest counts its days from the short payment when that was late, so
-//      no day of the bill is charged twice.
+//      the owner to confirm): every penalty counts its periods from the
+//      bill's due date, and the rest is charged only the periods after
+//      those the short payment was charged (daily: the days after it;
+//      monthly: a month that starts after it; once: nothing more), so no
+//      period of the bill is charged twice (re-check of #156).
 //   4. A penalty on the missed bill is a percent of the carried bill's full
 //      amount; one on the balance reads the balance in force (unchanged).
 //   The loan is completed only when every bill is paid AND a paid row left
@@ -103,6 +105,15 @@ import 'package:payment_repository/payment_repository.dart';
 //   Short on time, then late: Apr 10, 174.86 + 3,000: 0; the rest paid Apr
 //     30, from the due date and the bill's first lateness: 100 + 20 x
 //     4.972244 = 199.4449.
+//   (Daily: days(due → rest) − days(due → short) = the days after the
+//   short payment; once: 1 − 1 = 0 after a late short payment.)
+//
+// G16j, 5% a month of the missed bill (re-check of #156): bill 3 paid
+//   short Apr 15, 5 days late: months(5) = 1, 5% x 3,672.0856 = 183.6043;
+//   balance 497.2244. The rest paid Apr 30, 20 days after the due date:
+//   months(20) − months(5) = 1 − 1 = 0, nothing more (counted from Apr 15
+//   it was a new month, 5% x 497.2244 = 24.8612). Paid May 15, 35 days
+//   after: months(35) − months(5) = 2 − 1 = 1, 24.8612; bill 3 208.4655.
 //
 // G16d, no carry. Bill 1 paid at its billed principal: bills 2 and 3 are
 //   3,672.0856 (G1t). A sub-centavo shortfall: bill 1 paid 3,172.09, bill 2
@@ -590,6 +601,100 @@ void main() {
       final shown = LoanCalculationService.oneBillPerDueDate(paid);
       expect(shown.last.status, LoanStatus.paid_late);
       expect(shown.last.penalty, closeTo(199.4449, 0.0001));
+    });
+  });
+
+  group('G16j a monthly penalty within a part-paid last bill (re-check of '
+      '#156)', () {
+    final monthly = Loan()
+      ..id = 'loan-1'
+      ..period = 3
+      ..term = '1m'
+      ..status = LoanStatus.paid_on_time
+      ..allowLatePayments = false
+      ..penalties = [
+        const Penalty(
+          id: 'p-month',
+          name: 'Monthly',
+          amount: 5,
+          isPercentage: true,
+          frequency: PenaltyFrequency.monthly,
+          basedOn: PenaltyBase.missedBill,
+        ),
+      ];
+
+    /// [stored]'s next bill collected on [on] under [monthly].
+    List<LoanSchedule> collect(
+      List<LoanSchedule> stored,
+      DateTime on, {
+      double? principal,
+    }) {
+      final next = engine(stored).schedules.first;
+      final status = PaymentConfirmationService.applyLateness(
+        schedule: next,
+        loan: monthly,
+        collectedAt: on,
+        actorId: 'teller-1',
+        loanRows: LoanCalculationService.oneBillPerDueDate([...stored, next]),
+      );
+      PaymentConfirmationService.recordTellerPayment(
+        next,
+        interestPayment: next.interestPayment,
+        principalPayment: principal ?? next.principalPayment,
+      );
+
+      return [
+        ...stored,
+        next
+          ..id = 'sched-${stored.length + 1}'
+          ..loanId = 'loan-1'
+          ..status = status
+          ..paidAt = on,
+      ];
+    }
+
+    final short = collect(
+      collect(
+        collect(const [], DateTime(2026, 2, 10, 12)),
+        DateTime(2026, 3, 10, 12),
+      ),
+      DateTime(2026, 4, 15, 12),
+      principal: 3000,
+    );
+
+    test('bill 3 paid short 5 days late: one month, 5% of 3,672.09', () {
+      expect(short.last.penalty, closeTo(183.6043, 0.0001));
+      expect(short.last.outstandingBalance, closeTo(497.2244, 0.0001));
+    });
+
+    test('the rest paid 20 days after the due date: no second month '
+        '(the first month was charged on the full bill; was 24.86)', () {
+      final rest = engine(short).schedules.single;
+      expect(
+        previewPenalty(
+          schedule: rest,
+          loan: monthly,
+          asOf: DateTime(2026, 4, 30, 12),
+        ).total,
+        0,
+      );
+      final paid = collect(short, DateTime(2026, 4, 30, 12));
+      expect(paid.last.penalty, 0);
+      expect(paid.last.status, LoanStatus.paid_late);
+      expect(
+        LoanCalculationService.oneBillPerDueDate(paid).last.penalty,
+        closeTo(183.6043, 0.0001),
+      );
+    });
+
+    test('the rest paid 35 days after the due date: one more month, 5% of '
+        'the 497.22 still owed', () {
+      final paid = collect(short, DateTime(2026, 5, 15, 12));
+      expect(paid.last.penalty, closeTo(24.8612, 0.0001));
+      expect(
+        LoanCalculationService.oneBillPerDueDate(paid).last.penalty,
+        closeTo(208.4655, 0.0001),
+      );
     });
   });
 
