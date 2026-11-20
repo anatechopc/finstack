@@ -13,6 +13,7 @@ Log of refactoring and bug fix work done across multiple sessions.
   - Fills: a last bill on a whole-centavo balance rounds its interest once (a 960-case grid found 177.19 + 3,543.70 for a shown 3,720.88).
   - `ExpandLoanEvent` is registered in `PaymentCenterBloc.withDependencies`.
   - Tests: G16 33 (G16i 3 with penalties: 283.60 then 49.72; twice 328.19; on time then late 199.44; the grid); handlers 15 (3 bills in client detail and in the Payment Center history, one payment per receipt); dialogs 14. Mutations: fold off 7 fail, once-only skip off 2 fail. Full suite 659 (UTC, seed 2126639374); `test/services/` 185 under UTC and Manila; packages 21/21.
+  - Manual run 3 (2026-11-20 09:10 Manila, read only): client detail and the Payment Center history list 3 bills (Dec 4 3,681.11 open); Dec 4 not paid short on the shared loan. Wrote only the sign-in device doc (not listed: gcloud needs `gcloud auth login`, interactive).
 
 Branch `feat/fixed-term-shortfall-152` → develop (draft PR, after #151).
 
