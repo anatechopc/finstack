@@ -104,7 +104,7 @@ class LoanCalculationService {
     final rate = loan.interestRate / 100;
     final confirmed = rows
         .where((row) => !row.isPrincipalRelease && _isConfirmed(row))
-        .sortedBy((row) => row.dueAt);
+        .sorted(_inPaymentOrder);
     final last = confirmed.lastOrNull;
 
     var balance = last?.outstandingBalance ?? calculateLoanAmount(loan);
@@ -142,7 +142,7 @@ class LoanCalculationService {
               !row.isPrincipalRelease &&
               (_isConfirmed(row) || row.status == LoanStatus.payment_submitted),
         )
-        .sortedBy((row) => row.dueAt);
+        .sorted(_inPaymentOrder);
     final bills = loan.period == 0
         ? calculateOpenTermSchedules(
             amount: calculateLoanAmount(loan),
@@ -214,6 +214,14 @@ class LoanCalculationService {
       row.status == LoanStatus.paid_on_time ||
       row.status == LoanStatus.paid_late;
 
+  /// Stored rows in the order they were paid: by due date, and the rows of
+  /// one short-paid fixed-term bill (one due date) by balance, highest
+  /// first, since the balance only falls (#152).
+  static int _inPaymentOrder(LoanSchedule a, LoanSchedule b) =>
+      a.dueAt != b.dueAt
+          ? a.dueAt.compareTo(b.dueAt)
+          : b.outstandingBalance.compareTo(a.outstandingBalance);
+
   static double _centavos(double amount) => (amount * 100).round() / 100;
 
   /// Calculates loan schedules for fixed-term loans.
@@ -244,12 +252,7 @@ class LoanCalculationService {
     var totalLoanPayment = 0.0;
     // A remainder row shares the last due date; the balance only falls, so
     // the lower balance is the later row.
-    paidSchedules.sortByCompare(
-      (sched) => sched,
-      (a, b) => a.dueAt != b.dueAt
-          ? a.dueAt.compareTo(b.dueAt)
-          : b.outstandingBalance.compareTo(a.outstandingBalance),
-    );
+    paidSchedules.sortByCompare((sched) => sched, _inPaymentOrder);
     var monthlyInterestRate = interestRate / 100;
     var outstandingBalance = amount;
     var numOfPayments = monthsToPay;

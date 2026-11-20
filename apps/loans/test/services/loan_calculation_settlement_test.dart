@@ -57,6 +57,19 @@ import 'package:loooans_helpers/data_helpers.dart';
 //       bill, Oct 31, is not due -> 10,566.67 (was 10,566.67 + 100 + 1% x
 //       10,000 x 4 = 500 more, the review of #157's probe P1). Submitted
 //       Oct 3, 2 days late: 100 + 1% x 10,000 x 2 = 300 -> 10,866.67.
+//   G7k G1 with #152's carried shortfall: bill 1 paid 500 + 2,900 leaves
+//       7,100; bill 2 bills 3,672.09 + 272.09 carried = 3,944.18 (interest
+//       7,100 x 5% = 355.00, principal 3,589.18), paid as billed: 3,510.82.
+//       Settled Oct 11, 10 days after bill 2's due date: 3,510.82 x 5% x
+//       10/30 = 58.51 -> 3,569.33. The shortfall is in the balance, so it
+//       is not added again.
+//   G7l G1 with a part-paid last bill (#156): bills 1 and 2 paid as billed
+//       (bill 2: interest 341.3957, principal 3,330.6899, balance 3,497.2244;
+//       no carry, so not rounded); bill 3 (Nov 1: interest 174.8612,
+//       principal 3,497.2244) paid its interest + 3,000 leaves 497.2244; the rest of it, a second row due Nov 1,
+//       paid 200 leaves 297.2244. Two confirmed rows share Nov 1: the later
+//       is the lower balance. Settled Nov 11: 297.2244 x 5% x 10/30 = 4.95
+//       -> 302.17 (taking the other row: 497.22 + 8.29 = 505.51).
 void main() {
   Loan fixedTerm() => Loan.create(
         userId: 'u1',
@@ -404,6 +417,126 @@ void main() {
       expect(
         LoanCalculationService.settlementAmount(late),
         closeTo(10866.67, 0.005),
+      );
+    });
+
+    /// G1's next computed bill after the stored [rows], as the app bills it.
+    LoanSchedule nextBill(List<LoanSchedule> rows) =>
+        LoanCalculationService.calculateFixedTerm(
+          amount: 10000,
+          monthsToPay: 3,
+          date: DateTime(2026, 8),
+          interestRate: 5,
+          term: '1m',
+          companyId: 'co-1',
+          paidSchedules: List.of(rows),
+        ).schedules.first;
+
+    /// [row] stored as paid on [on] after a teller recorded [interest] and
+    /// [principal] on it.
+    LoanSchedule pay(
+      LoanSchedule row, {
+      required String id,
+      required DateTime on,
+      required double interest,
+      required double principal,
+    }) {
+      PaymentConfirmationService.recordTellerPayment(
+        row,
+        interestPayment: interest,
+        principalPayment: principal,
+      );
+
+      return row
+        ..id = id
+        ..loanId = 'loan-1'
+        ..createdAt = on
+        ..paidAt = on
+        ..collectedAt = on
+        ..status = LoanStatus.paid_on_time;
+    }
+
+    test('G7k a carried shortfall is in the balance, not added again', () {
+      final bill1 = g1Bill1();
+      PaymentConfirmationService.recordTellerPayment(
+        bill1,
+        interestPayment: 500,
+        principalPayment: 2900,
+      );
+      final bill2 = nextBill([bill1]);
+      expect(bill2.amortization, closeTo(3944.18, 1e-9));
+      expect(bill2.interestCharge, closeTo(355, 1e-9));
+      expect(bill2.principalPayment, closeTo(3589.18, 1e-9));
+      pay(
+        bill2,
+        id: 'row-2',
+        on: DateTime(2026, 10),
+        interest: 355,
+        principal: 3589.18,
+      );
+      expect(bill2.outstandingBalance, closeTo(3510.82, 1e-6));
+
+      final row = LoanCalculationService.settlementOf(
+        loan: fixedTerm(),
+        rows: [bill1, bill2],
+        now: DateTime(2026, 10, 11, 10),
+      );
+
+      expect(row.principalPayment, closeTo(3510.82, 1e-6));
+      expect(row.interestPayment, 58.51);
+      expect(
+        LoanCalculationService.settlementAmount(row),
+        closeTo(3569.33, 0.005),
+      );
+    });
+
+    test('G7l a part-paid last bill: the later of its two rows counts', () {
+      final bill1 = g1Bill1();
+      final bill2 = nextBill([bill1]);
+      pay(
+        bill2,
+        id: 'row-2',
+        on: DateTime(2026, 10),
+        interest: bill2.interestCharge,
+        principal: bill2.principalPayment,
+      );
+      expect(bill2.outstandingBalance, closeTo(3497.2244, 1e-4));
+      final bill3 = nextBill([bill1, bill2]);
+      expect(bill3.interestCharge, closeTo(174.8612, 1e-4));
+      expect(bill3.principalPayment, closeTo(3497.2244, 1e-4));
+      pay(
+        bill3,
+        id: 'row-3',
+        on: DateTime(2026, 11),
+        interest: bill3.interestCharge,
+        principal: 3000,
+      );
+      expect(bill3.outstandingBalance, closeTo(497.2244, 1e-4));
+      final rest = nextBill([bill1, bill2, bill3]);
+      expect(rest.partPaidAt, isNotNull);
+      expect(rest.dueAt, bill3.dueAt);
+      expect(rest.principalPayment, closeTo(497.2244, 1e-4));
+      pay(
+        rest,
+        id: 'row-3b',
+        on: DateTime(2026, 11, 3),
+        interest: 0,
+        principal: 200,
+      );
+      expect(rest.outstandingBalance, closeTo(297.2244, 1e-4));
+
+      final row = LoanCalculationService.settlementOf(
+        loan: fixedTerm(),
+        // The rest listed before the row it follows: order must not matter.
+        rows: [bill1, bill2, rest, bill3],
+        now: DateTime(2026, 11, 11, 10),
+      );
+
+      expect(row.principalPayment, closeTo(297.2244, 1e-4));
+      expect(row.interestPayment, 4.95);
+      expect(
+        LoanCalculationService.settlementAmount(row),
+        closeTo(302.17, 0.005),
       );
     });
   });
