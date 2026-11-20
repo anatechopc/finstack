@@ -102,6 +102,8 @@ class PaymentCenterBloc extends Bloc<PaymentCenterEvent, PaymentCenterState> {
     // unmockable cash-pool repository: a test reads the rows they wrote.
     on<MakePaymentEvent>(_handleMakePaymentEvent);
     on<MakeOverduePaymentEvent>(_handleMakeOverduePaymentEvent);
+    // The loan's history, one bill per due date (#152).
+    on<ExpandLoanEvent>(_handleExpandLoanEvent);
   }
 
   final AuthenticationService authService;
@@ -670,7 +672,11 @@ class PaymentCenterBloc extends Bloc<PaymentCenterEvent, PaymentCenterState> {
           companyId: loan.companyId,
           paidSchedules: paidSchedules,
         );
-        fullSchedules = [...paidSchedules, ...result.schedules];
+        // One bill per due date (#152: a short last payment and its rest).
+        fullSchedules = LoanCalculationService.oneBillPerDueDate([
+          ...paidSchedules,
+          ...result.schedules,
+        ]);
       } else {
         // Open-term: use calculateOpenTerm which combines paid + next. Every
         // stored row goes in, as in _getActionableSchedules and LoansBloc,

@@ -24,7 +24,7 @@ import 'package:mocktail/mocktail.dart';
 // image source"). Figures from golden G16h: G1 with bill 1 paid 500 +
 // 2,900, so bill 2 is 3,944.18 = 355.00 + 3,589.18 with 3,510.82 left after
 // it (the old check, principal >= balance after, settled it); the last bill
-// 3,510.82 + 175.541; the remainder row 510.82 after the last bill is paid
+// 3,510.82 + 175.54; the rest of the last bill, 510.82, after it is paid
 // 175.54 + 3,000. Settlement: 7,100 on bill 2, all that is owed before it.
 // Open-term (10,000 balance, 500 interest): unchanged, 10,000 principal
 // settles, interest only does not.
@@ -260,18 +260,18 @@ void main() {
         );
       });
 
-      testWidgets('the remainder row (510.82, no interest) is recorded',
+      testWidgets('the rest of the last bill (510.82, no interest) is recorded',
           (tester) async {
-        final remainder = engine(
+        final rest = engine(
           payNext(two, interest: 175.54, principal: 3000),
         ).schedules.single;
-        expect(remainder.amortization, closeTo(510.82, 0.000001));
+        expect(rest.amortization, closeTo(510.82, 0.000001));
 
         expect(
           await asksToSettle(
             tester,
             dialog: dialog,
-            row: remainder,
+            row: rest,
             openTerm: false,
           ),
           isFalse,

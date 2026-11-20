@@ -6,6 +6,14 @@ Log of refactoring and bug fix work done across multiple sessions.
 
 ## Fixed-term principal shortfall goes on the next bill (#152, owner 2026-11-19)
 
+- **Owner decisions 2026-11-20 (recorded on #152), third commit on #156:**
+  - No extra bill after a short LAST payment. The rest of the last bill is a second row of the same bill (same `due_at`, interest 0, new optional field `part_paid_at` = when the short payment was collected; `LoanSchedule.lateFrom` uses it when later than the due date). Each receipt is its own stored row, payment document and cash-pool entry. `loanScheduleChanges` books each row on create: 175.29 + 3,000 on the first, 0 + 505.82 on the rest.
+  - `LoanCalculationService.oneBillPerDueDate` folds the rows of one bill for every list (LoansBloc → client detail, borrower schedule/Pay now/PDF; the Payment Center expanded history). The Payment Center's actionable list was already one row (only the open rest is unpaid). While the rest is owed it is the bill, payable again; once paid, one row has the bill's amount, the sums paid and the penalties.
+  - Penalties within the bill (my default, for the owner): once-only penalties are not charged again on the rest when the short payment was late (`penalty_calculator.dart`). The rest counts its days from the short payment (via `lateFrom`), so no day is charged twice. Carried shortfalls (option B) unchanged. Open-term unchanged.
+  - Fills: a last bill on a whole-centavo balance rounds its interest once (a 960-case grid found 177.19 + 3,543.70 for a shown 3,720.88).
+  - `ExpandLoanEvent` is registered in `PaymentCenterBloc.withDependencies`.
+  - Tests: G16 33 (G16i 3 with penalties: 283.60 then 49.72; twice 328.19; on time then late 199.44; the grid); handlers 15 (3 bills in client detail and in the Payment Center history, one payment per receipt); dialogs 14. Mutations: fold off 7 fail, once-only skip off 2 fail. Full suite 659 (UTC, seed 2126639374); `test/services/` 185 under UTC and Manila; packages 21/21.
+
 Branch `feat/fixed-term-shortfall-152` → develop (draft PR, after #151).
 
 - **Engine (`calculateFixedTerm`):** resuming after stored rows, the next bill = amortization + the last stored row's principal shortfall (its `amortization - interestCharge` less `principalPayment`, to the centavo; paid rows only). The last bill is always balance + interest (was `min(P, balance + interest)`). When every bill is stored and the last paid row leaves more than 0.005, one more row bills the balance: due on the last due date, interest 0, balance after 0 (rule 2, my default, asked of the owner in the PR). Stored rows with the same due date sort by balance, highest first. G1: 500 + 3,000 → bill 2 3,844.18 (350.00 + 3,494.18), bill 3 3,681.11, total 11,025.29 (on time 11,016.26).

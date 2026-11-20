@@ -35,9 +35,13 @@ void _calculateLoan({
   // the teller flow and calculateOpenTerm already use. Without this, fixed-term
   // loans drop their paid/submitted schedule from the view (showing a
   // recomputed "overdue" status and NO_ID, which also causes duplicate-on-pay).
-  _clientLoanSchedules
-    ..addAll(paidSchedules)
-    ..addAll(result.schedules);
+  // One bill per due date (#152: a short last payment and its rest).
+  _clientLoanSchedules.addAll(
+    LoanCalculationService.oneBillPerDueDate([
+      ...paidSchedules,
+      ...result.schedules,
+    ]),
+  );
   _monthlyAmortization = result.monthlyAmortization;
   _totalLoanPayment = result.totalLoanPayment;
 }

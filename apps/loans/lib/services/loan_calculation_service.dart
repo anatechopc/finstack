@@ -82,8 +82,12 @@ class LoanCalculationService {
   /// row left unpaid, both to the centavo, with its interest to the centavo
   /// and its principal the rest; the last bill clears the whole balance,
   /// rounding included.
-  /// When every bill is stored and the last one left principal owed, one
-  /// more row bills it: due on the last due date, no interest.
+  /// When every bill is stored and the last one left principal owed, the
+  /// last bill is not paid yet (owner, 2026-11-20): the rest of it is one
+  /// more row of the same bill, the same due date, no interest, marked with
+  /// when the short payment was collected ([LoanSchedule.partPaidAt]).
+  /// Paying it stores it as its own row, so each payment is its own record;
+  /// screens show the rows of one bill as one ([oneBillPerDueDate]).
   static LoanCalculationResult calculateFixedTerm({
     required double amount,
     required int monthsToPay,
@@ -164,6 +168,13 @@ class LoanCalculationService {
         monthlyAmort = carriedBill;
         interestPayment = _toCentavo(interestPayment);
         principalPayment = _toCentavo(carriedBill - interestPayment);
+      } else if (i == numOfPayments && _inCentavos(beginningBalance)) {
+        // The last bill after payments recorded at the dialog's figures
+        // (a balance in whole centavos): its interest to the centavo too,
+        // so the fills add up to it (a 960-case grid, review of #156).
+        interestPayment = _toCentavo(interestPayment);
+        monthlyAmort = beginningBalance + interestPayment;
+        principalPayment = beginningBalance;
       }
       carry = 0;
       outstandingBalance -= principalPayment;
@@ -204,7 +215,7 @@ class LoanCalculationService {
         last != null &&
         _isPaid(last) &&
         leavesPrincipal(last)) {
-      final remainder = LoanSchedule.create(
+      final rest = LoanSchedule.create(
         dueAt: last.dueAt,
         outstandingBalance: 0,
         amortization: last.outstandingBalance,
@@ -213,9 +224,9 @@ class LoanCalculationService {
         loanId: 'loanId:1',
         interestDayMultiplier: 0,
         companyId: companyId,
-      );
-      totalLoanPayment += remainder.amortization;
-      schedules.add(remainder);
+      )..partPaidAt = last.collectedAt ?? last.paidAt ?? last.dueAt;
+      totalLoanPayment += rest.amortization;
+      schedules.add(rest);
     }
 
     return LoanCalculationResult(
@@ -517,6 +528,70 @@ class LoanCalculationService {
     return max(0, ((billed - row.principalPayment) * 100).round()) / 100;
   }
 
+  /// The rows a screen lists for a loan, one bill per due date (owner,
+  /// 2026-11-20): the rows of a short-paid fixed-term bill (the stored
+  /// short payment and the rest of the bill, [LoanSchedule.partPaidAt]) show
+  /// as one. While the rest is owed it is the bill, payable; once paid, one
+  /// row has the bill's amount, what was paid on it and the penalties
+  /// charged. Every other row is listed as it is. [rows] are in display
+  /// order and are not changed.
+  static List<LoanSchedule> oneBillPerDueDate(List<LoanSchedule> rows) {
+    String dayOf(LoanSchedule row) {
+      final day = _localDay(row.dueAt);
+      return '${day.year}-${day.month}-${day.date}';
+    }
+
+    final split = {
+      for (final row in rows)
+        if (!row.isOpenTerm && row.partPaidAt != null) dayOf(row),
+    };
+    final shown = <String>{};
+    final bills = <LoanSchedule>[];
+    for (final row in rows) {
+      final day = dayOf(row);
+      if (row.isOpenTerm || !split.contains(day)) {
+        bills.add(row);
+        continue;
+      }
+      if (!shown.add(day)) {
+        continue;
+      }
+      // Paid in order: the balance only falls.
+      final parts = rows
+          .where((other) => !other.isOpenTerm && dayOf(other) == day)
+          .sortedBy<num>((other) => -other.outstandingBalance);
+      final open = parts.where((part) => !_isPaid(part));
+      bills.add(open.isNotEmpty ? open.last : _paidBill(parts));
+    }
+
+    return bills;
+  }
+
+  /// One paid row for the paid [parts] of a bill, the first holding the
+  /// bill's amount.
+  static LoanSchedule _paidBill(List<LoanSchedule> parts) {
+    final (first, last) = (parts.first, parts.last);
+    double sum(double Function(LoanSchedule part) of) =>
+        parts.fold(0, (total, part) => total + of(part));
+
+    return LoanSchedule.fromJson(first.toJson())
+      ..interestPayment = sum((part) => part.interestPayment)
+      ..principalPayment = sum((part) => part.principalPayment)
+      ..extraPayment = sum((part) => part.extraPayment)
+      ..penalty = sum((part) => part.penalty)
+      ..outstandingBalance = last.outstandingBalance
+      ..status = parts.any((part) => part.status == LoanStatus.paid_late)
+          ? LoanStatus.paid_late
+          : LoanStatus.paid_on_time
+      ..paymentId = last.paymentId
+      ..paidAt = last.paidAt
+      ..collectedAt = last.collectedAt
+      ..daysLate = calculateDaysLate(
+        dueAt: first.dueAt,
+        collectedAt: last.collectedAt ?? last.paidAt ?? first.dueAt,
+      );
+  }
+
   /// Whether fixed-term [row] leaves principal owed (#152): more than half
   /// a centavo, so display rounding never keeps a loan open.
   static bool leavesPrincipal(LoanSchedule row) =>
@@ -527,6 +602,9 @@ class LoanCalculationService {
       row.status == LoanStatus.paid_late;
 
   static double _toCentavo(double amount) => (amount * 100).round() / 100;
+
+  static bool _inCentavos(double amount) =>
+      (amount * 100 - (amount * 100).round()).abs() < 1e-6;
 
   /// Calculates open-term loan with additional loan amounts and creates
   /// the full schedule list including paid schedules and placeholders.

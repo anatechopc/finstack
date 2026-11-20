@@ -272,8 +272,17 @@ PenaltyResult _penaltiesFor({
   _Stretch? stretch;
   final lines = <PenaltyLine>[];
   var total = 0.0;
+  // The rest of a bill that was already late when part of it was paid
+  // (#152): that payment was charged the once-only penalties, and the rest
+  // counts its days from it ([LoanSchedule.lateFrom]), so no day of the
+  // bill is charged twice.
+  final chargedOnce = row.partPaidAt != null &&
+      _localDay(row.lateFrom).isAfter(_localDay(row.dueAt));
 
   for (final penalty in loan.penalties) {
+    if (chargedOnce && penalty.frequency == PenaltyFrequency.once) {
+      continue;
+    }
     final PenaltyLine? line;
     if (penalty.baseFor(isOpenTerm: row.isOpenTerm) == PenaltyBase.missedBill) {
       line = computePenalties(

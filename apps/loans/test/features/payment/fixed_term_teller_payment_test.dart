@@ -86,8 +86,9 @@ Loan fixedTermLoan() => Loan.create(
       ..additionalLoanAmounts = [];
 
 /// The rows client detail lists after [stored]: the stored rows, then the
-/// computed ones (LoansBloc's `_calculateLoan`).
-List<LoanSchedule> clientRows(List<LoanSchedule> stored) => [
+/// computed ones, one bill per due date (LoansBloc's `_calculateLoan`).
+List<LoanSchedule> clientRows(List<LoanSchedule> stored) =>
+    LoanCalculationService.oneBillPerDueDate([
       ...stored,
       ...LoanCalculationService.calculateFixedTerm(
         amount: 10000,
@@ -98,7 +99,7 @@ List<LoanSchedule> clientRows(List<LoanSchedule> stored) => [
         companyId: 'co-1',
         paidSchedules: List.of(stored),
       ).schedules,
-    ];
+    ]);
 
 /// [row] as Firestore hands it back.
 LoanSchedule readBack(LoanSchedule row) =>
@@ -586,8 +587,21 @@ void main() {
       expect(await loanStatus(), LoanStatus.paid_late);
     });
 
-    test('Payment Center: a short last bill keeps the loan open; paying its '
-        '505.82 remainder completes it', () async {
+    /// The Payment Center's expanded history of the loan.
+    Future<List<LoanSchedule>> history() async {
+      final bloc = newBloc()
+        ..add(ExpandLoanEvent(loanId: loanId, loan: await real.get(id: loanId)));
+      final state = await bloc.stream.firstWhere(
+        (s) =>
+            s.status == PaymentCenterStatus.loanExpanded ||
+            s.status == PaymentCenterStatus.error,
+      );
+
+      return state.expandedLoanSchedules[loanId]!;
+    }
+
+    test('Payment Center: a short last bill keeps the loan open as one bill; '
+        'paying the 505.82 rest completes it', () async {
       await payInPaymentCenter((await actionable()).first, principal: 3000);
       final bill2 = (await actionable()).first;
       await payInPaymentCenter(
@@ -605,18 +619,30 @@ void main() {
         reason: 'before #152 this was completed with 505.82 owed',
       );
 
-      final remainder = (await actionable()).single;
-      expect(remainder.amortization, closeTo(505.82, 0.000001));
-      expect(remainder.principalPayment, closeTo(505.82, 0.000001));
-      expect(remainder.interestPayment, 0);
-      expect(remainder.dueAt.isAtSameMomentAs(bill3.dueAt), isTrue);
-      expect(remainder.status, LoanStatus.not_paid);
+      final rest = (await actionable()).single;
+      expect(rest.amortization, closeTo(505.82, 0.000001));
+      expect(rest.principalPayment, closeTo(505.82, 0.000001));
+      expect(rest.interestPayment, 0);
+      expect(rest.dueAt.isAtSameMomentAs(bill3.dueAt), isTrue);
+      expect(rest.status, LoanStatus.not_paid);
+      expect(rest.partPaidAt, isNotNull);
+      final open = await history();
+      expect(open, hasLength(3), reason: 'one bill per due date');
+      expect(open.last.amortization, closeTo(505.82, 0.000001));
 
-      await payInPaymentCenter(remainder, principal: 505.82, interest: 0);
+      await payInPaymentCenter(rest, principal: 505.82, interest: 0);
+      // Each receipt its own row and payment (the trigger books each
+      // row when it is created).
       expect(written, hasLength(4));
+      verify(() => payments.add(data: any(named: 'data'))).called(4);
+      expect(written.last.partPaidAt, isNotNull);
       expect(written.last.outstandingBalance, closeTo(0, 0.000001));
       expect(await loanStatus(), LoanStatus.completed);
       expect(await actionable(), isEmpty);
+      final paid = await history();
+      expect(paid, hasLength(3));
+      expect(paid.last.principalPayment, closeTo(3505.82, 0.000001));
+      expect(paid.last.status, LoanStatus.paid_on_time);
     });
 
     test('Payment Center: the last bill as billed completes the loan',
@@ -635,8 +661,8 @@ void main() {
     });
 
     /// Client detail records the next bill, as the dialog fills it unless
-    /// [principal] is given (#155: the last bill and a remainder row are
-    /// recorded, not sent to settlement).
+    /// [principal] is given (#155: the last bill and its rest are recorded,
+    /// not sent to settlement).
     Future<LoanSchedule> payNextInClientDetail({String? principal}) async {
       final rows = clientRows(written.map(readBack).toList());
       final next = rows.firstWhere((s) => s.id == NO_ID);
@@ -662,20 +688,29 @@ void main() {
       expect(await loanStatus(), LoanStatus.completed);
     });
 
-    test('client detail: a short last bill stays open; its 505.82 remainder '
-        'completes the loan (#155)', () async {
+    test('client detail: a short last bill stays open as one bill; its '
+        '505.82 rest completes the loan', () async {
       await payNextInClientDetail(principal: '3000.00');
       await payNextInClientDetail();
       await payNextInClientDetail(principal: '3000.00');
       expect(written.last.outstandingBalance, closeTo(505.82, 0.000001));
       expect(await loanStatus(), LoanStatus.paid_on_time);
+      final open = clientRows(written.map(readBack).toList());
+      expect(open, hasLength(3), reason: 'one bill per due date');
+      expect(open.last.amortization, closeTo(505.82, 0.000001));
+      expect(open.last.status, LoanStatus.not_paid);
 
-      final remainder = await payNextInClientDetail();
-      expect(remainder.amortization, closeTo(505.82, 0.000001));
-      expect(remainder.interestPayment, 0);
-      expect(written, hasLength(4));
+      final rest = await payNextInClientDetail();
+      expect(rest.amortization, closeTo(505.82, 0.000001));
+      expect(rest.interestPayment, 0);
+      expect(written, hasLength(4), reason: 'each receipt its own row');
+      verify(() => payments.add(data: any(named: 'data'))).called(4);
       expect(written.last.outstandingBalance, closeTo(0, 0.000001));
       expect(await loanStatus(), LoanStatus.completed);
+      final paid = clientRows(written.map(readBack).toList());
+      expect(paid, hasLength(3));
+      expect(paid.last.principalPayment, closeTo(3505.82, 0.000001));
+      expect(paid.last.interestPayment, closeTo(175.29, 0.000001));
     });
   });
 
