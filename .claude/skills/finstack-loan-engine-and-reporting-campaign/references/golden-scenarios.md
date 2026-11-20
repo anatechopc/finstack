@@ -137,7 +137,7 @@ double-derivation IS the proof.
 | G5 | `calculateOpenTermSchedules` | 10000, 5%, term `'1,15'`, start ON day 1 (next month, future) | dueAt = day 15 same month; diff 14 days; multiplier 14/30 = 0.4667; interestCharge closeTo 233.33 | `'D1,D2'` comma parsing + salary-day hop |
 | G5b | `calculateOpenTermSchedules` | term `'15,1'` (reversed order), start ON day 1 | identical to G5 (code min/maxes the two days) | salary-day ordering |
 | G6 | `calculateOpenTermSchedules` | 10000, 5%, `'1m'`, start = Feb 1 of the next NON-LEAP year (test helper picks it, keeping it in the future) | dueAt = Mar 3 that year (Feb 1 + 30 CALENDAR days); multiplier exactly 1.0; interest 500.00 | month-boundary proration: 1 month = 30 days, NOT calendar month |
-| G7 | early-settlement formula | family of 1 loan (10000 + 500 charges - 200 deductions - 100 upfront) + an open-term row (interest 500) and a fixed-term row (interest 400 + principal 1000) | released 10200; CURRENT formula = released − last row only = 8800 (pinned); accumulation would give 8300 but is NOT the target (subtracts interest from principal) — finstack#116 decides the formula | D9 and its siblings (see aggregation-triggers.md D9) |
+| G7 | early-settlement figure (finstack#116) | G1 and a 10,000 open-term loan at 5%, settled on fixed dates (see the notes) | balance after the last confirmed row + top-ups + interest accrued since its due date + missed-bill penalties; G7a G1 10 days after bill 1 = 6,941.71 | D9 and its siblings (see aggregation-triggers.md D9) |
 | G8 | `ChargeCalculator.applyChargesAndDeductionsDetailed` | base 10000; charges [5%, flat 150, upfront 2%]; deductions [1%, flat 50] | additionalCharges 650, upfront 200, deductions 150, totalAmount 10500 | percent-vs-flat parsing; upfront excluded from principal |
 | G9 | `calculateOpenTerm` (finstack#33 RC2) | open-term loan, 1 paid schedule (OB 10000), 1 additional loan (2000 + 100 charges) dated after the paid schedule but in the past | additional-loan placeholder schedule has OB = 12100 EXACTLY ONCE (83.33 accrued, amortization 0); the due row has OB 12100 and FLIPPED 2026-11-19 (R5, #117) bills 83.33 + 504.17 = 587.50 (was 83.33 copied, 500 due); G9b-G9f: top-up at 14:30 (587.50), on the due date (500, old balance), in a missed cycle (598.00 then 605.00), stamped after the bill (500), previous cycle paid early (605.00 + the top-up's 3 unbilled days 10.50 = 615.50 since the #146 review; #131's review probe) | double-counted OB (root cause 2 of finstack#33); the top-up split |
 | G10 | `calculateOpenTerm` (finstack#33 RC3) | 2 additional loans supplied NEWEST-FIRST in `loan.additionalLoanAmounts` | processing order is by `createdAt` ascending: first placeholder OB = base+A1, second = base+A1+A2; FLIPPED 2026-11-19 (R5): the due row bills 83.33 + 40.33 + 578.83 = 702.50 (was 40.33 copied) | reverse-order iteration (root cause 3 of finstack#33; the `sortedBy` at ~line 357) |
@@ -152,12 +152,15 @@ Notes:
 - **G4a sentinel:** `totalLoanPayment = double.infinity` for open-term is
   intentional ("no fixed total"); pin it so a refactor that "fixes" it to 0
   or NaN is caught and forced to be a deliberate, documented change.
-- **G7 (extraction DONE 2026-09-08 as
-  `LoanCalculationService.calculateSettlementBalance`, the bloc delegates):**
-  written against the CURRENT formula on purpose. The review of PR #115
-  showed the formula is wrong four ways (aggregation-triggers.md D9), so
-  the expectation flips with finstack#116's decided formula, never
-  silently, and never to a plain `+=` (8300 is not the answer either).
+- **G7 (flipped 2026-11-20, finstack#116):** the owner's settlement rule —
+  balance after the last confirmed row, top-ups included, plus interest
+  accrued from its due date — replaced the released − payments shape.
+  G7a-i pin it: G1 10 days after bill 1 = 6,941.71 (was 6,327.91); bill 1
+  paid 500 + 2,900 then 6 days = 7,171 (was 6,600); open-term top-up
+  12,468.33 (was 9,500); submission not credited 10,566.67; missed bill +
+  1,100 penalties 11,766.67; no confirmed row 10,643.33 (was 10,200); row
+  due after the settlement day 6,827.91; R4 shortfall 10,250; a family
+  12,025.04.
 - **G9/G10 encode finstack#33** (PR finstack#33, closed issue finstack#4;
   full narrative in finstack-failure-archaeology). Root causes, restated as
   test oracles: (1) UI didn't refresh → G11; (2) OB mutated twice (bloc +

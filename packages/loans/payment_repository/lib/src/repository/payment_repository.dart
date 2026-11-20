@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 import 'package:payment_repository/src/data/database/payment_firestore_service.dart';
 import 'package:payment_repository/src/model/payment.dart';
@@ -6,6 +8,11 @@ import 'package:payment_repository/src/model/payment.dart';
 class PaymentRepository implements BaseRepository<Payment> {
   /// constructor
   PaymentRepository() : _firestoreService = PaymentFirestoreService();
+
+  /// On [firestore] (a fake in tests) instead of the app's Firestore.
+  @visibleForTesting
+  PaymentRepository.withFirestore(FirebaseFirestore firestore)
+      : _firestoreService = PaymentFirestoreService(firestore: firestore);
 
   late final PaymentFirestoreService _firestoreService;
 

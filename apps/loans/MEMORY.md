@@ -4,6 +4,18 @@ Log of refactoring and bug fix work done across multiple sessions.
 
 ---
 
+## Early settlement: balance + accrued interest, recorded as a payment (#116, owner 2026-11-20)
+
+Branch `fix/early-settlement-116` → develop (draft PR).
+
+- **Figure (`LoanCalculationService.settlementOf`, summed by `calculateSettlementBalance` over the loan and its special loans):** principal = balance after the last CONFIRMED row (paid on time/late; a submission is not credited; no row → amount + charges − deductions) + approved top-ups not in that balance; interest = balance in force × rate × days / 30 from that row's due date (no row: the creation day) to the settlement day, a top-up from its approval day, 0 when the row is due after the settlement day, + the open-term R4 shortfall of that row; penalty = `resolveLatenessTogether` over the bills due before the settlement day (what the Pay dialog charges). Interest and penalty to the centavo; principal = the stored balance as is. Defaults (30-day convention, creation day, penalties, R4) are in the PR for the owner to confirm.
+- **Recording (`LoanSettlementBloc` confirm):** per loan: a confirmed payment (`bypassPaymentProof`, comment names the teller), the settlement row (`paid_on_time`/`paid_late`, principal = balance, interest, penalty, balance after 0, `due_at` = settlement time), the payment linked to it, a cash-pool `acknowledged_payment` of min(amount, pool balance); then every loan of the family `completed`. A non-active loan (completed included) is refused; the confirm recomputes and refuses a figure other than the one shown; confirms run one at a time (`asyncExpand`), so a double tap is refused.
+- **Found on the manual run:** for a fixed-term loan the statement is refused ("Not an Open term loan"), `soaModel` stayed null and "Settle account" did nothing (also on develop); the screen now passes only the loan id and the bloc reads the borrower from the loan.
+- **Go:** `loanScheduleChanges` books the row as a collection (principal + interest, capital += principal; penalty is not booked, as for every payment); `loanChanges` on completed then books max(released − collected principal, 0) = 0. Before, completion booked the remaining principal and no interest.
+- **Tests:** G7a-i flipped/added (9); `test/features/payment/early_settlement_test.dart` 5 (real bloc, all four repositories on `fake_cloud_firestore` via new `withFirestore` seams on LoanSchedule/Payment/CashPool repositories; double tap; screen without a statement). Mutations: crediting submissions, /30→/31, no `asyncExpand`, statement guard back: each fails.
+- **Manual (dev, 2026-11-20 Manila):** open-term `l7ajZ6uJ5BxbmZMkLn8Z` showed 21,788.25 = 21,450 + 175 + 127.50 + 35.75 on Settle now, the Payment Center payoff and the client-detail payoff (not confirmed). Fixed-term `xYtYknA4ONqtsQt41eS9` showed 10,622.50 = 10,500 + 122.50 (7 days), confirmed: row `wKC36OFh875AQN4hCSWd`, payment `PXysrUPp4rPmVA5lCrPm`, cash pool `24h8S0surj5BFms2rxPv` (0.00, empty pool), loan completed; dashboard Collections +10,622.50, Net gains +122.50, capital +10,500.
+- **Open / not changed:** the statement table's own "Total amount due" (open-term only) uses its older arithmetic and differs from the settlement figure; a submission still pending at settlement stays pending; the settlement dialog takes no proof (photo/signature/OTP) and offers no penalty waiver; client detail lists only active loans, so a completed loan opens empty (as before).
+
 ## Top-up on an overdue open-term loan: deduct, add to the next bill, or cancel (owner, 2026-11-19)
 
 Branch `feat/topup-overdue-warning`, draft PR stacked on #146 (`feat/openterm-billing-by-cycle`).

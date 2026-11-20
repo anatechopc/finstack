@@ -1,5 +1,7 @@
 import 'package:cash_pool_repository/src/data/database/cash_pool_firestore_service.dart';
 import 'package:cash_pool_repository/src/model/cash_pool.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:loooans_helpers/data_helpers.dart';
 
 /// {@template company_repository}
@@ -8,6 +10,11 @@ import 'package:loooans_helpers/data_helpers.dart';
 final class CashPoolRepository implements BaseRepository<CashPool> {
   /// constructor
   CashPoolRepository() : _firestoreService = CashPoolFirestoreService();
+
+  /// On [firestore] (a fake in tests) instead of the app's Firestore.
+  @visibleForTesting
+  CashPoolRepository.withFirestore(FirebaseFirestore firestore)
+      : _firestoreService = CashPoolFirestoreService(firestore: firestore);
 
   late final CashPoolFirestoreService _firestoreService;
 

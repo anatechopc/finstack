@@ -189,16 +189,11 @@ class _StatementOfAccountScreenState extends State<StatementOfAccountScreen> {
                     color: AppColors.green1,
                   ),
                 ),
-                onPressed: () {
-                  final soaModel = context.read<ReportsBloc>().soaModel;
-
-                  if (soaModel != null) {
-                    context.read<LoanSettlementBloc>().settleLoanAccount(
-                          userId: soaModel.userId,
-                          loanId: widget.loanId,
-                        );
-                  }
-                },
+                // Not tied to the statement: a fixed-term loan has none, and
+                // the one held may be another loan's (#116).
+                onPressed: () => context
+                    .read<LoanSettlementBloc>()
+                    .settleLoanAccount(loanId: widget.loanId),
               ),
             ),
             const Gap(16),
@@ -276,22 +271,12 @@ class _StatementOfAccountScreenState extends State<StatementOfAccountScreen> {
           actions: [
             AppWidgets.defaultFilledButton(
               child: const Text('Confirm'),
-              onPressed: () {
-                final soaModel = context.read<ReportsBloc>().soaModel;
-                if (soaModel == null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('No statement of account selected'),
-                    ),
-                  );
-                  return;
-                }
-
-                context.read<LoanSettlementBloc>().confirmLoanAccountSettlement(
-                      userId: soaModel.userId,
-                      loanId: widget.loanId,
-                    );
-              },
+              onPressed: () => context
+                  .read<LoanSettlementBloc>()
+                  .confirmLoanAccountSettlement(
+                    loanId: widget.loanId,
+                    amount: remainingBalance,
+                  ),
             ),
             AppWidgets.defaultOutlinedButton(
               child: const Text('Cancel'),

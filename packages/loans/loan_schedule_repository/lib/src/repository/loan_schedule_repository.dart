@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:loan_schedule_repository/src/data/database/loan_schedule_firestore_service.dart';
 import 'package:loan_schedule_repository/src/model/loan_schedule.dart';
 import 'package:loooans_helpers/data_helpers.dart';
@@ -6,6 +8,11 @@ import 'package:loooans_helpers/data_helpers.dart';
 class LoanScheduleRepository implements BaseRepository<LoanSchedule> {
   /// constructor
   LoanScheduleRepository() : _firestoreService = LoanScheduleFirestoreService();
+
+  /// On [firestore] (a fake in tests) instead of the app's Firestore.
+  @visibleForTesting
+  LoanScheduleRepository.withFirestore(FirebaseFirestore firestore)
+      : _firestoreService = LoanScheduleFirestoreService(firestore: firestore);
 
   late final LoanScheduleFirestoreService _firestoreService;
 
